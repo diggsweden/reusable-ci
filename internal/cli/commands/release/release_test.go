@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/cli"
 	releasecmd "github.com/diggsweden/reusable-ci/v3/internal/cli/commands/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/ghaenv"
@@ -21,8 +22,26 @@ func TestResolveArtifactNameCmd_RequiresProjectTypeFlag(t *testing.T) {
 	cmd := releasecmd.New()
 
 	err := cmd.Run(context.Background(), []string{"release", "resolve", "artifact-name"}) //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-	if err == nil || !strings.Contains(err.Error(), `Required flag "project-type" not set`) {
-		t.Errorf("err = %v", err)
+	assertMissingFlag(t, err, "project-type")
+}
+
+// assertMissingFlag pins a framework required-flag refusal: the message names
+// the flag, and the exit code the operator's shell sees is 64. urfave's own
+// error carries no sentinel until main.go classifies it, so the classification
+// is applied here rather than asserted on the raw error.
+func assertMissingFlag(t *testing.T, err error, flag string) {
+	t.Helper()
+
+	if err == nil {
+		t.Fatalf("expected a refusal for the missing --%s", flag)
+	}
+
+	if want := `Required flag "` + flag + `" not set`; !strings.Contains(err.Error(), want) {
+		t.Errorf("err = %v, want %q", err, want)
+	}
+
+	if got := errs.ExitCodeFromError(cli.ClassifyError(err)); got != errs.ExitCodeUsage {
+		t.Errorf("exit code = %d, want usage (%d)", got, errs.ExitCodeUsage)
 	}
 }
 
@@ -151,9 +170,7 @@ func TestVerifyChangelogCmd_RequiresFlag(t *testing.T) {
 	cmd := releasecmd.New()
 
 	err := cmd.Run(context.Background(), []string{"release", "validate-changelog"})
-	if err == nil || !strings.Contains(err.Error(), `Required flag "changelog-file" not set`) {
-		t.Errorf("err = %v", err)
-	}
+	assertMissingFlag(t, err, "changelog-file")
 }
 
 func TestVerifyChangelogCmd_SucceedsWhenFileExists(t *testing.T) {

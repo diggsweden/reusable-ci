@@ -5,7 +5,9 @@ package version
 
 import (
 	"fmt"
-	"regexp"
+	"strings"
+
+	"golang.org/x/mod/semver"
 )
 
 // SnapshotVersionDefaultBase is the BASE_VERSION when no semver tag exists.
@@ -34,21 +36,69 @@ func ComposeSnapshotVersion(baseVersion, branch, shortSHA string) string {
 		baseVersion, SanitizePathToken(branch), shortSHA)
 }
 
-// StableSemverTagRE is the single definition of a strict v-prefixed release
-// tag: vMAJOR.MINOR.PATCH with no pre-release or build suffix. Callers that
-// only need the boolean use IsStableSemverTag; those needing the compiled
-// pattern (e.g. runtimetags) reference this. It is distinct from
-// domain/validate.SemverTagPattern, which is permissive and admits a
-// pre-release suffix.
-//
-//nolint:gochecknoglobals // shared compiled pattern — read-only.
-var StableSemverTagRE = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
+// Semver is a validated, strict three-component semantic version. Version has
+// no leading v; Prerelease and Build have no leading separator.
+type Semver struct {
+	Version    string
+	Major      string
+	Minor      string
+	Patch      string
+	Prerelease string
+	Build      string
+}
+
+// ParseSemver validates a strict MAJOR.MINOR.PATCH semantic version through
+// x/mod/semver. A leading lowercase v is optional; abbreviated x/mod forms such
+// as v1 and v1.2 are deliberately rejected.
+func ParseSemver(value string) (Semver, bool) {
+	normalized := value
+	if !strings.HasPrefix(normalized, "v") {
+		normalized = "v" + normalized
+	}
+
+	if !semver.IsValid(normalized) {
+		return Semver{}, false
+	}
+
+	version := strings.TrimPrefix(normalized, "v")
+
+	core := version
+	if i := strings.IndexAny(core, "-+"); i >= 0 {
+		core = core[:i]
+	}
+
+	parts := strings.Split(core, ".")
+	if len(parts) != 3 {
+		return Semver{}, false
+	}
+
+	return Semver{
+		Version:    version,
+		Major:      parts[0],
+		Minor:      parts[1],
+		Patch:      parts[2],
+		Prerelease: strings.TrimPrefix(semver.Prerelease(normalized), "-"),
+		Build:      strings.TrimPrefix(semver.Build(normalized), "+"),
+	}, true
+}
+
+// ParseSemverTag is ParseSemver with the repository's lowercase-v tag
+// convention enforced.
+func ParseSemverTag(tag string) (Semver, bool) {
+	if !strings.HasPrefix(tag, "v") {
+		return Semver{}, false
+	}
+
+	return ParseSemver(tag)
+}
 
 // IsStableSemverTag reports whether tag strictly matches vMAJOR.MINOR.PATCH.
 // It deliberately rejects prerelease/build metadata; release signing paths use
 // this narrower predicate so a request like v1.2.3-rc1 cannot reach signing.
 func IsStableSemverTag(tag string) bool {
-	return StableSemverTagRE.MatchString(tag)
+	parsed, ok := ParseSemverTag(tag)
+
+	return ok && parsed.Prerelease == "" && parsed.Build == ""
 }
 
 // StripVPrefix turns "v1.2.3" into "1.2.3". Idempotent on already-stripped
@@ -61,82 +111,23 @@ func StripVPrefix(tag string) string {
 	return tag
 }
 
-// LatestSemverTag returns the highest-versioned tag that strictly matches
-// StableSemverTagRE, comparing lexically by their numeric components.
+// LatestSemverTag returns the highest stable v-prefixed semantic-version tag.
 // Returns "" when the input is empty or no tag matches.
 //
 // Pure: callers gather the candidate tags (e.g. via `git tag -l`).
 // adapter/git wraps that side and feeds the result here.
 func LatestSemverTag(tags []string) string {
-	var (
-		best      string
-		bestParts [3]int
-	)
+	var best string
 
 	for _, t := range tags { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		if !StableSemverTagRE.MatchString(t) {
+		if !IsStableSemverTag(t) {
 			continue
 		}
 
-		parts, ok := parseSemverParts(StripVPrefix(t))
-		if !ok {
-			continue
-		}
-
-		if best == "" || compareSemver(parts, bestParts) > 0 {
+		if best == "" || semver.Compare(t, best) > 0 {
 			best = t
-			bestParts = parts
 		}
 	}
 
 	return best
-}
-
-// parseSemverParts splits "1.2.3" into [1,2,3].
-func parseSemverParts(v string) ([3]int, bool) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	var (
-		parts [3]int
-		cur   int
-		idx   int
-	)
-
-	for i := range len(v) {
-		c := v[i] //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		switch {
-		case c == '.':
-			if idx == 2 {
-				return parts, false
-			}
-
-			parts[idx] = cur
-			idx++
-			cur = 0
-		case c >= '0' && c <= '9':
-			cur = cur*10 + int(c-'0')
-		default:
-			return parts, false
-		}
-	}
-
-	if idx != 2 {
-		return parts, false
-	}
-
-	parts[2] = cur
-
-	return parts, true
-}
-
-func compareSemver(a, b [3]int) int {
-	for i := range 3 {
-		if a[i] != b[i] {
-			if a[i] > b[i] {
-				return 1
-			}
-
-			return -1
-		}
-	}
-
-	return 0
 }

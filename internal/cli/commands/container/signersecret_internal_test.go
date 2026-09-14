@@ -6,17 +6,20 @@ package container
 import (
 	"slices"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
-// signerSecretEnv is the list handed to the syft subprocess so an SBOM
-// scan does not run holding signing material. It had no test.
+// signerSecretEnv is the list handed to the syft and skopeo subprocesses
+// so neither an SBOM scan nor a registry copy runs holding signing
+// material.
 //
 // Two properties are worth holding, and they pull in opposite
 // directions, so both are here: the list must contain the secrets the
 // signing paths actually use, and it must not contain names that are not
 // secrets -- scrubbing REGISTRY_AUTH_FILE-style configuration would
 // break the subprocess rather than protect it.
-func TestSignerSecretEnv(t *testing.T) {
+func TestSignerSecretEnv_ScrubsEveryCredentialWithoutDuplicates(t *testing.T) {
 	t.Parallel()
 
 	got := signerSecretEnv()
@@ -29,10 +32,34 @@ func TestSignerSecretEnv(t *testing.T) {
 		"GPG_SIGNING_KEY",
 		"GPG_SIGNING_PASSWORD",
 		"REGISTRY_PASSWORD",
-		releaseImagesDefaultEnvVar,
+		"REGISTRY_TOKEN",
+
+		// Names the binary reads as real credentials elsewhere, which
+		// this list did not cover: GITHUB_TOKEN is resolved as both a
+		// registry and a forge token in adapters/github, and
+		// GPG_PRIVATE_KEY is the key `release gpg` signs with. They
+		// were listed as known gaps until this list caught up.
+		"CI_JOB_TOKEN",
+		"CI_REGISTRY_PASSWORD",
+		"COSIGN_PRIVATE_KEY",
+		"COSIGN_SIGNING_KEY",
+		"COSIGN_SIGNING_PASSWORD",
+		"FORGEJO_API_TOKEN",
+		"GH_TOKEN",
+		"GITEA_TOKEN",
+		"GITHUB_TOKEN",
+		"GITLAB_TOKEN",
+		"GPG_PASSPHRASE",
+		"GPG_PRIVATE_KEY",
 	} {
 		if !slices.Contains(got, name) {
 			t.Errorf("%s is not scrubbed from the syft environment", name)
+		}
+	}
+
+	for _, name := range []string{"REGISTRY_AUTH_FILE", "DOCKER_CONFIG", "CI_REGISTRY", "CI_REGISTRY_IMAGE", "GITHUB_REPOSITORY", "SSL_CERT_FILE", "COSIGN_FULCIO_URL", "COSIGN_REKOR_URL", "PATH", "HOME"} {
+		if slices.Contains(got, name) {
+			t.Errorf("nonsecret configuration %s must remain available", name)
 		}
 	}
 
@@ -53,48 +80,74 @@ func TestSignerSecretEnv(t *testing.T) {
 	}
 }
 
-// TestSignerSecretEnv_KnownGaps records the names the binary reads as
-// credentials that this list does not scrub.
+// TestNewImageEvidenceSkopeo_ScrubsSigningMaterial covers the wiring,
+// not the scrubbing.
 //
-// The list covers 12 names. The binary reads at least these as real
-// credentials elsewhere -- GITHUB_TOKEN is resolved as a registry and
-// forge token in adapters/github, GPG_PRIVATE_KEY is the private key
-// `release gpg` signs with -- and they are not on it. Meanwhile
-// adapters/changelog and app/toolchain each carry their own scrub list
-// with different membership again: changelog drops GITHUB_TOKEN and
-// GPG_PRIVATE_KEY, this one does not.
-//
-// It is defence in depth, not a live exposure: syft is a trusted binary.
-// But the argument for scrubbing at all applies to these names equally,
-// and three lists that disagree is the shape where one gets extended and
-// the others do not.
-//
-// Recorded in docs/open-questions.md ("Three secret-scrub lists, three
-// different memberships"). This test fails when a gap is closed, so the
-// entry and the list stay in step.
-func TestSignerSecretEnv_KnownGaps(t *testing.T) {
+// The skopeo adapter has always been able to drop variables; what was
+// missing was a caller doing it. Both constructor paths are checked,
+// because the auth-file branch replaces the adapter wholesale and is the
+// one a registry-talking run actually takes.
+func TestNewImageEvidenceSkopeo_ScrubsSigningMaterial(t *testing.T) {
 	t.Parallel()
 
-	got := signerSecretEnv()
+	for _, authFile := range []string{"", "/run/containers/auth.json"} {
+		adapter := newImageEvidenceSkopeo(authFile)
 
-	gaps := []string{
-		"GITHUB_TOKEN",
-		"GH_TOKEN",
-		"GITEA_TOKEN",
-		"GITLAB_TOKEN",
-		"GPG_PRIVATE_KEY",
-		"COSIGN_PRIVATE_KEY",
-		"COSIGN_SIGNING_KEY",
-		"COSIGN_SIGNING_PASSWORD",
-		"CI_JOB_TOKEN",
-		"CI_REGISTRY_PASSWORD",
-		"FORGEJO_API_TOKEN",
+		if adapter.AuthFile != authFile {
+			t.Errorf("AuthFile = %q, want %q", adapter.AuthFile, authFile)
+		}
+
+		if !slices.Equal(adapter.UnsetEnv, signerSecretEnv()) {
+			t.Errorf("skopeo runs with UnsetEnv %v, want the signer scrub list", adapter.UnsetEnv)
+		}
+	}
+}
+
+// TestSignerSecretEnv_CoversEveryCredentialTheBinaryResolves is the check the
+// hand-written expectations above cannot make.
+//
+// Those lists say "these names are secrets", which is true and was verified by
+// a human reading them. What no assertion covered is the direction that
+// actually goes wrong over time: a credential name added to runcontext — a new
+// forge's token, a renamed one — and never added here. Both lists in this file
+// would still pass, because both describe what someone already thought of.
+//
+// runcontext is where the binary declares what it treats as a credential, so it
+// is the authority. Every name it resolves must be scrubbed before syft or
+// skopeo runs, or a subprocess that has no use for signing material inherits it.
+func TestSignerSecretEnv_CoversEveryCredentialTheBinaryResolves(t *testing.T) {
+	t.Parallel()
+
+	scrubbed := map[string]bool{}
+	for _, name := range signerSecretEnv() {
+		scrubbed[name] = true
 	}
 
-	for _, name := range gaps {
-		if slices.Contains(got, name) {
-			t.Errorf("%s is now scrubbed -- remove it from this test's list, "+
-				"and close the open question when the list is empty", name)
+	declared := map[string]bool{}
+	credentialVars := [][]string{runcontext.Token().Keys(), runcontext.ReleaseToken().Keys()}
+
+	for _, keys := range credentialVars {
+		for _, key := range keys {
+			declared[key] = true
 		}
+	}
+
+	if len(declared) == 0 {
+		t.Fatal("runcontext declared no credential names; the accessor, not the scrub list, is what was measured")
+	}
+
+	missing := make([]string, 0, len(declared))
+	for key := range declared {
+		if !scrubbed[key] {
+			missing = append(missing, key)
+		}
+	}
+
+	slices.Sort(missing)
+
+	if len(missing) > 0 {
+		t.Errorf("runcontext resolves %v as credentials, but signerSecretEnv does not scrub them; "+
+			"syft and skopeo would run holding them. Add them to signerSecretEnv, or say in runcontext why they "+
+			"are not secrets.", missing)
 	}
 }

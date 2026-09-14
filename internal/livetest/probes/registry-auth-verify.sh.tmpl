@@ -1,0 +1,83 @@
+
+registry_url="https://$registry"
+__REGISTRY_AUTHORITY_GUARD__
+
+# Refuse to prove anything against an anonymously-readable registry.
+anon="$(curl -s -o /dev/null -w '%{http_code}' "$registry_url/v2/")"
+echo "anonymous /v2/ -> $anon"
+if [ "$anon" = 200 ]; then
+  echo "FAIL: this registry serves /v2/ without credentials, so an authenticated check proves nothing"
+  exit 1
+fi
+
+# Delegate Basic/Bearer challenge parsing and token exchange to Buildah's OCI
+# client, but force every resulting connection through the exact registry and
+# token authorities projected from the validated contract.
+curl -fsSL -o credential-proxy "__PROXY_ASSET_URL__"
+__PROXY_DIGEST_CHECK__chmod +x credential-proxy
+registry_proxy_ready="$PWD/registry-proxy.ready"
+./credential-proxy __REGISTRY_PROXY_AUTHORITIES__ --ready-file "$registry_proxy_ready" &
+registry_proxy_pid=$!
+stop_registry_proxy() {
+  unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy
+  if kill -0 "$registry_proxy_pid" 2>/dev/null; then
+    kill -TERM "$registry_proxy_pid" 2>/dev/null || true
+    attempts=0
+    while kill -0 "$registry_proxy_pid" 2>/dev/null && [ "$attempts" -lt 50 ]; do
+      sleep 0.1
+      attempts=$((attempts + 1))
+    done
+    if kill -0 "$registry_proxy_pid" 2>/dev/null; then
+      kill -KILL "$registry_proxy_pid" 2>/dev/null || true
+    fi
+  fi
+  wait "$registry_proxy_pid" 2>/dev/null || true
+  unset stored decoded username password
+  rm -f "$registry_proxy_ready"
+  rm -f auth.json
+}
+trap stop_registry_proxy EXIT INT TERM
+
+attempts=0
+while [ ! -s "$registry_proxy_ready" ] && [ "$attempts" -lt 50 ]; do
+  kill -0 "$registry_proxy_pid" 2>/dev/null || {
+    echo "FAIL: registry credential proxy exited before readiness"
+    exit 1
+  }
+  sleep 0.1
+  attempts=$((attempts + 1))
+done
+test -s "$registry_proxy_ready"
+registry_proxy_url="$(cat "$registry_proxy_ready")"
+case "$registry_proxy_url" in
+  http://127.0.0.1:*) ;;
+  *) echo "FAIL: registry credential proxy did not publish a loopback URL"; exit 1 ;;
+esac
+export HTTP_PROXY="$registry_proxy_url" HTTPS_PROXY="$registry_proxy_url"
+export http_proxy="$registry_proxy_url" https_proxy="$registry_proxy_url"
+export NO_PROXY='' no_proxy=''
+
+decoded="$(printf '%s' "$stored" | base64 -d 2>/dev/null || true)"
+username=${decoded%%:*}
+password=${decoded#*:}
+if [ -z "$username" ] || [ "$password" = "$decoded" ]; then
+  echo "FAIL: container login wrote malformed basic credentials"
+  exit 1
+fi
+
+if ! printf '%s' "$password" | buildah login \
+  --authfile "$PWD/auth.json" \
+  --username "$username" \
+  --password-stdin \
+  "$registry" >/dev/null; then
+  echo "FAIL: the resolved credential did not authenticate through the OCI client"
+  exit 1
+fi
+echo "OCI login -> authenticated"
+
+stop_registry_proxy
+trap - EXIT INT TERM
+if [ "$credential_trace" = 1 ]; then
+  set -x
+fi
+echo "the forge-injected credential authenticates to the validated registry"

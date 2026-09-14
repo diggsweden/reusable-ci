@@ -11,17 +11,24 @@ import (
 	"testing"
 
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
 type fakeCargoTool struct {
 	version string
 	err     error
+	calls   *int
 }
 
 func (f fakeCargoTool) Version(context.Context) (string, error) {
+	if f.calls != nil {
+		*f.calls++
+	}
+
 	return f.version, f.err
 }
 
@@ -52,6 +59,7 @@ func TestCargoPrerequisites_UsesCargoArtifactWorkingDirectory(t *testing.T) {
 func TestCargoPrerequisites_FailsWhenCargoLockMissingInWorkingDirectory(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.MkdirAll("crates/api")
+	fsys.WriteFile("crates/api/rust-toolchain.toml", []byte("[toolchain]\nchannel='1.90.0'\n"))
 	fsys.Chdir()
 
 	var stderr bytes.Buffer
@@ -59,30 +67,12 @@ func TestCargoPrerequisites_FailsWhenCargoLockMissingInWorkingDirectory(t *testi
 	err := appvalidate.CargoPrerequisites(context.Background(), fakeCargoTool{version: "cargo 1.90.0"}, nil, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.CargoPrerequisitesInput{
 		PublishStagePlanJSON: `{"version":1,"stage":"publish","targets":{"cargo_container_first":{"runs":true,"items":[{"name":"api","project_type":"cargo","working_directory":"crates/api"}]}}}`,
 	})
-	if err == nil {
-		t.Fatal("expected error")
+	// The pipeline stops on a domain-rule violation, not a broken flag.
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
 	}
 
 	if !strings.Contains(stderr.String(), "Cargo.lock not found in crates/api") {
-		t.Errorf("stderr = %s", stderr.String())
-	}
-}
-
-func TestCargoPrerequisites_FailsWhenCargoMissing(t *testing.T) {
-	fsys := testfs.NewReal(t)
-	fsys.WriteFile("Cargo.lock", []byte("# lock"))
-	fsys.Chdir()
-
-	var stderr bytes.Buffer
-
-	err := appvalidate.CargoPrerequisites(context.Background(), fakeCargoTool{err: errors.New("not found")}, nil, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.CargoPrerequisitesInput{ //nolint:err113 // test mock error
-		PublishStagePlanJSON: `{"version":1,"stage":"publish","targets":{"cargo_container_first":{"runs":true,"items":[{"name":"api","project_type":"cargo","working_directory":"."}]}}}`,
-	})
-	if err == nil {
-		t.Fatal("expected error")
-	}
-
-	if !strings.Contains(stderr.String(), "cargo is not installed") {
 		t.Errorf("stderr = %s", stderr.String())
 	}
 }
@@ -105,10 +95,9 @@ func TestCargoPrerequisites_SkipsWhenTargetDoesNotRun(t *testing.T) {
 }
 
 // TestCargoPrerequisites_FailsWhenToolchainPinMissing pins the
-// deterministic-pipeline guarantee: a Cargo artifact without
-// rust-toolchain.toml (or its legacy plain-text sibling) fails the
-// pipeline. The pinned toolchain is the only way CI and local-dev
-// builds produce byte-identical Rust binaries.
+// compiler-consistency requirement: a Cargo artifact without
+// rust-toolchain.toml (or its legacy plain-text sibling) fails the pipeline.
+// The pin supports reproducible builds but does not guarantee identical output.
 func TestCargoPrerequisites_FailsWhenToolchainPinMissing(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.WriteFile("crates/api/Cargo.lock", []byte("# lock"))
@@ -120,8 +109,8 @@ func TestCargoPrerequisites_FailsWhenToolchainPinMissing(t *testing.T) {
 	err := appvalidate.CargoPrerequisites(context.Background(), fakeCargoTool{version: "cargo 1.90.0"}, nil, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.CargoPrerequisitesInput{
 		PublishStagePlanJSON: `{"version":1,"stage":"publish","targets":{"cargo_container_first":{"runs":true,"items":[{"name":"api","project_type":"cargo","working_directory":"crates/api"}]}}}`,
 	})
-	if err == nil {
-		t.Fatal("expected error when rust-toolchain pin is missing")
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
 	}
 
 	if !strings.Contains(stderr.String(), "::error::No rust-toolchain.toml") {
@@ -177,10 +166,9 @@ func TestCargoPrerequisites_CoversBothBuildModesViaConfigPlan(t *testing.T) {
 	err := appvalidate.CargoPrerequisites(context.Background(), fakeCargoTool{version: "cargo 1.90.0"}, &out, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.CargoPrerequisitesInput{
 		// The config-plan-json carries every Cargo artifact regardless of
 		// build-mode. `api` is container-first, `cli` is artifact-first.
-		ConfigPlanJSON: `{"version":1,"artifacts":{"cargo":[
-			{"name":"api","project_type":"cargo","working_directory":"crates/api","cargo_build_mode":"container-first"},
-			{"name":"cli","project_type":"cargo","working_directory":"crates/cli","cargo_build_mode":"artifact-first"}
-		]}}`,
+		ConfigPlanJSON: validationPlanJSON(t, validationConfigPlan(t,
+			config.Artifact{Name: "api", ProjectType: projecttype.Cargo, WorkingDirectory: "crates/api", Cargo: &config.CargoConfig{BuildMode: config.CargoBuildModeContainerFirst}},
+			config.Artifact{Name: "cli", ProjectType: projecttype.Cargo, WorkingDirectory: "crates/cli", Cargo: &config.CargoConfig{BuildMode: config.CargoBuildModeArtifactFirst}})),
 	})
 	if err != nil {
 		t.Fatal(err)

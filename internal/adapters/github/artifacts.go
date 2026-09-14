@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -23,6 +22,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // maxArtifactRedirects bounds the redirect chain the go-github client
@@ -91,6 +91,10 @@ func (p *Provider) DownloadRunArtifact(ctx context.Context, in provider.RunArtif
 //
 //nolint:cyclop // linear: parse → resolve repo → client → list → filter → per-artifact extract.
 func (p *Provider) downloadMatchingArtifacts(ctx context.Context, runIDStr string, in provider.RunArtifactDownload) (provider.RunArtifactInfo, error) {
+	if _, err := path.Match(in.Pattern, ""); err != nil {
+		return provider.RunArtifactInfo{}, fmt.Errorf("invalid artifact pattern: %w", errs.ErrUsage)
+	}
+
 	if runIDStr == "" || in.Dir == "" {
 		return provider.RunArtifactInfo{}, fmt.Errorf("run-id and dir are required: %w", errs.ErrUsage)
 	}
@@ -119,7 +123,8 @@ func (p *Provider) downloadMatchingArtifacts(ctx context.Context, runIDStr strin
 
 	var totalFiles int
 
-	for _, art := range matches {
+	destinations := make([]string, len(matches))
+	for index, art := range matches {
 		// The artifact name comes from the forge — for a pattern download it
 		// may be a PR author's or another job's artifact. Validate it (control
 		// chars / invalid UTF-8) and resolve the per-artifact destination via
@@ -139,18 +144,38 @@ func (p *Provider) downloadMatchingArtifacts(ctx context.Context, runIDStr strin
 			dest = safeDest
 		}
 
-		url, _, derr := client.Actions.DownloadArtifact(ctx, owner, repo, art.id, maxArtifactRedirects)
+		checked, err := pathsafe.OpenRoot(dest)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return provider.RunArtifactInfo{}, err
+		}
+
+		if checked != nil {
+			_ = checked.Close()
+		}
+
+		destinations[index] = dest
+	}
+
+	for index, art := range matches {
+		url, response, derr := client.Actions.DownloadArtifact(ctx, owner, repo, art.id, maxArtifactRedirects)
 		if derr != nil {
-			return provider.RunArtifactInfo{}, fmt.Errorf("get download URL for %q: %w", art.name, derr)
+			return provider.RunArtifactInfo{}, fmt.Errorf("get download URL for %q: %w", art.name, classifyArtifactResponse(response, derr))
 		}
 
-		if mkErr := os.MkdirAll(dest, 0o755); mkErr != nil { //nolint:gosec // artifact dir read by downstream steps.
-			return provider.RunArtifactInfo{}, fmt.Errorf("mkdir %q: %w", dest, mkErr)
-		}
-
-		bytesWritten, count, xerr := downloadAndExtractZip(ctx, p.httpClient(), url.String(), dest)
+		bytesWritten, count, xerr := downloadAndExtractZip(
+			ctx,
+			p.httpClient(),
+			url.String(),
+			destinations[index],
+			domainartifact.MaxTotalBytes-totalBytes,
+			domainartifact.MaxFileCount-totalFiles,
+		)
 		if xerr != nil {
 			return provider.RunArtifactInfo{}, xerr
+		}
+
+		if totalErr := domainartifact.ValidateAggregate(totalBytes, totalFiles, bytesWritten, count); totalErr != nil {
+			return provider.RunArtifactInfo{}, totalErr
 		}
 
 		totalBytes += bytesWritten
@@ -190,21 +215,35 @@ func (p *Provider) downloadRunArtifact(ctx context.Context, runIDStr, repository
 		return provider.RunArtifactInfo{}, err
 	}
 
-	downloadURL, _, err := client.Actions.DownloadArtifact(ctx, owner, repo, artifactID, maxArtifactRedirects)
+	downloadURL, response, err := client.Actions.DownloadArtifact(ctx, owner, repo, artifactID, maxArtifactRedirects)
 	if err != nil {
-		return provider.RunArtifactInfo{}, fmt.Errorf("get artifact download URL: %w", err)
+		return provider.RunArtifactInfo{}, fmt.Errorf("get artifact download URL: %w", classifyArtifactResponse(response, err))
 	}
 
-	if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil { //nolint:gosec // artifact dir read by downstream workflow steps.
-		return provider.RunArtifactInfo{}, fmt.Errorf("mkdir %q: %w", dir, mkErr)
-	}
-
-	bytesWritten, count, err := downloadAndExtractZip(ctx, p.httpClient(), downloadURL.String(), dir)
+	bytesWritten, count, err := downloadAndExtractZip(
+		ctx,
+		p.httpClient(),
+		downloadURL.String(),
+		dir,
+		domainartifact.MaxTotalBytes,
+		domainartifact.MaxFileCount,
+	)
 	if err != nil {
 		return provider.RunArtifactInfo{}, err
 	}
 
 	return provider.RunArtifactInfo{Name: name, Bytes: bytesWritten, FileCount: count}, nil
+}
+
+func classifyArtifactResponse(response *gogithub.Response, err error) error {
+	// DownloadArtifact reports nonredirect HTTP errors as untyped errors.
+	if response != nil {
+		if class := errs.FromHTTPStatus(response.StatusCode); class != nil {
+			return fmt.Errorf("GitHub artifact HTTP %d: %w", response.StatusCode, class)
+		}
+	}
+
+	return classifyGitHubError(err)
 }
 
 // artifactRef is a run artifact's name and numeric id.
@@ -218,68 +257,80 @@ type artifactRef struct {
 // right matcher — and the same one download-artifact's minimatch reduces to for
 // these names.
 func listMatchingArtifacts(ctx context.Context, client *gogithub.Client, owner, repo string, runID int64, pattern string) ([]artifactRef, error) {
+	artifacts, err := listRunArtifacts(ctx, client, owner, repo, runID)
+	if err != nil {
+		return nil, err
+	}
+
 	var matches []artifactRef
 
-	opts := &gogithub.ListOptions{PerPage: 100}
-
-	for {
-		list, resp, err := client.Actions.ListWorkflowRunArtifacts(ctx, owner, repo, runID, opts)
-		if err != nil {
-			return nil, fmt.Errorf("list run %d artifacts: %w", runID, err)
+	for _, art := range artifacts {
+		ok, merr := path.Match(pattern, art.GetName())
+		if merr != nil {
+			return nil, fmt.Errorf("invalid artifact pattern %q: %w", pattern, errs.ErrUsage)
 		}
 
-		for _, art := range list.Artifacts {
-			ok, merr := path.Match(pattern, art.GetName())
-			if merr != nil {
-				return nil, fmt.Errorf("invalid artifact pattern %q: %w", pattern, errs.ErrUsage)
-			}
-
-			if ok {
-				matches = append(matches, artifactRef{name: art.GetName(), id: art.GetID()})
-			}
+		if ok {
+			matches = append(matches, artifactRef{name: art.GetName(), id: art.GetID()})
 		}
-
-		if resp == nil || resp.NextPage == 0 {
-			break
-		}
-
-		opts.Page = resp.NextPage
 	}
 
 	return matches, nil
 }
 
-// findArtifactID iterates the paginated artifact list for the run,
-// matching by exact name. The list is small (≤ tens of artifacts per
-// run) but pagination is still honoured so it works on extreme outliers.
-func findArtifactID(ctx context.Context, client *gogithub.Client, owner, repo string, runID int64, name string) (int64, error) {
-	opts := &gogithub.ListOptions{PerPage: 100}
-	for {
+// listRunArtifacts returns every artifact on the run, across pages.
+func listRunArtifacts(ctx context.Context, client *gogithub.Client, owner, repo string, runID int64) ([]*gogithub.Artifact, error) {
+	return listPages(func(opts *gogithub.ListOptions) ([]*gogithub.Artifact, *gogithub.Response, error) {
 		list, resp, err := client.Actions.ListWorkflowRunArtifacts(ctx, owner, repo, runID, opts)
 		if err != nil {
-			return 0, fmt.Errorf("list run %d artifacts: %w", runID, err)
+			return nil, resp, fmt.Errorf("list run %d artifacts: %w", runID, classifyGitHubError(err))
 		}
 
-		for _, a := range list.Artifacts {
-			if a.GetName() == name {
-				return a.GetID(), nil
-			}
-		}
+		return list.Artifacts, resp, nil
+	})
+}
 
-		if resp == nil || resp.NextPage == 0 {
-			break
-		}
-
-		opts.Page = resp.NextPage
+// findArtifactID looks the run's artifacts up by exact name, across every
+// page. The list is small (≤ tens of artifacts per run) but pagination is
+// still honoured so it works on extreme outliers, and a name on two pages is
+// as ambiguous as a name twice on one.
+func findArtifactID(ctx context.Context, client *gogithub.Client, owner, repo string, runID int64, name string) (int64, error) {
+	artifacts, err := listRunArtifacts(ctx, client, owner, repo, runID)
+	if err != nil {
+		return 0, err
 	}
 
-	return 0, fmt.Errorf("artifact %q not found on run %d: %w", name, runID, errs.ErrReleaseNotFound)
+	var matched *gogithub.Artifact
+
+	for _, candidate := range artifacts {
+		if candidate.GetName() != name {
+			continue
+		}
+
+		if matched != nil {
+			return 0, fmt.Errorf("multiple artifacts named %q on run %d: %w", name, runID, errs.ErrValidation)
+		}
+
+		matched = candidate
+	}
+
+	if matched == nil {
+		return 0, fmt.Errorf("artifact %q not found on run %d: %w", name, runID, errs.ErrReleaseNotFound)
+	}
+
+	if matched.GetID() <= 0 {
+		return 0, fmt.Errorf("matching artifact has no valid id: %w", errs.ErrMalformedInput)
+	}
+
+	return matched.GetID(), nil
 }
 
 // downloadAndExtractZip GETs the presigned URL and unzips into dir.
 // The body is streamed to a temp file so the ZIP reader (which needs
 // io.ReaderAt) doesn't materialise the whole archive in memory.
-func downloadAndExtractZip(ctx context.Context, client *http.Client, url, dir string) (int64, int, error) {
+//
+//nolint:cyclop // linear response validation, bounded spool, then extraction.
+func downloadAndExtractZip(ctx context.Context, client *http.Client, url, dir string, maxBytes int64, maxFiles int) (int64, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, 0, fmt.Errorf("build download request: %w", err)
@@ -301,6 +352,10 @@ func downloadAndExtractZip(ctx context.Context, client *http.Client, url, dir st
 		return 0, 0, fmt.Errorf("download artifact: HTTP %d: %w", resp.StatusCode, cls)
 	}
 
+	if resp.ContentLength > domainartifact.MaxArchiveBytes {
+		return 0, 0, fmt.Errorf("download artifact body exceeds %d bytes: %w", domainartifact.MaxArchiveBytes, errs.ErrValidation)
+	}
+
 	tmp, err := os.CreateTemp("", "reusable-ci-artifact-*.zip")
 	if err != nil {
 		return 0, 0, fmt.Errorf("create temp zip: %w", err)
@@ -310,7 +365,7 @@ func downloadAndExtractZip(ctx context.Context, client *http.Client, url, dir st
 
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	size, err := io.Copy(tmp, resp.Body)
+	size, err := domainartifact.CopyAtMost(tmp, resp.Body, domainartifact.MaxArchiveBytes)
 	if cerr := tmp.Close(); err == nil {
 		err = cerr
 	}
@@ -321,47 +376,99 @@ func downloadAndExtractZip(ctx context.Context, client *http.Client, url, dir st
 
 	zr, err := zip.OpenReader(tmpPath)
 	if err != nil {
-		return 0, 0, fmt.Errorf("open downloaded zip (%d bytes): %w", size, err)
+		// Classified, because an unclassified error here exits 70, which tells
+		// the operator this program is at fault — for a body the forge served
+		// that is not an archive. The download reached a server and the server
+		// answered; what came back was wrong, which is the same shape as any
+		// other refusal and is the operator's to investigate, not ours.
+		return 0, 0, fmt.Errorf("open downloaded zip (%d bytes): %w: %w", size, err, errs.ErrValidation)
 	}
 
 	defer func() { _ = zr.Close() }()
 
-	return extractZipInto(zr, dir)
+	stage, err := pathsafe.NewArtifactStaging(dir)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	defer func() { _ = stage.Close() }()
+
+	bytesWritten, count, err := extractZipInto(zr, stage.Root(), maxBytes, maxFiles)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	if err := stage.Install(); err != nil {
+		return 0, 0, err
+	}
+
+	return bytesWritten, count, nil
 }
 
-// extractZipInto writes each entry from zr under dir, returning the total
+// extractZipInto writes each entry from zr under root, returning the total
 // bytes and file count. Path safety (traversal, escape, backslash, abs) is
 // the shared domain/artifact.SafeJoin guard — the same one the Forgejo
 // per-file path uses. Symlink entries are rejected outright.
-func extractZipInto(zr *zip.ReadCloser, dir string) (int64, int, error) {
+//
+//nolint:cyclop // each branch is a distinct archive-entry safety check.
+func extractZipInto(zr *zip.ReadCloser, root *os.Root, maxBytes int64, maxFiles int) (int64, int, error) {
 	var (
 		totalBytes int64
 		count      int
+		entries    int
 	)
 
 	for _, f := range zr.File { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+		entries++
+		if entries > domainartifact.MaxFileCount {
+			return 0, 0, fmt.Errorf("zip exceeds %d entries: %w", domainartifact.MaxFileCount, errs.ErrValidation)
+		}
+
 		if f.Mode()&fs.ModeSymlink != 0 {
 			return 0, 0, fmt.Errorf("zip entry %q is a symlink: %w", f.Name, errs.ErrValidation)
 		}
 
-		dest, err := domainartifact.SafeJoin(dir, f.Name)
+		_, err := domainartifact.SafeJoin(".", f.Name)
 		if err != nil {
 			return 0, 0, err
 		}
 
+		dest := filepath.FromSlash(f.Name)
+
 		if f.FileInfo().IsDir() {
-			if mkErr := os.MkdirAll(dest, f.Mode()|0o700); mkErr != nil {
+			if mkErr := root.MkdirAll(dest, f.Mode()|0o700); mkErr != nil {
 				return 0, 0, fmt.Errorf("mkdir %q: %w", dest, mkErr)
 			}
 
 			continue
 		}
 
-		if mkErr := os.MkdirAll(filepath.Dir(dest), 0o755); mkErr != nil { //nolint:gosec // artifact dirs read by build steps.
+		if count >= maxFiles {
+			return 0, 0, fmt.Errorf("zip exceeds remaining artifact file budget: %w", errs.ErrValidation)
+		}
+
+		remainingBytes := maxBytes - totalBytes
+		if remainingBytes < 0 {
+			return 0, 0, fmt.Errorf("zip exceeds remaining artifact byte budget: %w", errs.ErrValidation)
+		}
+
+		remainingLimit := uint64(remainingBytes) //nolint:gosec // non-negative check above makes the conversion exact.
+		if f.UncompressedSize64 > uint64(domainartifact.MaxFileBytes) || f.UncompressedSize64 > remainingLimit {
+			return 0, 0, fmt.Errorf("zip entry %q exceeds extraction limits: %w", f.Name, errs.ErrValidation)
+		}
+
+		declaredBytes := int64(f.UncompressedSize64) //nolint:gosec // bounds above prove the value fits in int64.
+		if totalErr := domainartifact.ValidateTotals(totalBytes, count, declaredBytes); totalErr != nil {
+			return 0, 0, fmt.Errorf("zip entry %q: %w", f.Name, totalErr)
+		}
+
+		if mkErr := root.MkdirAll(filepath.Dir(dest), 0o755); mkErr != nil { //nolint:gosec // os.Root contains artifact dirs.
 			return 0, 0, fmt.Errorf("mkdir parent of %q: %w", dest, mkErr)
 		}
 
-		n, err := writeZipFile(f, dest)
+		limit := min(domainartifact.MaxFileBytes, maxBytes-totalBytes)
+
+		n, err := writeZipFile(root, f, dest, limit)
 		if err != nil {
 			return 0, 0, err
 		}
@@ -373,7 +480,7 @@ func extractZipInto(zr *zip.ReadCloser, dir string) (int64, int, error) {
 	return totalBytes, count, nil
 }
 
-func writeZipFile(f *zip.File, dest string) (int64, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func writeZipFile(root *os.Root, f *zip.File, dest string, maxBytes int64) (int64, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	in, err := f.Open()
 	if err != nil {
 		return 0, fmt.Errorf("open zip entry %q: %w", f.Name, err)
@@ -381,20 +488,34 @@ func writeZipFile(f *zip.File, dest string) (int64, error) { //nolint:varnamelen
 
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, f.Mode()|0o600) //nolint:gosec // dest path is SafeJoin-checked by caller.
+	if removeErr := root.Remove(dest); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
+		return 0, fmt.Errorf("replace %q: %w", dest, removeErr)
+	}
+
+	out, err := root.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, f.Mode()|0o600) //nolint:gosec // os.Root contains dest.
 	if err != nil {
 		return 0, fmt.Errorf("create %q: %w", dest, err)
 	}
 
-	written, copyErr := io.CopyN(out, in, domainartifact.MaxFileBytes)
+	complete := false
+	defer func() {
+		if !complete {
+			_ = out.Close()
+			_ = root.Remove(dest)
+		}
+	}()
+
+	written, copyErr := domainartifact.CopyAtMost(out, in, maxBytes)
 	closeErr := out.Close()
 
 	switch {
-	case copyErr != nil && !errors.Is(copyErr, io.EOF):
+	case copyErr != nil:
 		return 0, fmt.Errorf("extract %q: %w", dest, copyErr)
 	case closeErr != nil:
 		return 0, fmt.Errorf("close %q: %w", dest, closeErr)
 	}
+
+	complete = true
 
 	return written, nil
 }
@@ -402,15 +523,10 @@ func writeZipFile(f *zip.File, dest string) (int64, error) { //nolint:varnamelen
 // resolveOwnerRepo splits "owner/repo" or falls back to GITHUB_REPOSITORY
 // via the Provider's env function.
 func resolveOwnerRepo(p *Provider, fromInput string) (string, string, error) {
-	repo := strings.TrimSpace(fromInput)
+	repo := fromInput
 	if repo == "" {
 		repo = p.envFunc()("GITHUB_REPOSITORY")
 	}
 
-	owner, name, ok := strings.Cut(repo, "/")
-	if !ok || owner == "" || name == "" {
-		return "", "", fmt.Errorf("repository must be owner/repo, got %q: %w", repo, errs.ErrUsage)
-	}
-
-	return owner, name, nil
+	return splitRepo(repo)
 }

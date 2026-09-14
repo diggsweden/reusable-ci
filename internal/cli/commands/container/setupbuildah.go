@@ -26,6 +26,10 @@ after buildah info and an optional layered build probe succeed, and falls back t
 vfs. Emits CONTAINERS_STORAGE_CONF and TMPDIR to the runner env file for later CI
 steps.
 
+The temp directory must be an existing job-specific directory, not shared /tmp
+or /var/tmp. Storage overrides and the runner env file must remain below it;
+unsafe paths are refused before package installation or Buildah invocation.
+
 EXAMPLE:
    reusable-ci container setup-buildah --extra-packages "jq skopeo" --summary`,
 		Flags: []cli.Flag{
@@ -37,7 +41,7 @@ EXAMPLE:
 			&cli.StringFlag{Name: "storage-conf", Sources: cli.EnvVars("CONTAINERS_STORAGE_CONF"), Usage: "containers storage config path (default: $RUNNER_TEMP/containers-storage.conf)"},
 			&cli.StringFlag{Name: "storage-root", Sources: cli.EnvVars("CONTAINER_STORAGE_ROOT"), Usage: "containers storage root path (default: $RUNNER_TEMP/containers-storage)"},
 			&cli.StringFlag{Name: "tmp-dir", Sources: cli.EnvVars("CONTAINER_TMPDIR"), Usage: "job-local temp directory (default: $RUNNER_TEMP/container-tmp)"},
-			&cli.StringFlag{Name: flagTempDir, Aliases: []string{flagTempDirLegacy}, Sources: cienv.TempDir(), Usage: "scratch directory used for default paths"},
+			&cli.StringFlag{Name: flagTempDir, Aliases: []string{flagTempDirLegacy}, Sources: cienv.TempDir(), Usage: "existing job-specific scratch root containing all storage and env-file paths (required)"},
 			&cli.StringFlag{Name: "env-file", Sources: cli.EnvVars("FORGEJO_ENV", "GITHUB_ENV"), Usage: "runner env file receiving CONTAINERS_STORAGE_CONF and TMPDIR"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {

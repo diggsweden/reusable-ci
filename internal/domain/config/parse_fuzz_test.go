@@ -19,6 +19,8 @@ func FuzzParseConfig(f *testing.F) {
 		[]byte("artifacts:\n  - name: backend\n    project-type: maven\ncontainers:\n  - name: app\n    from: [backend]\n"),
 		[]byte("not: valid: yaml: at: all: \n  - "),
 		[]byte("artifacts: []\n"),
+		[]byte("artifacts:\n  - &entry\n    name: app\n    project-type: maven\n    config: *entry\n"),
+		[]byte("artifacts:\n  - &entry\n    <<: *entry\n    name: app\n    project-type: maven\n"),
 	}
 	for _, seed := range seeds {
 		f.Add(seed)

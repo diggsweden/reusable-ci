@@ -49,13 +49,15 @@ func TestInRunner_KeylessSigningAgainstTheLabCA(t *testing.T) {
 			repo := livetest.NewScratchRepoUnique(t, target, "keyless")
 
 			livetest.PrepareTag(t, target, repo, tag)
-			livetest.PublishKeylessAssets(t, target, repo, tag, t.TempDir())
+			staged := livetest.PublishKeylessAssets(t, target, repo, tag, t.TempDir())
 
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
-			proxyAssetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "credential-proxy")
+			asset := func(name string) livetest.ProbeAsset {
+				return staged.Asset(t, name, livetest.ReleaseAssetURL(t, target, repo, tag, name))
+			}
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "keyless-sign",
-				livetest.KeylessSignProbe(target, assetURL, proxyAssetURL, fulcioURL, oidcIssuer))
+				livetest.KeylessSignProbe(target, assetURL, asset("credential-proxy"), asset("cosign.gz"), asset("probe-json"), fulcioURL, oidcIssuer))
 			if conclusion != "success" {
 				t.Errorf("%s: keyless signing concluded %q — this forge mints OIDC tokens, but one did not produce a signing certificate from the lab CA",
 					forge, conclusion)

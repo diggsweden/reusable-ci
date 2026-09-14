@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"testing"
 )
@@ -36,27 +37,44 @@ type Response struct {
 // Handler turns an inbound Request into a canned Response.
 type Handler func(req Request) Response
 
-// Server is a single in-process httptest.Server with method+path routing.
+// Server routes method+path pairs to canned responses, entirely in memory.
+//
+// It used to be an httptest.Server, which meant every test that touched the
+// GitLab adapter bound a loopback port and ran a listener goroutine. Nothing
+// needed the network: the adapter takes an *http.Client, so the same routing
+// and the same recorded requests work through a RoundTripper, and the test no
+// longer depends on a port being available or on the OS scheduling a server.
+//
+// The recorded Request keeps method, path, header, body and query, so what a
+// test can assert is unchanged.
 type Server struct {
 	t        *testing.T
-	srv      *httptest.Server
 	mu       sync.Mutex
 	routes   map[string]Handler
 	requests []Request
 }
 
-// New starts an httptest.Server scoped to t.
+// New returns a Server scoped to t. Nothing is started and no port is bound.
 func New(t *testing.T) *Server {
 	t.Helper()
-	s := &Server{t: t, routes: map[string]Handler{}}
-	s.srv = httptest.NewServer(http.HandlerFunc(s.handle))
-	t.Cleanup(s.srv.Close)
 
-	return s
+	return &Server{t: t, routes: map[string]Handler{}}
 }
 
-// URL returns the base URL of the underlying httptest.Server.
-func (s *Server) URL() string { return s.srv.URL }
+// URL is the synthetic base every request is addressed to. It resolves to
+// nothing: requests reach this Server through Client, not through the network,
+// and a request that escaped to the real network would fail to resolve rather
+// than silently reaching somewhere.
+func (s *Server) URL() string { return "https://gitlab.invalid" }
+
+// Client returns an *http.Client whose transport dispatches to this Server.
+func (s *Server) Client() *http.Client {
+	return &http.Client{Transport: roundTripFunc(s.roundTrip)}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // On registers a handler for an exact (method, path) pair.
 func (s *Server) On(method, path string, h Handler) {
@@ -81,9 +99,40 @@ func (s *Server) Requests() []Request {
 	defer s.mu.Unlock()
 
 	cp := make([]Request, len(s.requests))
-	copy(cp, s.requests)
+	for index, req := range s.requests {
+		cp[index] = req.clone()
+	}
 
 	return cp
+}
+
+// roundTrip runs the same routing the HTTP handler did, against an in-memory
+// recorder, and returns the recorded result as a response.
+func (s *Server) roundTrip(r *http.Request) (*http.Response, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	// A client request built with a nil body has Body == nil; a server handler
+	// is always given one. Normalising here keeps handle identical to what it
+	// was when a real listener fed it.
+	if r.Body == nil {
+		r = r.Clone(r.Context())
+		r.Body = http.NoBody
+	}
+
+	recorder := httptest.NewRecorder()
+	s.handle(recorder, r)
+
+	resp := recorder.Result()
+	resp.Request = r
+
+	return resp, nil
+}
+
+func (r Request) clone() Request {
+	r.Header = r.Header.Clone()
+	r.Body = slices.Clone(r.Body)
+	// Query has the same map-of-slices shape as Header, including nil values.
+	r.Query = http.Header(r.Query).Clone()
+
+	return r
 }
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -103,7 +152,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) { //nolint:varna
 	}
 
 	s.mu.Lock()
-	s.requests = append(s.requests, req)
+	s.requests = append(s.requests, req.clone())
 	h, ok := s.routes[upperASCII(r.Method)+" "+path] //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	s.mu.Unlock()
 

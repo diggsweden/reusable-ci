@@ -7,9 +7,12 @@ import (
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testenv"
 )
 
 func TestProvenanceBuilderID_CanonicalWorkflowRef(t *testing.T) {
+	testenv.New(t)
+	t.Setenv("GITHUB_ACTIONS", "true")
 	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
 	t.Setenv("GITHUB_WORKFLOW_REF", "diggsweden/reusable-ci/.github/workflows/release-binary.yml@refs/tags/v1.2.3")
 	// Display name MUST NOT be used — that is the bug this guards against.
@@ -22,6 +25,8 @@ func TestProvenanceBuilderID_CanonicalWorkflowRef(t *testing.T) {
 }
 
 func TestProvenanceInvocationID_RunURL(t *testing.T) {
+	testenv.New(t)
+	t.Setenv("GITHUB_ACTIONS", "true")
 	t.Setenv("CI_JOB_URL", "")
 	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
 	t.Setenv("GITHUB_REPOSITORY", "o/r")
@@ -33,7 +38,7 @@ func TestProvenanceInvocationID_RunURL(t *testing.T) {
 	}
 }
 
-func TestSourceDateEpochRFC3339(t *testing.T) {
+func TestSourceDateEpochRFC3339_ConvertsTheEpochAndRejectsMalformed(t *testing.T) {
 	t.Run("valid", func(t *testing.T) {
 		t.Setenv("SOURCE_DATE_EPOCH", "1700000000")
 
@@ -61,11 +66,65 @@ func TestSourceDateEpochRFC3339(t *testing.T) {
 }
 
 func TestProvenanceBuilderID_FallsBackToJobURL(t *testing.T) {
+	testenv.New(t)
+	t.Setenv("GITLAB_CI", "true")
 	t.Setenv("GITHUB_WORKFLOW_REF", "")
 	t.Setenv("GITHUB_SERVER_URL", "")
 	t.Setenv("CI_JOB_URL", "https://gitlab.example/o/r/-/jobs/9")
 
 	if got := cienv.ProvenanceBuilderID(); got != "https://gitlab.example/o/r/-/jobs/9" {
 		t.Errorf("builder id = %q, want GitLab job URL fallback", got)
+	}
+}
+
+func TestProvenanceIdentity_FallbacksDoNotBorrowTargetContext(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		gitlab  bool
+		missing string
+		want    string
+	}{
+		{name: "github run", want: "https://github.invalid/runner/repo/actions/runs/42"},
+		{name: "missing server", missing: "GITHUB_SERVER_URL"},
+		{name: "missing repository", missing: "GITHUB_REPOSITORY"},
+		{name: "missing run", missing: "GITHUB_RUN_ID"},
+		{name: "gitlab pipeline", gitlab: true, want: "https://gitlab.invalid/runner/repo/-/pipelines/73"},
+		{name: "missing pipeline", gitlab: true, missing: "CI_PIPELINE_URL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testenv.New(t)
+
+			for key, value := range map[string]string{
+				"REUSABLE_CI_PROVIDER": "forgejo",
+				"GITHUB_SERVER_URL":    "https://github.invalid///", "GITHUB_REPOSITORY": "runner/repo", "GITHUB_RUN_ID": "42",
+				"GITHUB_WORKFLOW":    "Display name is not an identity",
+				"FORGEJO_SERVER_URL": "https://target.invalid", "FORGEJO_REPOSITORY": "target/repo",
+				"FORGEJO_RUN_ID": "999", "FORGEJO_WORKFLOW_REF": "target/workflow@wrong",
+				"FORGEJO_SERVER": "https://alias.invalid", "FORGEJO_REPO": "alias/repo",
+				"CI_SERVER_URL": "https://gitlab.invalid", "CI_PROJECT_PATH": "runner/repo", "CI_PIPELINE_ID": "73",
+				"CI_PIPELINE_URL": "https://gitlab.invalid/runner/repo/-/pipelines/73",
+				"CI_RUN_ID":       "neutral-run", "CI_RUN_URL": "https://neutral.invalid/run", "REPOSITORY": "neutral/repo",
+			} {
+				t.Setenv(key, value)
+			}
+
+			if tc.gitlab {
+				t.Setenv("GITLAB_CI", "true")
+			} else {
+				t.Setenv("GITHUB_ACTIONS", "true")
+			}
+
+			if tc.missing != "" {
+				t.Setenv(tc.missing, "")
+			}
+
+			if got := cienv.ProvenanceBuilderID(); got != tc.want {
+				t.Errorf("builder = %q, want %q", got, tc.want)
+			}
+
+			if got := cienv.ProvenanceInvocationID(); got != tc.want {
+				t.Errorf("invocation = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

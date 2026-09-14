@@ -4,12 +4,17 @@
 package validate
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // Shared helpers used by the per-ecosystem prerequisite validators
@@ -43,7 +48,33 @@ func safeWorkingDir(dir string) (string, error) {
 		return "", fmt.Errorf("working directory %q escapes the workspace: %w", dir, errs.ErrInvalidConfig)
 	}
 
+	root, err := pathsafe.OpenRoot(clean)
+	if err != nil {
+		return "", fmt.Errorf("open prerequisite working directory: %w: %w", err, errs.ErrInvalidConfig)
+	}
+
+	_ = root.Close()
+
 	return clean, nil
+}
+
+// plannedWorkingDirs returns each artifact's working directory once, in plan
+// order, after every one has passed the safety check.
+func plannedWorkingDirs(artifacts []pipeline.PlannedArtifact) ([]string, error) {
+	var dirs []string
+
+	for _, artifact := range artifacts {
+		dir, err := safeWorkingDir(artifact.WorkingDirectory)
+		if err != nil {
+			return nil, err
+		}
+
+		if !slices.Contains(dirs, dir) {
+			dirs = append(dirs, dir)
+		}
+	}
+
+	return dirs, nil
 }
 
 // fileExists returns true when path is a regular file (not a directory)
@@ -51,9 +82,39 @@ func safeWorkingDir(dir string) (string, error) {
 // and "permission denied" identically (the validator's contract is "did
 // the project ship the expected file?", not "could we open it?").
 func fileExists(path string) bool {
-	info, err := os.Stat(path)
+	_, err := readWorkspaceFile(path)
 
-	return err == nil && !info.IsDir()
+	return err == nil
+}
+
+func readWorkspaceFile(path string) ([]byte, error) {
+	root, err := pathsafe.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+
+	info, err := root.Lstat(filepath.Base(path))
+	if err != nil {
+		return nil, err
+	}
+
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("prerequisite manifest must be a nonlinked regular file: %w", errs.ErrValidation)
+	}
+
+	return cliio.ReadFileInRoot(root, filepath.Base(path))
+}
+
+func workflowReadError(path string, err error) error {
+	kind := errs.ErrMalformedInput
+	if errors.Is(err, os.ErrNotExist) {
+		kind = errs.ErrMissingInput
+	} else if errors.Is(err, os.ErrPermission) {
+		kind = errs.ErrPermissionDenied
+	}
+
+	return fmt.Errorf("read workflow %s: %w: %w", path, err, kind)
 }
 
 // displayDir maps the empty / `.` directory to "repo root" for human-

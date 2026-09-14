@@ -7,11 +7,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
 	appplan "github.com/diggsweden/reusable-ci/v3/internal/app/plan"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
@@ -134,8 +136,8 @@ func TestPlanRelease_MissingConfigPlanErrors(t *testing.T) {
 	sink := fakeoutputsink.New(t)
 
 	_, err := appplan.Release(context.Background(), sink, nil, appplan.ReleaseInput{})
-	if err == nil || !strings.Contains(err.Error(), "config-plan-json is required") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "config-plan-json is required") {
+		t.Errorf("err = %v, want ErrUsage naming the missing plan", err)
 	}
 }
 
@@ -145,8 +147,11 @@ func TestPlanRelease_RejectsUnsupportedConfigPlanVersion(t *testing.T) {
 	_, err := appplan.Release(context.Background(), fakeoutputsink.New(t), nil, appplan.ReleaseInput{
 		ConfigPlanJSON: `{"version":2,"artifacts":{"all":[]},"containers":{"all":[],"has_containers":false}}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "unsupported config-plan version 2") {
-		t.Errorf("err = %v", err)
+	// ErrInvalidConfig, not ErrUsage: the caller passed a well-formed plan
+	// that this binary is too old to read, which is a version skew between
+	// the config step and the plan step rather than a bad flag.
+	if !errors.Is(err, errs.ErrInvalidConfig) || !strings.Contains(err.Error(), "unsupported config-plan version 2") {
+		t.Errorf("err = %v, want ErrInvalidConfig naming the version", err)
 	}
 }
 
@@ -180,8 +185,8 @@ func TestPlanPR_RejectsUnknownProjectType(t *testing.T) {
 	t.Parallel()
 
 	_, err := appplan.PR(context.Background(), fakeoutputsink.New(t), appplan.PRInput{ProjectType: "rust"})
-	if err == nil || !strings.Contains(err.Error(), "unknown project-type") {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "unknown project-type") {
+		t.Fatalf("err = %v, want ErrUsage naming the unknown type", err)
 	}
 }
 
@@ -189,13 +194,19 @@ func TestPlanPR_RejectsUnknownProjectType(t *testing.T) {
 func TestPlanSnapshotRelease_EmitsTypedPlanOutputs(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
-	configPlanJSON := mustConfigPlanJSON(t, pipeline.NewConfigPlan(&config.Config{
+
+	cfg := &config.Config{
 		Artifacts: []config.Artifact{
 			{Name: "web", ProjectType: projecttype.NPM},
 			{Name: "worker", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeArtifactFirst}},
 		},
 		Containers: []config.Container{{Name: "image"}},
-	}))
+	}
+	if err := config.Derive(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	configPlanJSON := mustConfigPlanJSON(t, pipeline.NewConfigPlan(cfg))
 
 	got, err := appplan.SnapshotRelease(context.Background(), sink, appplan.SnapshotReleaseInput{
 		ConfigPlanJSON:      configPlanJSON,
@@ -253,9 +264,15 @@ func TestPlanSnapshotRelease_EmitsTypedPlanOutputs(t *testing.T) {
 func TestPlanSnapshotRelease_ProjectTypeOverrideWins(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
-	configPlanJSON := mustConfigPlanJSON(t, pipeline.NewConfigPlan(&config.Config{
+
+	cfg := &config.Config{
 		Artifacts: []config.Artifact{{Name: "web", ProjectType: projecttype.NPM}},
-	}))
+	}
+	if err := config.Derive(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	configPlanJSON := mustConfigPlanJSON(t, pipeline.NewConfigPlan(cfg))
 
 	got, err := appplan.SnapshotRelease(context.Background(), sink, appplan.SnapshotReleaseInput{
 		ConfigPlanJSON: configPlanJSON,
@@ -275,8 +292,8 @@ func TestPlanSnapshotRelease_MissingConfigPlanErrors(t *testing.T) {
 	sink := fakeoutputsink.New(t)
 
 	_, err := appplan.SnapshotRelease(context.Background(), sink, appplan.SnapshotReleaseInput{})
-	if err == nil || !strings.Contains(err.Error(), "config-plan-json is required") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "config-plan-json is required") {
+		t.Errorf("err = %v, want ErrUsage naming the missing plan", err)
 	}
 }
 
@@ -286,8 +303,11 @@ func TestPlanSnapshotRelease_RejectsUnsupportedConfigPlanVersion(t *testing.T) {
 	_, err := appplan.SnapshotRelease(context.Background(), fakeoutputsink.New(t), appplan.SnapshotReleaseInput{
 		ConfigPlanJSON: `{"version":2,"artifacts":{"all":[]},"containers":{"all":[],"has_containers":false}}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "unsupported config-plan version 2") {
-		t.Errorf("err = %v", err)
+	// ErrInvalidConfig, not ErrUsage: the caller passed a well-formed plan
+	// that this binary is too old to read, which is a version skew between
+	// the config step and the plan step rather than a bad flag.
+	if !errors.Is(err, errs.ErrInvalidConfig) || !strings.Contains(err.Error(), "unsupported config-plan version 2") {
+		t.Errorf("err = %v, want ErrInvalidConfig naming the version", err)
 	}
 }
 
@@ -474,8 +494,8 @@ func TestGetFilePattern_EmptyProjectTypeErrors(t *testing.T) {
 	sink := fakeoutputsink.New(t)
 
 	_, err := appplan.GetFilePattern(context.Background(), sink, &bytes.Buffer{}, appplan.GetFilePatternInput{})
-	if err == nil || !strings.Contains(err.Error(), "project type is required") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "project type is required") {
+		t.Errorf("err = %v, want ErrUsage naming the missing type", err)
 	}
 }
 
@@ -483,7 +503,75 @@ func TestGetFilePattern_UnknownProjectTypeErrors(t *testing.T) {
 	t.Parallel()
 
 	_, err := appplan.GetFilePattern(context.Background(), fakeoutputsink.New(t), &bytes.Buffer{}, appplan.GetFilePatternInput{ProjectType: "unknown"})
-	if err == nil || !strings.Contains(err.Error(), "unknown project-type") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "unknown project-type") {
+		t.Errorf("err = %v, want ErrUsage naming the unknown type", err)
+	}
+}
+
+// TestPlanRelease_IsByteIdenticalForAnEquivalentInput pins the determinism the
+// plan's consumers depend on.
+//
+// The plan JSON is emitted into $GITHUB_OUTPUT and read by later jobs, and
+// several checks compare a plan against the one a previous run produced. A
+// plan whose bytes move for an input that means the same thing turns every
+// such comparison into noise, and there is no signal distinguishing "the plan
+// changed" from "the map iterated differently this time".
+//
+// The two inputs are the same config plan with its JSON object keys in
+// different orders, build_args included, since that is the one map-typed field
+// that reaches the plan. Structs marshal in declaration order and encoding/json
+// sorts map keys, so this holds today by construction; what it guards is a
+// change that would carry input order through, such as a field becoming
+// json.RawMessage or a slice being built by ranging a map.
+func TestPlanRelease_IsByteIdenticalForAnEquivalentInput(t *testing.T) {
+	t.Parallel()
+
+	build := func(t *testing.T, args map[string]string) map[string]string {
+		t.Helper()
+
+		cfg := &config.Config{
+			Sign: config.SignConfig{Method: domainrelease.SignMethodSigstore},
+			Artifacts: []config.Artifact{
+				{Name: "lib", ProjectType: projecttype.Maven, BuildType: config.BuildTypeLibrary},
+				{Name: "go-cli", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeArtifactFirst}},
+			},
+			Containers: []config.Container{{Name: "image", BuildArgs: args}},
+		}
+		if err := config.Derive(cfg); err != nil {
+			t.Fatal(err)
+		}
+
+		sink := fakeoutputsink.New(t)
+		if _, err := appplan.Release(context.Background(), sink, nil, appplan.ReleaseInput{
+			ConfigPlanJSON:       mustConfigPlanJSON(t, pipeline.NewConfigPlan(cfg)),
+			Branch:               "main",
+			RefName:              "v1.2.3",
+			ReleaseSBOMs:         "all",
+			ReleaseSignArtifacts: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		return sink.AllScalar()
+	}
+
+	// Two literals with the same pairs. Go randomises map iteration, so
+	// writing them in different source order is not what makes this a test —
+	// the point is that two independent runs over equal content agree.
+	first := build(t, map[string]string{"ALPHA": "1", "BETA": "2", "GAMMA": "3"})
+	second := build(t, map[string]string{"GAMMA": "3", "BETA": "2", "ALPHA": "1"})
+
+	if len(first) == 0 {
+		t.Fatal("the plan emitted no outputs; this test would compare nothing")
+	}
+
+	for key, want := range first {
+		if got := second[key]; got != want {
+			t.Errorf("output %q differs between equivalent plans:\n first  = %s\n second = %s", key, want, got)
+		}
+	}
+
+	if len(second) != len(first) {
+		t.Errorf("output key counts differ: %d vs %d", len(first), len(second))
 	}
 }

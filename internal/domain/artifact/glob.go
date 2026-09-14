@@ -7,15 +7,18 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // CollectUpload resolves an upload set, dispatching on which selector the
-// caller supplied: glob patterns (paths) preserve directory structure, while
-// dir/files use the literal walk/flatten collection. Paths take precedence.
+// caller supplied: glob patterns (paths), a directory, or exact files. Every
+// mode preserves paths relative to its resolved artifact root. Paths take precedence.
 //
 // Unlike the rest of domain, this and its helpers walk the real filesystem
 // (os.Lstat / filepath.WalkDir) and emit ABSOLUTE paths in UploadEntry.Abs —
@@ -24,22 +27,49 @@ import (
 // of absolute paths, and the least-common-ancestor rooting works in abs-path
 // space. Keep it here rather than "purifying" it into an adapter.
 func CollectUpload(dir string, files, paths []string, includeHidden bool) ([]UploadEntry, error) {
+	var (
+		entries []UploadEntry
+		err     error
+	)
 	if len(paths) > 0 {
-		return CollectGlobEntries(paths, includeHidden)
+		entries, err = CollectGlobEntries(paths, includeHidden)
+	} else {
+		entries, err = CollectUploadEntries(dir, files, includeHidden)
 	}
 
-	return CollectUploadEntries(dir, files, includeHidden)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validateUploadAggregate(entries); err != nil {
+		return nil, err
+	}
+
+	return entries, nil
+}
+
+func validateUploadAggregate(entries []UploadEntry) error {
+	var total int64
+	for index, entry := range entries {
+		if err := ValidateAggregate(total, index, entry.Size, 1); err != nil {
+			return fmt.Errorf("upload entry %q: %w", entry.RelPath, err)
+		}
+
+		total += entry.Size
+	}
+
+	return nil
 }
 
 // CollectGlobEntries resolves an upload set from glob patterns, reproducing
-// actions/upload-artifact's path semantics without a third-party glob library:
+// actions/upload-artifact's path semantics with doublestar matching:
 //
 //   - each pattern may use *, ?, [set] (within one segment) and ** (across any
 //     number of segments, including zero);
 //   - a line beginning with ! is an exclude pattern, removed from the result;
 //   - the artifact-relative path of every matched file is taken relative to the
-//     least-common-ancestor directory of all matches, so directory structure is
-//     preserved (a single file collapses to its basename);
+//     least-common-ancestor of the patterns' non-wildcard bases, preserving
+//     directory structure (a literal file roots at its parent);
 //   - when includeHidden is false, dotfiles (and dot-directory descendants)
 //     under that root are dropped.
 //
@@ -82,8 +112,8 @@ func CollectGlobEntries(patterns []string, includeHidden bool) ([]UploadEntry, e
 
 // globRoot reproduces actions/upload-artifact's root selection: the artifact
 // tree is rooted at the least-common-ancestor of the patterns' non-wildcard
-// bases — except a single literal-file pattern, which roots at the file's
-// parent directory so it stores as a bare basename.
+// bases. If that root is itself a matched file (including repeated equivalent
+// literals), use its parent so the stored name is a basename, never ".".
 func globRoot(includes []string, matched map[string]struct{}) (string, error) {
 	bases := make([]string, 0, len(includes))
 
@@ -101,17 +131,12 @@ func globRoot(includes []string, matched map[string]struct{}) (string, error) {
 		bases = append(bases, abs)
 	}
 
-	if len(includes) == 1 {
-		if _, rest := splitGlobBase(filepath.ToSlash(includes[0])); rest == "" {
-			if _, ok := matched[bases[0]]; ok && len(matched) == 1 {
-				return filepath.Dir(bases[0]), nil
-			}
-		}
-
-		return bases[0], nil
+	root := commonPrefixDir(bases)
+	if _, isFile := matched[root]; isFile {
+		return filepath.Dir(root), nil
 	}
 
-	return commonPrefixDir(bases), nil
+	return root, nil
 }
 
 // entriesFromMatches turns the matched absolute file set into UploadEntries,
@@ -141,7 +166,7 @@ func entriesFromMatches(matched map[string]struct{}, root string, includeHidden 
 			return nil, fmt.Errorf("stat %q: %w", file, err)
 		}
 
-		out = append(out, UploadEntry{Abs: file, RelPath: filepath.ToSlash(rel), Size: info.Size()})
+		out = append(out, UploadEntry{Abs: file, RelPath: filepath.ToSlash(rel), Size: info.Size(), info: info})
 	}
 
 	return out, nil
@@ -182,6 +207,13 @@ func globExpand(pattern string) ([]string, error) {
 
 	if rest == "" {
 		return literalMatch(base)
+	}
+
+	if !doublestar.ValidatePattern(rest) {
+		// A malformed pattern is a mistyped --path, so it exits as CLI misuse
+		// rather than the unclassified EX_SOFTWARE (70). The doublestar cause
+		// is kept so the operator still sees "syntax error in pattern".
+		return nil, fmt.Errorf("glob %q: %w: %w", pattern, doublestar.ErrBadPattern, errs.ErrUsage)
 	}
 
 	walkRoot := base
@@ -321,45 +353,10 @@ func hasGlobMeta(seg string) bool {
 	return strings.ContainsAny(seg, "*?[")
 }
 
-// matchPath reports whether the slash-separated name matches pattern, where
-// "**" spans any number of segments (including zero) and *, ?, [set] match
-// within one segment via path.Match.
+// matchPath reports whether the slash-separated name matches pattern using the
+// maintained doublestar implementation shared with upload-artifact semantics.
 func matchPath(pattern, name string) (bool, error) {
-	return matchSegments(strings.Split(pattern, "/"), strings.Split(name, "/"))
-}
-
-func matchSegments(pat, name []string) (bool, error) {
-	for len(pat) > 0 {
-		if pat[0] == "**" {
-			rest := pat[1:]
-			if len(rest) == 0 {
-				return true, nil // trailing ** matches the remainder
-			}
-
-			for idx := 0; idx <= len(name); idx++ {
-				ok, err := matchSegments(rest, name[idx:])
-				if err != nil || ok {
-					return ok, err
-				}
-			}
-
-			return false, nil
-		}
-
-		if len(name) == 0 {
-			return false, nil
-		}
-
-		ok, err := path.Match(pat[0], name[0])
-		if err != nil || !ok {
-			return false, err
-		}
-
-		pat = pat[1:]
-		name = name[1:]
-	}
-
-	return len(name) == 0, nil
+	return doublestar.Match(pattern, name)
 }
 
 // commonPrefixDir returns the deepest directory that is a common ancestor of

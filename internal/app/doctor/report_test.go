@@ -64,7 +64,7 @@ func TestFormatJSON_RoundTripsReport(t *testing.T) {
 	}
 }
 
-func TestCountFailures(t *testing.T) {
+func TestCountFailures_CountsOnlyFailSeverity(t *testing.T) {
 	t.Parallel()
 
 	checks := []appdoctor.Check{

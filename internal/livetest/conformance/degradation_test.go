@@ -30,7 +30,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/domain/provenance"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/livetest"
 )
@@ -68,6 +67,14 @@ func TestDegradation_SARIFUpload_NoticesAndSucceeds(t *testing.T) {
 			if strings.TrimSpace(run.Combined()) == "" {
 				t.Errorf("%s: degraded silently; the user is told nothing about where findings went", target.Forge)
 			}
+
+			// And what is said must explain itself: that it is SARIF, that the
+			// upload was skipped rather than failed, and which platform lacks it.
+			for _, required := range []string{"SARIF upload skipped", `platform "` + string(target.Forge) + `"`, "unsupported on this platform"} {
+				if !strings.Contains(run.Stderr, required) {
+					t.Errorf("%s: degradation notice lacks %q\nstderr: %s", target.Forge, required, run.Stderr)
+				}
+			}
 		})
 	}
 }
@@ -98,6 +105,13 @@ func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
 	// from it, and the scenario compares statements across forges.
 	const provenanceRunID = "1"
 
+	// The supplied checksum, stated independently: a distinguishable digest the
+	// statement must carry verbatim for the one named artifact.
+	const (
+		artifactName   = "artifact.tar.gz"
+		artifactSHA256 = "5f2b7c1e0d9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c"
+	)
+
 	subjects := map[provider.ForgeAPI]string{}
 
 	for _, forge := range livetest.LiveForges(t) {
@@ -106,7 +120,7 @@ func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
 			repo := livetest.NewScratchRepo(t, target, "provenance-parity")
 
 			checksums := filepath.Join(t.TempDir(), "checksums.txt")
-			body := "0000000000000000000000000000000000000000000000000000000000000000  artifact.tar.gz\n"
+			body := artifactSHA256 + "  " + artifactName + "\n"
 
 			if err := os.WriteFile(checksums, []byte(body), 0o600); err != nil {
 				t.Fatal(err)
@@ -144,14 +158,21 @@ func TestProvenance_GeneratesEquivalentlyOnEveryForge(t *testing.T) {
 				t.Fatalf("%s: provenance is not a JSON statement: %v\nstdout: %s", target.Forge, err, run.Stdout)
 			}
 
-			if statement.PredicateType != provenance.PredicateTypeV1 {
-				t.Errorf("%s: predicateType = %q, want %q — the predicate is forge-neutral",
-					target.Forge, statement.PredicateType, provenance.PredicateTypeV1)
+			if statement.Type != "https://in-toto.io/Statement/v1" {
+				t.Errorf("%s: _type = %q, want the in-toto v1 statement type", target.Forge, statement.Type)
+			}
+
+			if statement.PredicateType != "https://slsa.dev/provenance/v1" {
+				t.Errorf("%s: predicateType = %q, want the SLSA v1 provenance type on every forge", target.Forge, statement.PredicateType)
 			}
 
 			if len(statement.Subject) != 1 {
 				t.Fatalf("%s: %d subjects, want the one artifact in the checksums file",
 					target.Forge, len(statement.Subject))
+			}
+
+			if subject := statement.Subject[0]; subject.Name != artifactName || len(subject.Digest) != 1 || subject.Digest["sha256"] != artifactSHA256 {
+				t.Errorf("%s: subject = %+v, want only %s with sha256 %s from the supplied checksum", target.Forge, subject, artifactName, artifactSHA256)
 			}
 
 			subjects[forge] = statement.Subject[0].Name + "@" + statement.Subject[0].Digest["sha256"]

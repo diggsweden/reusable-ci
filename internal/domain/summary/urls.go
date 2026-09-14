@@ -4,8 +4,6 @@
 package summary
 
 import (
-	"fmt"
-
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
@@ -15,21 +13,28 @@ import (
 // edit to this file. What remains in the domain is what to render when there is
 // no hosted page to link to.
 
-// ReleaseURL links to the release page for version, or returns a textual
-// placeholder when the platform has no web UI to link to (builder is nil).
+// ReleaseURL links to the release page for version. It returns "" when there
+// is no page to link to: the platform has no web UI (builder is nil), or the
+// server, repository or version is missing.
+//
+// It used to return a textual placeholder such as "(release: v1.0.0)" instead,
+// which every caller wrote into a Markdown link destination, so a summary on a
+// platform without a web UI rendered "[Release]((release: v1.0.0))" -- a broken
+// link, not a readable fallback. Deciding what to show in its place belongs to
+// whoever renders the line.
 func ReleaseURL(builder provider.WebURLBuilder, server, repo, version string) string {
-	if builder == nil {
-		return fmt.Sprintf("(release: %s)", version)
+	if builder == nil || server == "" || repo == "" || version == "" {
+		return ""
 	}
 
 	return builder.ReleaseWebURL(server, repo, version)
 }
 
-// PackagesURL links to the packages page, or returns a textual placeholder when
-// the platform has no web UI to link to (builder is nil).
+// PackagesURL links to the packages page, or returns "" when there is no page
+// to link to (no web UI, or no server or repository).
 func PackagesURL(builder provider.WebURLBuilder, server, repo string) string {
-	if builder == nil {
-		return "(packages)"
+	if builder == nil || server == "" || repo == "" {
+		return ""
 	}
 
 	return builder.PackagesWebURL(server, repo)

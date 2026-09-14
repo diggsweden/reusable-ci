@@ -7,7 +7,8 @@ import (
 	"context"
 	"errors"
 	"io"
-	"reflect"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
@@ -36,6 +37,35 @@ func TestNewCosignSigner_SigstoreRejectsKeyRef(t *testing.T) {
 	}, io.Discard)
 	if !errors.Is(err, errs.ErrUsage) {
 		t.Errorf("sigstore + KeyRef must reject as ErrUsage, got %v", err)
+	}
+}
+
+func TestNewCosignSigner_RefusalDoesNotEchoProvidedValues(t *testing.T) {
+	t.Parallel()
+
+	const value = "private-reference-fixture"
+	for _, tc := range []struct {
+		field string
+		in    apprelease.CosignSignerInput
+	}{
+		{"KeyRef", apprelease.CosignSignerInput{Method: domainrelease.SignMethodSigstore, KeyRef: value}},
+		{"OIDCIssuer", apprelease.CosignSignerInput{Method: domainrelease.SignMethodKMS, KeyRef: "test-key", OIDCIssuer: value}},
+		{"FulcioURL", apprelease.CosignSignerInput{Method: domainrelease.SignMethodKMS, KeyRef: "test-key", FulcioURL: value}},
+		{"RekorURL", apprelease.CosignSignerInput{Method: domainrelease.SignMethodKMS, KeyRef: "test-key", RekorURL: value}},
+		{"TrustedRootPath", apprelease.CosignSignerInput{Method: domainrelease.SignMethodKMS, KeyRef: "test-key", TrustedRootPath: value}},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			t.Parallel()
+
+			signer, err := apprelease.NewCosignSigner(&recordingBlobber{}, tc.in, io.Discard)
+			if !errors.Is(err, errs.ErrUsage) || signer != nil {
+				t.Fatalf("unexpected refusal: %v", err)
+			}
+
+			if !strings.Contains(err.Error(), tc.field) || strings.Contains(err.Error(), value) {
+				t.Error("error must name the field without its value")
+			}
+		})
 	}
 }
 
@@ -143,7 +173,7 @@ func TestCosignSigner_AdvertisesTheExtensionItWrites(t *testing.T) {
 			}
 
 			want := []string{".bundle"}
-			if got := signer.Extensions(); !reflect.DeepEqual(got, want) {
+			if got := signer.Extensions(); !slices.Equal(got, want) {
 				t.Fatalf("extensions = %v, want %v", got, want)
 			}
 
@@ -200,16 +230,20 @@ func TestCosignSigner_SigstoreCarriesSelfHostedEndpoints(t *testing.T) {
 	}
 }
 
-// KMS contacts no Sigstore service, so naming one is a configuration mistake
-// rather than a harmless extra -- the same rule --oidc-issuer already follows.
+// KMS does not use keyless Fulcio or per-request Sigstore endpoint overrides;
+// its separate adapter-level transparency policy controls public Rekor use.
 func TestNewCosignSigner_KMSRejectsSigstoreEndpoints(t *testing.T) {
 	for name, in := range map[string]apprelease.CosignSignerInput{
-		"fulcio": {Method: domainrelease.SignMethodKMS, KeyRef: "awskms://k", FulcioURL: "https://fulcio.example.internal"},
-		"rekor":  {Method: domainrelease.SignMethodKMS, KeyRef: "awskms://k", RekorURL: "https://rekor.example.internal"},
+		"fulcio":       {Method: domainrelease.SignMethodKMS, KeyRef: "awskms://k", FulcioURL: "https://fulcio.example.internal"},
+		"rekor":        {Method: domainrelease.SignMethodKMS, KeyRef: "awskms://k", RekorURL: "https://rekor.example.internal"},
+		"trusted root": {Method: domainrelease.SignMethodKMS, KeyRef: "awskms://k", TrustedRootPath: "trusted-root-fixture.json"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := apprelease.NewCosignSigner(&recordingBlobber{}, in, io.Discard); err == nil {
-				t.Errorf("kms with a %s URL was accepted; it contacts no Sigstore service", name)
+			// ErrUsage, as every other refusal in this factory: naming a
+			// Sigstore endpoint for a KMS signature is a mistake in the
+			// command line, not a capability gap.
+			if _, err := apprelease.NewCosignSigner(&recordingBlobber{}, in, io.Discard); !errors.Is(err, errs.ErrUsage) {
+				t.Errorf("kms with a %s URL: err = %v, want ErrUsage", name, err)
 			}
 		})
 	}

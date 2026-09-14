@@ -5,7 +5,6 @@ package sbom
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -142,13 +141,17 @@ func sbomArtifacts(in GenerateArtifactsInput) ([]sbomArtifact, error) {
 }
 
 func parseConfigPlanSBOMArtifacts(value string) ([]sbomArtifact, error) {
-	var plan pipeline.ConfigPlan
-	if err := json.Unmarshal([]byte(value), &plan); err != nil {
-		return nil, fmt.Errorf("parse config-plan-json: %w: %w", err, errs.ErrInvalidConfig)
+	plan, err := pipeline.DecodeConfigPlan(value)
+	if err != nil {
+		return nil, err
 	}
 
 	if plan.Version != pipeline.ConfigPlanVersion {
 		return nil, fmt.Errorf("config-plan-json has unsupported version %d: %w", plan.Version, errs.ErrInvalidConfig)
+	}
+
+	if err := pipeline.ValidateConfigPlan(plan); err != nil {
+		return nil, err
 	}
 
 	out := make([]sbomArtifact, 0, len(plan.Artifacts.All))

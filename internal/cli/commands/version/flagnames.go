@@ -9,9 +9,10 @@ package version
 // budget. Values are part of the CLI contract — docs/cli-reference.md is
 // generated from them and a sync test gates any change.
 const (
-	flagTag    = "tag"
-	flagBranch = "branch"
-	flagToken  = "token"
+	flagTag           = "tag"
+	flagBranch        = "branch"
+	flagToken         = "token"
+	flagRepositoryURL = "repository-url"
 	// defaultCommitMessageFile is the shared default for --commit-message-file.
 	defaultCommitMessageFile = "commit-msg.txt"
 )

@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
@@ -58,7 +57,7 @@ func Binary(tb TB) string {
 
 	path := os.Getenv(binaryEnv)
 	if !filepath.IsAbs(path) {
-		tb.Fatalf("livetest: %s must be the absolute path of the built product; run this through `just test-live`", binaryEnv)
+		tb.Fatalf("livetest: %s must be the absolute path of the built product; run this through `just test-live-full` or `just test-live-focused`", binaryEnv)
 	}
 
 	// G304: the path is the built product handed over by the recipe, and it is
@@ -122,10 +121,11 @@ func CLIIn(tb TB, target Target, repo string, opts RunOptions, args ...string) R
 		tb.Fatalf("livetest: refusing changed frozen ca_file: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout())
 	defer cancel()
 
 	// G204: args are scenario-authored verbs and flags, never external input.
+	// nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command
 	cmd := exec.CommandContext(ctx, Binary(tb), args...) //nolint:gosec
 
 	env := cliEnv(target, repo)
@@ -153,7 +153,9 @@ func CLIIn(tb TB, target Target, repo string, opts RunOptions, args ...string) R
 	err := cmd.Run()
 
 	run := Run{Args: args, Stdout: stdout.String(), Stderr: stderr.String()}
-	assertNotAUsageError(tb, run, opts.AllowUsageError)
+	assertNoTargetSecret(tb, target, "stdout of "+strings.Join(args, " "), run.Stdout)
+	assertNoTargetSecret(tb, target, "stderr of "+strings.Join(args, " "), run.Stderr)
+	assertNotAUsageError(tb, run, opts.AllowUsageError, target)
 
 	var exitErr *exec.ExitError
 
@@ -299,7 +301,7 @@ func targetEnvKeys(target Target) []string {
 // Enforced in the kit rather than per scenario so it also covers the ones nobody
 // has written yet. A scenario whose subject IS how the CLI handles a bad
 // invocation opts out with RunOptions.AllowUsageError.
-func assertNotAUsageError(tb TB, run Run, allow bool) {
+func assertNotAUsageError(tb TB, run Run, allow bool, target Target) {
 	tb.Helper()
 
 	if allow {
@@ -310,7 +312,7 @@ func assertNotAUsageError(tb TB, run Run, allow bool) {
 	for _, marker := range usageErrorMarkers {
 		if strings.Contains(lower, marker) {
 			tb.Fatalf("livetest: %q was rejected by the argument parser, so this scenario exercised the CLI rather than the forge\nstderr: %s",
-				strings.Join(run.Args, " "), run.Stderr)
+				strings.Join(run.Args, " "), redactTargetSecrets(target, run.Stderr))
 		}
 	}
 }

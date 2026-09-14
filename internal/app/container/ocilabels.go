@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -42,7 +43,7 @@ type OCIImageLabelsRegistry interface {
 
 // OCIReleaseLabels returns canonical OCI release labels as key=value strings.
 func OCIReleaseLabels(in OCIReleaseLabelsInput) ([]string, error) {
-	if in.Documentation == "" && in.Source != "" {
+	if in.Documentation == "" {
 		in.Documentation = in.Source + "#readme"
 	}
 
@@ -61,9 +62,17 @@ func OCIReleaseLabels(in OCIReleaseLabelsInput) ([]string, error) {
 	}
 
 	for _, label := range required {
-		if label.value == "" {
+		if strings.ContainsAny(label.value, "\r\n") {
+			return nil, fmt.Errorf("OCI label %s must be a single line: %w", label.key, errs.ErrUsage)
+		}
+
+		if strings.TrimSpace(label.value) == "" {
 			return nil, fmt.Errorf("required OCI label %s is empty: %w", label.key, errs.ErrUsage)
 		}
+	}
+
+	if _, err := time.Parse(time.RFC3339, in.Created); err != nil {
+		return nil, fmt.Errorf("OCI label org.opencontainers.image.created must be RFC3339: %w", errs.ErrUsage)
 	}
 
 	labels := make([]string, 0, len(required)+4)
@@ -82,6 +91,10 @@ func OCIReleaseLabels(in OCIReleaseLabelsInput) ([]string, error) {
 	}
 
 	for _, label := range optional {
+		if strings.ContainsAny(label.value, "\r\n") {
+			return nil, fmt.Errorf("OCI label %s must be a single line: %w", label.key, errs.ErrUsage)
+		}
+
 		if label.value != "" {
 			labels = append(labels, label.key+"="+label.value)
 		}
@@ -112,6 +125,21 @@ func OCIReleaseIdentityMatches(labelsJSON string, in OCIReleaseIdentityInput) (b
 	var labels map[string]string
 	if err := json.Unmarshal([]byte(labelsJSON), &labels); err != nil {
 		return false, fmt.Errorf("parse OCI labels JSON: %w: %w", err, errs.ErrMalformedInput)
+	}
+
+	required := []struct {
+		name  string
+		value string
+	}{
+		{name: "revision", value: in.Revision},
+		{name: "version", value: in.Version},
+		{name: "ref name", value: in.RefName},
+		{name: "source", value: in.Source},
+	}
+	for _, field := range required {
+		if strings.TrimSpace(field.value) == "" {
+			return false, fmt.Errorf("expected OCI release identity %s is empty: %w", field.name, errs.ErrUsage)
+		}
 	}
 
 	return labels["org.opencontainers.image.revision"] == in.Revision &&

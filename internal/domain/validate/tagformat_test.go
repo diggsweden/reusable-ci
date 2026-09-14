@@ -4,9 +4,11 @@
 package validate_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
 
@@ -14,8 +16,12 @@ func TestParseTagFormat_EmptyInputUsage(t *testing.T) {
 	t.Parallel()
 
 	_, err := validate.ParseTagFormat("")
-	if err == nil || !strings.Contains(err.Error(), "usage") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
+	}
+
+	if !strings.Contains(err.Error(), "usage: validate tag-format") {
+		t.Errorf("err = %v, want it to show the invocation", err)
 	}
 }
 
@@ -169,8 +175,10 @@ func TestParseTagFormat_RejectsBadTags(t *testing.T) {
 	}
 	for _, tag := range cases {
 		_, err := validate.ParseTagFormat(tag)
-		if err == nil {
-			t.Errorf("%s: expected rejection", tag)
+		// A malformed tag is a rule failure, distinct from the ErrUsage
+		// the empty input above earns.
+		if !errors.Is(err, errs.ErrValidation) {
+			t.Errorf("%s: err = %v, want ErrValidation", tag, err)
 
 			continue
 		}

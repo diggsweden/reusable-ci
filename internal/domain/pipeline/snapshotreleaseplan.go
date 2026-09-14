@@ -6,6 +6,7 @@ package pipeline
 import (
 	"cmp"
 	"fmt"
+	"slices"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -133,8 +134,8 @@ type TargetPlan[T any] struct {
 // NewSnapshotReleasePlan builds the snapshot-release setup contract from a config plan
 // and workflow inputs.
 func NewSnapshotReleasePlan(in SnapshotReleasePlanInput) (SnapshotReleasePlan, error) {
-	if in.ConfigPlan.Version != ConfigPlanVersion {
-		return SnapshotReleasePlan{}, fmt.Errorf("unsupported config-plan version %d: %w", in.ConfigPlan.Version, errs.ErrInvalidConfig)
+	if err := ValidateConfigPlan(in.ConfigPlan); err != nil {
+		return SnapshotReleasePlan{}, err
 	}
 
 	projectType := in.ProjectType
@@ -168,17 +169,26 @@ func NewSnapshotReleasePlan(in SnapshotReleasePlanInput) (SnapshotReleasePlan, e
 	policy := SnapshotReleasePolicy{
 		PublishNPM: in.PublishNPM,
 		UseCIToken: in.UseCIToken,
-		SBOMs:      cmp.Or(in.SBOMs, "none"),
+		SBOMs:      cmp.Or(in.SBOMs, SBOMsNone),
 	}
-	build := NewDevBuildStagePlan(in.ConfigPlan)
+	build := newDevBuildStagePlan(in.ConfigPlan)
 
-	buildSBOM, err := hasSBOMLayer(policy.SBOMs, config.SBOMLayerBuild)
+	// The policy's SBOM choice is read once, expanded: whether any layer is
+	// selected and whether the build layer is decide the dev SBOM targets.
+	layers, err := config.ExpandSBOMs(policy.SBOMs)
 	if err != nil {
 		return SnapshotReleasePlan{}, err
 	}
 
-	publish := NewDevPublishStagePlan(in.ConfigPlan, policy, buildSBOM, projectType)
-	if err := validateDevPublishSingletonTargets(projectType, policy, publish); err != nil {
+	anySBOM, buildSBOM := len(layers) > 0, slices.Contains(layers, config.SBOMLayerBuild)
+
+	publish := newDevPublishStagePlan(in.ConfigPlan, policy, anySBOM, buildSBOM, projectType)
+	if err := validateDevPublishSingletonTargets(projectType, anySBOM, publish); err != nil {
+		return SnapshotReleasePlan{}, err
+	}
+
+	transfers := newSnapshotReleaseArtifactTransferPlan(in.ConfigPlan, policy)
+	if err := validateConcreteTransferNames(transfers); err != nil {
 		return SnapshotReleasePlan{}, err
 	}
 
@@ -186,7 +196,7 @@ func NewSnapshotReleasePlan(in SnapshotReleasePlanInput) (SnapshotReleasePlan, e
 		Version:           SnapshotReleasePlanVersion,
 		Context:           context,
 		Policy:            policy,
-		ArtifactTransfers: NewSnapshotReleaseArtifactTransferPlan(in.ConfigPlan, policy),
+		ArtifactTransfers: transfers,
 		Stages: SnapshotReleaseStagePlans{
 			Build:   build,
 			Publish: publish,
@@ -194,12 +204,12 @@ func NewSnapshotReleasePlan(in SnapshotReleasePlanInput) (SnapshotReleasePlan, e
 	}, nil
 }
 
-// NewSnapshotReleaseArtifactTransferPlan lists exact artifact downloads needed by
+// newSnapshotReleaseArtifactTransferPlan lists exact artifact downloads needed by
 // the dev SBOM aggregation job. Dev transfers are optional because skipped
 // stage legs should not fail the aggregation job.
 //
 //nolint:cyclop // plans transfers with one branch per artifact category.
-func NewSnapshotReleaseArtifactTransferPlan(configPlan ConfigPlan, policy SnapshotReleasePolicy) ArtifactTransferPlan {
+func newSnapshotReleaseArtifactTransferPlan(configPlan ConfigPlan, policy SnapshotReleasePolicy) ArtifactTransferPlan {
 	items := make([]ArtifactTransfer, 0)
 	includeBuild := policyIncludesSBOMLayer(policy.SBOMs, config.SBOMLayerBuild)
 
@@ -244,8 +254,8 @@ func NewSnapshotReleaseArtifactTransferPlan(configPlan ConfigPlan, policy Snapsh
 	return ArtifactTransferPlan{Version: ArtifactTransferPlanVersion, Items: items}
 }
 
-// NewDevBuildStagePlan builds the standalone dev build-stage plan.
-func NewDevBuildStagePlan(configPlan ConfigPlan) DevBuildStagePlan {
+// newDevBuildStagePlan builds the standalone dev build-stage plan.
+func newDevBuildStagePlan(configPlan ConfigPlan) DevBuildStagePlan {
 	artifacts := configPlan.Artifacts
 
 	return DevBuildStagePlan{
@@ -263,8 +273,8 @@ func NewDevBuildStagePlan(configPlan ConfigPlan) DevBuildStagePlan {
 	}
 }
 
-// NewDevPublishStagePlan builds the standalone dev publish-stage plan.
-func NewDevPublishStagePlan(configPlan ConfigPlan, policy SnapshotReleasePolicy, buildSBOM bool, projectType projecttype.Type) DevPublishStagePlan {
+// newDevPublishStagePlan builds the standalone dev publish-stage plan.
+func newDevPublishStagePlan(configPlan ConfigPlan, policy SnapshotReleasePolicy, anySBOM, buildSBOM bool, projectType projecttype.Type) DevPublishStagePlan {
 	artifacts := configPlan.Artifacts
 	// The snapshot flow builds no containers: a container is built ONCE on the
 	// release path and promoted to :dev by the build-once/promote-many ladder
@@ -275,7 +285,7 @@ func NewDevPublishStagePlan(configPlan ConfigPlan, policy SnapshotReleasePolicy,
 		GoContainerFirst:    targetPlan(artifacts.GoContainerFirst, len(artifacts.GoContainerFirst) > 0 && buildSBOM),
 		GoArtifactFirst:     targetPlan(artifacts.GoArtifactFirst, false),
 		CargoArtifactFirst:  targetPlan(artifacts.CargoArtifactFirst, false),
-		SBOM:                singletonTargetPlan("dev-sboms", policy.SBOMs != "none"), //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		SBOM:                singletonTargetPlan("dev-sboms", anySBOM),
 	}
 
 	return DevPublishStagePlan{
@@ -377,7 +387,7 @@ func singletonTargetPlan(name string, runs bool) TargetPlan[string] {
 	return TargetPlan[string]{Runs: runs, Items: items}
 }
 
-func validateDevPublishSingletonTargets(projectType projecttype.Type, policy SnapshotReleasePolicy, plan DevPublishStagePlan) error {
+func validateDevPublishSingletonTargets(projectType projecttype.Type, anySBOM bool, plan DevPublishStagePlan) error {
 	if err := validateRunnableSingleton("npm", plan.Targets.NPM.Runs, len(plan.Targets.NPM.Items)); err != nil {
 		return err
 	}
@@ -390,7 +400,7 @@ func validateDevPublishSingletonTargets(projectType projecttype.Type, policy Sna
 		return err
 	}
 
-	if projectType == projecttype.Go && policy.SBOMs != "none" {
+	if projectType == projecttype.Go && anySBOM {
 		goItems := len(plan.Targets.GoArtifactFirst.Items) + len(plan.Targets.GoContainerFirst.Items)
 		if goItems > 1 {
 			return fmt.Errorf("dev publish target go supports exactly one artifact when dev SBOMs are enabled, got %d: %w", goItems, errs.ErrInvalidConfig)

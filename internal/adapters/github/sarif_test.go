@@ -102,6 +102,10 @@ func TestUploadSARIF_SendsGzippedBase64(t *testing.T) {
 		t.Errorf("Authorization = %q, want the token", rec.auth)
 	}
 
+	if rec.accept != "application/vnd.github+json" {
+		t.Errorf("Accept = %q, want the code-scanning JSON media type", rec.accept)
+	}
+
 	if got := string(decodeSARIF(t, rec.body["sarif"])); got != sarif {
 		t.Errorf("decoded SARIF = %q, want %q", got, sarif)
 	}
@@ -200,8 +204,8 @@ func TestUploadSARIF_ServerRejectionIsAnError(t *testing.T) {
 	provider := &github.Provider{HTTPClient: srv.Client(), APIBaseOverride: srv.URL}
 
 	err := provider.UploadSARIF(context.Background(), providerSARIF(`{"version":"2.1.0"}`, "tok", "owner/repo"))
-	if err == nil {
-		t.Fatal("a 403 from the code-scanning API was reported as a successful upload")
+	if !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied — a refused upload must not read as a successful one", err)
 	}
 
 	if !strings.Contains(strings.ToLower(err.Error()), "403") &&

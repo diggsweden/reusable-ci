@@ -6,11 +6,16 @@ package plan_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/cli"
 	plancmd "github.com/diggsweden/reusable-ci/v3/internal/cli/commands/plan"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
@@ -64,13 +69,21 @@ func TestReleaseCmd_UsesConfigPlanAndEmitsTypedPlans(t *testing.T) {
 
 func TestSnapshotReleaseCmd_UsesConfigPlanFallbackAndEmitsStagePlans(t *testing.T) {
 	env := ghaenv.Setup(t)
-	env.Setenv("CONFIG_PLAN_JSON", mustConfigPlanJSON(t, pipeline.NewConfigPlan(&config.Config{
+
+	// Derived like every real config plan: the plan contract requires the
+	// defaults Derive fills in (sboms among them), and this fixture skipped it.
+	cfg := &config.Config{
 		Artifacts: []config.Artifact{
 			{Name: "web", ProjectType: projecttype.NPM},
 			{Name: "worker", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeArtifactFirst}},
 		},
 		Containers: []config.Container{{Name: "image"}},
-	})))
+	}
+	if err := config.Derive(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	env.Setenv("CONFIG_PLAN_JSON", mustConfigPlanJSON(t, pipeline.NewConfigPlan(cfg)))
 	env.Setenv("BRANCH", "feature/dev-plan")
 	env.Setenv("PUBLISH_NPM", "true")
 	env.Setenv("USE_CI_TOKEN", "true")
@@ -131,13 +144,155 @@ func TestGitlabPipelineCmds_RejectStalePlanVersion(t *testing.T) {
 	env.Setenv("BUILD_STAGE_PLAN_JSON", `{"version":0,"stage":"build","targets":{}}`)
 	env.Setenv("PUBLISH_STAGE_PLAN_JSON", `{"version":0,"stage":"publish","targets":{}}`)
 
-	cmd := plancmd.New()
-	if err := cmd.Run(context.Background(), []string{"plan", "gitlab-build-pipeline", "--component-ref", "1.0.0"}); err == nil || !strings.Contains(err.Error(), "unsupported build-stage plan version") {
-		t.Errorf("stale build-stage plan should be rejected, got %v", err)
+	for _, tc := range []struct {
+		verb string
+		want string
+	}{
+		{verb: "gitlab-build-pipeline", want: "unsupported build-stage plan version"},
+		{verb: "gitlab-publish-pipeline", want: "unsupported publish-stage plan version"},
+	} {
+		err := plancmd.New().Run(context.Background(), []string{
+			"plan", tc.verb,
+			"--component-base", "catalog.example/group/components",
+			"--component-ref", "1.0.0",
+		})
+		// A plan from a different build of this tool is skew, not operator
+		// misuse: ErrInvalidConfig, so the exit code points at the pipeline
+		// rather than at the command line.
+		if !errors.Is(err, errs.ErrInvalidConfig) {
+			t.Errorf("%s: err = %v, want ErrInvalidConfig", tc.verb, err)
+
+			continue
+		}
+
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want it to name the stale version", tc.verb, err)
+		}
+	}
+}
+
+func TestGitlabPipelineCmds_RequireExplicitComponentCoordinate(t *testing.T) {
+	env := ghaenv.Setup(t)
+	env.Setenv("BUILD_STAGE_PLAN_JSON", `{"version":1,"stage":"build","targets":{}}`)
+	env.Setenv("PUBLISH_STAGE_PLAN_JSON", `{"version":1,"stage":"publish","targets":{}}`)
+
+	for _, tc := range []struct {
+		verb string
+		args []string
+		want string
+	}{
+		{verb: "gitlab-build-pipeline", args: []string{"--component-ref", "1.0.0"}, want: `Required flag "component-base" not set`},
+		{verb: "gitlab-publish-pipeline", args: []string{"--component-ref", "1.0.0"}, want: `Required flag "component-base" not set`},
+		{verb: "gitlab-build-pipeline", args: []string{"--component-base", "catalog.example/components"}, want: `Required flag "component-ref" not set`},
+		{verb: "gitlab-publish-pipeline", args: []string{"--component-base", "catalog.example/components"}, want: `Required flag "component-ref" not set`},
+	} {
+		err := plancmd.New().Run(context.Background(), append([]string{"plan", tc.verb}, tc.args...))
+		if err == nil {
+			t.Fatalf("%s accepted an implicit component boundary", tc.verb)
+		}
+
+		// --component-base is Required, so this is urfave's own refusal; it
+		// carries no sentinel until main.go classifies it, which is the exit
+		// code that actually reaches the operator.
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", tc.verb, err, tc.want)
+		}
+
+		if got := errs.ExitCodeFromError(cli.ClassifyError(err)); got != errs.ExitCodeUsage {
+			t.Errorf("%s: exit code = %d, want usage (%d)", tc.verb, got, errs.ExitCodeUsage)
+		}
+	}
+}
+
+func TestGitlabPipelineCmds_RejectUnknownAndTrailingContractJSON(t *testing.T) {
+	env := ghaenv.Setup(t)
+
+	for _, tc := range []struct {
+		name string
+		verb string
+		env  string
+		raw  string
+	}{
+		{name: "build unknown", verb: "gitlab-build-pipeline", env: "BUILD_STAGE_PLAN_JSON", raw: `{"version":1,"stage":"build","future_semantic":true,"targets":{}}`},
+		{name: "build trailing", verb: "gitlab-build-pipeline", env: "BUILD_STAGE_PLAN_JSON", raw: `{"version":1,"stage":"build","targets":{}} {}`},
+		{name: "publish unknown", verb: "gitlab-publish-pipeline", env: "PUBLISH_STAGE_PLAN_JSON", raw: `{"version":1,"stage":"publish","targets":{},"future_semantic":true}`},
+		{name: "publish trailing", verb: "gitlab-publish-pipeline", env: "PUBLISH_STAGE_PLAN_JSON", raw: `{"version":1,"stage":"publish","targets":{}} {}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env.Setenv(tc.env, tc.raw)
+
+			out := filepath.Join(t.TempDir(), "child.yml")
+
+			err := plancmd.New().Run(context.Background(), []string{
+				"plan", tc.verb,
+				"--component-base", "catalog.example/components",
+				"--component-ref", "1.0.0",
+				"--output", out,
+			})
+			if !errors.Is(err, errs.ErrInvalidConfig) {
+				t.Fatalf("err = %v, want ErrInvalidConfig", err)
+			}
+
+			if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+				t.Fatalf("invalid contract mutated output: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestGitlabPipelineCmd_DoesNotWriteUnsupportedPlan(t *testing.T) {
+	env := ghaenv.Setup(t)
+	env.Setenv("BUILD_STAGE_PLAN_JSON", `{"version":1,"stage":"build","targets":{"xcode_ios":{"runs":true,"items":[{"name":"ios"}]}}}`)
+
+	out := filepath.Join(t.TempDir(), "child.yml")
+
+	err := plancmd.New().Run(context.Background(), []string{
+		"plan", "gitlab-build-pipeline",
+		"--component-base", "catalog.example/group/components",
+		"--component-ref", "1.0.0",
+		"--output", out,
+	})
+	// An unsupported target in an otherwise well-formed plan is configuration
+	// the generator cannot honour, not a bad flag.
+	if !errors.Is(err, errs.ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported", err)
 	}
 
-	if err := cmd.Run(context.Background(), []string{"plan", "gitlab-publish-pipeline", "--component-ref", "1.0.0"}); err == nil || !strings.Contains(err.Error(), "unsupported publish-stage plan version") {
-		t.Errorf("stale publish-stage plan should be rejected, got %v", err)
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Fatalf("unsupported plan mutated output: %v", statErr)
+	}
+}
+
+func TestGitlabPipelineCmds_DoNotWriteZeroJobPipeline(t *testing.T) {
+	env := ghaenv.Setup(t)
+
+	for _, tc := range []struct {
+		verb    string
+		envName string
+		stage   string
+	}{
+		{verb: "gitlab-build-pipeline", envName: "BUILD_STAGE_PLAN_JSON", stage: "build"},
+		{verb: "gitlab-publish-pipeline", envName: "PUBLISH_STAGE_PLAN_JSON", stage: "publish"},
+	} {
+		t.Run(tc.verb, func(t *testing.T) {
+			env.Setenv(tc.envName, `{"version":1,"stage":"`+tc.stage+`","targets":{}}`)
+
+			out := filepath.Join(t.TempDir(), "child.yml")
+
+			err := plancmd.New().Run(context.Background(), []string{
+				"plan", tc.verb,
+				"--component-base", "catalog.example/components",
+				"--component-ref", "1.0.0",
+				"--output", out,
+			})
+			if !errors.Is(err, errs.ErrInvalidConfig) || !strings.Contains(err.Error(), "no generated jobs") {
+				t.Fatalf("err = %v, want ErrInvalidConfig naming the zero-job pipeline", err)
+			}
+
+			if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+				t.Fatalf("zero-job plan mutated output: %v", statErr)
+			}
+		})
 	}
 }
 

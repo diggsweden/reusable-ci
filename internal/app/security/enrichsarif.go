@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -33,6 +32,14 @@ func EnrichGitHubSARIFFile(w, stderr io.Writer, annot output.Annotator, in Enric
 		return fmt.Errorf("SARIF file is required: pass --sarif-file <path> or set $SARIF_FILE: %w", errs.ErrUsage)
 	}
 
+	// The document is written back in place, so stdin cannot be the input: the
+	// write would land in a file literally named "-".
+	if in.Path == cliio.StdSentinel {
+		annot.Errorf("SARIF file must be a path, not \"-\": enrichment rewrites the file in place")
+
+		return fmt.Errorf("SARIF file must be a path, not %q: enrichment rewrites the file in place: %w", cliio.StdSentinel, errs.ErrUsage)
+	}
+
 	body, err := cliio.ReadFile(in.Path)
 	if err != nil {
 		// errors.Is (not os.IsNotExist) so the check survives cliio.ReadFile
@@ -51,7 +58,9 @@ func EnrichGitHubSARIFFile(w, stderr io.Writer, annot output.Annotator, in Enric
 		return fmt.Errorf("enrich: %w", err)
 	}
 
-	if err := os.WriteFile(in.Path, out, 0o644); err != nil { //nolint:gosec // SARIF read by GitHub Code Scanning; 0644 expected.
+	// Atomic, because the rewrite replaces the only copy: a write cut short
+	// would leave a truncated document that the rerun can no longer parse.
+	if err := cliio.WriteFile(in.Path, out, 0o644); err != nil { //nolint:gosec // SARIF read by GitHub Code Scanning; 0644 expected.
 		return fmt.Errorf("write %s: %w", in.Path, err)
 	}
 

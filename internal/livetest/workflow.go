@@ -7,14 +7,19 @@ package livetest
 import (
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"debug/elf"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -58,6 +63,8 @@ func workflowPath(forge provider.ForgeAPI, name string) (string, error) {
 }
 
 var errUnsupportedInRunner = errors.New("in-runner scenarios are not implemented for this platform")
+
+var errRunnerABI = errors.New("runner asset has incompatible ABI")
 
 // RunsInRunner reports whether the in-runner tier can drive this forge yet.
 //
@@ -119,7 +126,7 @@ func RunWorkflow(tb TB, target Target, repo, name, yaml string) string {
 		tb.Fatalf("livetest: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), workflowTimeout())
 	defer cancel()
 
 	if err := commitFile(ctx, target, repo, path, "livetest: "+name, yaml); err != nil {
@@ -171,7 +178,7 @@ func commitFile(ctx context.Context, target Target, repo, path, message, content
 func waitForRun(ctx context.Context, tb TB, target Target, repo, name string) string {
 	tb.Helper()
 
-	deadline := time.Now().Add(4 * time.Minute)
+	deadline := time.Now().Add(workflowPollTimeout())
 	for time.Now().Before(deadline) {
 		time.Sleep(5 * time.Second)
 
@@ -189,7 +196,8 @@ func waitForRun(ctx context.Context, tb TB, target Target, repo, name string) st
 			// scratch repository is cleaned up.
 			log := runLogTail(ctx, target, repo)
 			if log != "" {
-				tb.Logf("livetest: %s job log for %q (tail):\n%s", target.Forge, name, log)
+				assertNoTargetSecret(tb, target, "the job log of "+name, log)
+				tb.Logf("livetest: %s job log for %q (tail):\n%s", target.Forge, name, redactTargetSecrets(target, log))
 			}
 
 			// A job the runner never started cannot support the claim the caller
@@ -302,7 +310,7 @@ func runLogTail(ctx context.Context, target Target, repo string) string {
 
 	authorize(req, target)
 
-	client, err := targetHTTPClient(target, 30*time.Second)
+	client, err := targetHTTPClient(target, httpShortTimeout())
 	if err != nil {
 		return ""
 	}
@@ -418,7 +426,7 @@ func runLogEndpoint(ctx context.Context, target Target, repo string) (string, bo
 func ReleaseAssetURL(tb TB, target Target, repo, tag, name string) string {
 	tb.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), apiTimeout())
 	defer cancel()
 
 	switch target.Forge {
@@ -474,27 +482,48 @@ func ReleaseAssetURL(tb TB, target Target, repo, tag, name string) string {
 // does not have to know the build's filename.
 func PublishBinaryAsset(tb TB, target Target, repo, tag, stageDir string) {
 	tb.Helper()
-	publishBinaryAssets(tb, target, repo, tag, stageDir, []binaryAsset{
-		{source: Binary(tb), name: "reusable-ci"},
+	_ = publishBinaryAssets(tb, target, repo, tag, stageDir, []binaryAsset{
+		{source: runnerBinary(tb), name: runnerAssetName},
 	})
 }
 
-// PublishKeylessAssets publishes the product and the separate static CONNECT
-// proxy used to constrain the runner's OIDC token to its validated Fulcio.
-func PublishKeylessAssets(tb TB, target Target, repo, tag, stageDir string) {
+// PublishRegistryAuthAssets publishes the product and the static authority
+// proxy that confines its OCI challenge and token exchange.
+func PublishRegistryAuthAssets(tb TB, target Target, repo, tag, stageDir string) StagedAssets {
 	tb.Helper()
-	publishBinaryAssets(tb, target, repo, tag, stageDir, []binaryAsset{
-		{source: Binary(tb), name: "reusable-ci"},
-		{source: credentialProxyBinary(tb), name: "credential-proxy"},
+
+	return publishBinaryAssets(tb, target, repo, tag, stageDir, []binaryAsset{
+		{source: runnerBinary(tb), name: runnerAssetName},
+		{source: credentialProxyBinary(tb), name: proxyAssetName},
+	})
+}
+
+// PublishKeylessAssets publishes the product, the separate static CONNECT
+// proxy, and the preflighted tools the job needs. Keeping them on the scratch
+// release makes the probe independent of public tool hosts at execution time.
+func PublishKeylessAssets(tb TB, target Target, repo, tag, stageDir string) StagedAssets {
+	tb.Helper()
+
+	return publishBinaryAssets(tb, target, repo, tag, stageDir, []binaryAsset{
+		{source: runnerBinary(tb), name: runnerAssetName},
+		{source: credentialProxyBinary(tb), name: proxyAssetName},
+		{source: hostToolBinary(tb, "cosign"), name: "cosign.gz", gzip: true},
+		{source: probeJSONBinary(tb), name: "probe-json"},
 	})
 }
 
 type binaryAsset struct {
 	source string
 	name   string
+	gzip   bool
 }
 
-func publishBinaryAssets(tb TB, target Target, repo, tag, stageDir string, assets []binaryAsset) {
+const (
+	runnerAssetName = "reusable-ci"
+	proxyAssetName  = "credential-proxy"
+)
+
+func publishBinaryAssets(tb TB, target Target, repo, tag, stageDir string, assets []binaryAsset) StagedAssets {
 	tb.Helper()
 
 	adapter := Provider(tb, target, repo)
@@ -505,16 +534,37 @@ func publishBinaryAssets(tb TB, target Target, repo, tag, stageDir string, asset
 	}
 
 	staged := make([]string, 0, len(assets))
+	digests := make(StagedAssets, len(assets))
+
 	for _, asset := range assets {
-		path := filepath.Join(stageDir, asset.name)
-		if err := copyFile(asset.source, path); err != nil {
+		if err := requireRunnerABI(asset.source); err != nil {
 			tb.Fatalf("livetest: stage %s: %v", asset.name, err)
 		}
+
+		path := filepath.Join(stageDir, asset.name)
+
+		var err error
+		if asset.gzip {
+			err = gzipFile(asset.source, path)
+		} else {
+			err = copyFile(asset.source, path)
+		}
+
+		if err != nil {
+			tb.Fatalf("livetest: stage %s: %v", asset.name, err)
+		}
+
+		body, err := os.ReadFile(path) //nolint:gosec // The file this function just staged.
+		if err != nil {
+			tb.Fatalf("livetest: digest staged %s: %v", asset.name, err)
+		}
+
+		digests[asset.name] = fmt.Sprintf("%x", sha256.Sum256(body))
 
 		staged = append(staged, path)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), workflowLogTimeout())
 	defer cancel()
 
 	if err := creator.CreateRelease(ctx, RepoSlug(target, repo), provider.ReleaseSpec{
@@ -522,6 +572,106 @@ func publishBinaryAssets(tb TB, target Target, repo, tag, stageDir string, asset
 	}); err != nil {
 		tb.Fatalf("livetest: publish binary asset: %v", err)
 	}
+
+	return digests
+}
+
+func runnerBinary(tb TB) string {
+	tb.Helper()
+
+	path := os.Getenv(runnerBinaryEnv)
+	if !filepath.IsAbs(path) {
+		tb.Fatalf("livetest: %s must be the absolute path of the cross-built runner binary", runnerBinaryEnv)
+	}
+
+	info, err := os.Stat(path) //nolint:gosec // guarded lifecycle supplies this exact build path.
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		tb.Fatalf("livetest: %s is not an executable regular file", runnerBinaryEnv)
+	}
+
+	return path
+}
+
+// requireRunnerABI checks declared metadata, not whether arbitrary code can run.
+// Static AMD64 executables may declare System V or Linux, with ABI version zero.
+func requireRunnerABI(path string) error { //nolint:cyclop // ELF metadata checks fail independently and explicitly.
+	binary, err := elf.Open(path)
+	if err != nil {
+		return fmt.Errorf("runner asset %s is not an ELF binary: %w", filepath.Base(path), err)
+	}
+	defer func() { _ = binary.Close() }()
+
+	if binary.Class != elf.ELFCLASS64 || binary.Data != elf.ELFDATA2LSB || binary.Machine != elf.EM_X86_64 {
+		return fmt.Errorf("%w: runner asset %s has ABI %s/%s/%s, want linux/amd64 ELF",
+			errRunnerABI, filepath.Base(path), binary.Class, binary.Data, binary.Machine)
+	}
+
+	if binary.Type != elf.ET_EXEC && binary.Type != elf.ET_DYN {
+		return fmt.Errorf("%w: runner asset %s is not an executable ELF", errRunnerABI, filepath.Base(path))
+	}
+
+	if (binary.OSABI != elf.ELFOSABI_NONE && binary.OSABI != elf.ELFOSABI_LINUX) || binary.ABIVersion != 0 {
+		return fmt.Errorf("%w: runner asset %s declares OSABI %s version %d, want System V or Linux version 0",
+			errRunnerABI, filepath.Base(path), binary.OSABI, binary.ABIVersion)
+	}
+
+	hasLoadSegment := false
+
+	for _, program := range binary.Progs {
+		if program.Type == elf.PT_LOAD {
+			hasLoadSegment = true
+		}
+
+		if program.Type == elf.PT_INTERP {
+			return fmt.Errorf("%w: runner asset %s requires an ELF interpreter", errRunnerABI, filepath.Base(path))
+		}
+
+		if program.Type == elf.PT_DYNAMIC {
+			hasDependencies, dependencyErr := dynamicProgramNeedsLibraries(program)
+			if dependencyErr != nil {
+				return fmt.Errorf("%w: inspect runner asset %s dependencies: %w", errRunnerABI, filepath.Base(path), dependencyErr)
+			}
+
+			if hasDependencies {
+				return fmt.Errorf("%w: runner asset %s requires shared libraries", errRunnerABI, filepath.Base(path))
+			}
+		}
+	}
+
+	if !hasLoadSegment {
+		return fmt.Errorf("%w: runner asset %s has no loadable segment", errRunnerABI, filepath.Base(path))
+	}
+
+	return nil
+}
+
+func dynamicProgramNeedsLibraries(program *elf.Prog) (bool, error) {
+	const (
+		dynamicEntryBytes = 16
+		maxDynamicBytes   = 1024 * 1024
+	)
+	if program.Filesz == 0 || program.Filesz > maxDynamicBytes || program.Filesz%dynamicEntryBytes != 0 {
+		return false, errRunnerABI
+	}
+
+	body, err := io.ReadAll(program.Open())
+	if err != nil || uint64(len(body)) != program.Filesz {
+		return false, errRunnerABI
+	}
+
+	for offset := 0; offset < len(body); offset += dynamicEntryBytes {
+		tag := elf.DynTag(int64(binary.LittleEndian.Uint64(body[offset:]))) //nolint:gosec // ELF64 d_tag is a signed 64-bit field.
+		switch tag {
+		case elf.DT_NULL:
+			return false, nil
+		case elf.DT_NEEDED:
+			return true, nil
+		default:
+			continue
+		}
+	}
+
+	return false, errRunnerABI
 }
 
 func credentialProxyBinary(tb TB) string {
@@ -540,6 +690,38 @@ func credentialProxyBinary(tb TB) string {
 	return path
 }
 
+func probeJSONBinary(tb TB) string {
+	tb.Helper()
+
+	path := os.Getenv(probeJSONBinaryEnv)
+	if !filepath.IsAbs(path) {
+		tb.Fatalf("livetest: %s must be the absolute path of the built probe JSON helper", probeJSONBinaryEnv)
+	}
+
+	info, err := os.Stat(path) //nolint:gosec // Guarded lifecycle supplies this exact static helper path.
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		tb.Fatalf("livetest: %s is not an executable regular file", probeJSONBinaryEnv)
+	}
+
+	return path
+}
+
+func hostToolBinary(tb TB, name string) string {
+	tb.Helper()
+
+	path, err := exec.LookPath(name)
+	if err != nil {
+		tb.Fatalf("livetest: %s is required on PATH: %v", name, err)
+	}
+
+	info, err := os.Stat(path) //nolint:gosec // Live preflight validates these host tools before provider work.
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		tb.Fatalf("livetest: %s is not an executable regular file", name)
+	}
+
+	return path
+}
+
 func copyFile(from, to string) error {
 	data, err := os.ReadFile(from) //nolint:gosec // the built product, handed over by the recipe.
 	if err != nil {
@@ -547,6 +729,43 @@ func copyFile(from, to string) error {
 	}
 
 	return os.WriteFile(to, data, 0o755) //nolint:gosec // must be executable inside the job.
+}
+
+func gzipFile(from, to string) (err error) {
+	input, err := os.Open(from) //nolint:gosec // Preflighted host tool selected by exact path.
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if closeErr := input.Close(); err == nil {
+			err = closeErr
+		}
+	}()
+
+	output, err := os.OpenFile(to, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // Private staging file.
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if closeErr := output.Close(); err == nil {
+			err = closeErr
+		}
+
+		if err != nil {
+			_ = os.Remove(to)
+		}
+	}()
+
+	compressed := gzip.NewWriter(output)
+	if _, err = io.Copy(compressed, input); err != nil {
+		_ = compressed.Close()
+
+		return err
+	}
+
+	return compressed.Close()
 }
 
 // TrustLabCA is the shell that installs the environment's CA into the job's
@@ -662,9 +881,18 @@ const ProbeImage = "quay.io/podman/stable@sha256:b4bdf91d79ef0396ec1c070faa395b8
 // suspends `set -e` for it, so the diagnostics are always printed and the status
 // is still returned to the caller.
 func ProbePrelude(target Target, assetURL string) string {
+	digest := os.Getenv(runnerBinarySHA256Env)
+	if !lowerHexSHA256(digest) {
+		panic(runnerBinarySHA256Env + " must be a lowercase SHA-256")
+	}
+
+	digestCheck := assetDigestCheck(runnerAssetName, digest)
+
 	return TrustLabCA(target) + `
 curl -fsSL -o reusable-ci "` + assetURL + `"
+` + digestCheck + `
 chmod +x reusable-ci
+./reusable-ci --version
 
 # Fails the job when the CLI could not parse the invocation, so a mistyped probe
 # cannot be mistaken for the product's answer.
@@ -688,6 +916,54 @@ run_product() {
 }`
 }
 
+// ProbeAsset is one downloaded probe executable: where the job fetches it and
+// the SHA-256 of the exact bytes staged for it, which the job checks before it
+// decompresses, marks executable or runs the file.
+type ProbeAsset struct {
+	URL    string
+	SHA256 string
+}
+
+// StagedAssets maps each published asset name to the SHA-256 of the bytes staged
+// for it.
+type StagedAssets map[string]string
+
+// Asset pairs a staged asset's digest with the URL the release serves it from.
+func (staged StagedAssets) Asset(tb TB, name, assetURL string) ProbeAsset {
+	tb.Helper()
+
+	digest, ok := staged[name]
+	if !ok {
+		tb.Fatalf("livetest: %q was not staged", name)
+	}
+
+	return ProbeAsset{URL: assetURL, SHA256: digest}
+}
+
+// assetDigestCheck is the shell statement that stops the job unless file holds
+// exactly the bytes digest names.
+func assetDigestCheck(file, digest string) string {
+	if !lowerHexSHA256(digest) {
+		panic("livetest: probe asset " + file + " needs a lowercase SHA-256")
+	}
+
+	return "printf '%s  " + file + "\\n' '" + digest + "' | sha256sum --check --strict\n"
+}
+
+func lowerHexSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+
+	return true
+}
+
 // ReleaseAssetNames returns the names of every asset the forge lists on a
 // release, sorted, or an empty slice when the release has none.
 //
@@ -701,7 +977,7 @@ func ReleaseAssetNames(tb TB, target Target, repo, tag string) []string {
 	tb.Helper()
 	requireAccepted(tb, target)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), apiTimeout())
 	defer cancel()
 
 	var names []string

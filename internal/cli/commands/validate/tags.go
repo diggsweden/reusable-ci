@@ -13,7 +13,6 @@ import (
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
-	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
 
 // tagGroup wires `reusable-ci validate tag <verb>` — every subcommand
@@ -48,9 +47,8 @@ func tagReleaseGuardCmd() *cli.Command {
 			},
 			&cli.StringFlag{
 				Name:    "pattern",
-				Value:   version.StableSemverTagRE.String(),
 				Sources: cli.EnvVars("RELEASE_TAG_PATTERN"),
-				Usage:   "anchored regex the final tag must fully match",
+				Usage:   "optional anchored regex override; the default accepts only stable vMAJOR.MINOR.PATCH tags",
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -123,11 +121,16 @@ func tagCommitCmd() *cli.Command {
 				Sources: cli.EnvVars("BRANCH"),
 				Usage:   "branch the tag commit must be reachable from (default: repo default branch)",
 			},
+			&cli.BoolFlag{
+				Name:  "require-head",
+				Usage: "require the tag commit to equal origin/<branch>",
+			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			return appvalidate.TagCommit(ctx, git.New(), os.Stderr, appvalidate.TagCommitInput{
-				Tag:    cmd.String("tag"),
-				Branch: cmd.String("branch"),
+				Tag:         cmd.String("tag"),
+				Branch:      cmd.String("branch"),
+				RequireHead: cmd.Bool("require-head"),
 			})
 		},
 	}
@@ -161,6 +164,11 @@ func tagSignatureCmd() *cli.Command {
 				Sources: cli.EnvVars("REQUIRE_ALLOWLISTED_SIGNER"),
 				Usage:   "require the signer to appear in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG); missing/empty allowlist or unverifiable signature fails closed",
 			},
+			&cli.BoolFlag{
+				Name:    "require-valid-signature",
+				Sources: cli.EnvVars("REQUIRE_VALID_SIGNATURE"),
+				Usage:   "fail unless the signature verifies with configured GPG key material or SSH allowed_signers",
+			},
 			&cli.StringFlag{
 				Name:    "allowed-signers-file",
 				Sources: cli.EnvVars("ALLOWED_SIGNERS_FILE"),
@@ -177,6 +185,7 @@ func tagSignatureCmd() *cli.Command {
 				Tag:                      cmd.String("tag"),
 				Repository:               cmd.String("repository"),
 				RequireAllowlistedSigner: cmd.Bool("require-allowlisted-signer"),
+				RequireValidSignature:    cmd.Bool("require-valid-signature"),
 				AllowedSignersPath:       cmd.String("allowed-signers-file"),
 				AllowedGPGKeysPath:       cmd.String("allowed-gpg-keys-file"),
 			}

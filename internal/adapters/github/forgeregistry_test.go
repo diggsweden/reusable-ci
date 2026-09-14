@@ -16,7 +16,12 @@ func TestResolveForgeMavenRegistry_GitHub(t *testing.T) {
 	t.Parallel()
 
 	p := &github.Provider{Env: func(k string) string {
-		return map[string]string{"GITHUB_REPOSITORY": "org/app", "GITHUB_ACTOR": "ci", "GITHUB_TOKEN": "ght"}[k]
+		return map[string]string{
+			"GITHUB_REPOSITORY": "org/app",
+			"GITHUB_ACTOR":      "ci",
+			"GITHUB_TOKEN":      "ght",
+			"GITHUB_SERVER_URL": "https://github.com",
+		}[k]
 	}}
 
 	reg, err := p.ResolveForgeMavenRegistry()
@@ -24,7 +29,8 @@ func TestResolveForgeMavenRegistry_GitHub(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if reg.URL != "https://maven.pkg.github.com/org/app" || reg.AuthScheme != provider.MavenAuthServerPassword || reg.Username != "ci" {
+	if reg.URL != "https://maven.pkg.github.com/org/app" || reg.AuthScheme != provider.MavenAuthServerPassword ||
+		reg.Username != "ci" || reg.Token != "ght" {
 		t.Errorf("registry = %+v", reg)
 	}
 }
@@ -32,7 +38,9 @@ func TestResolveForgeMavenRegistry_GitHub(t *testing.T) {
 func TestResolveForgeMavenRegistry_GitHub_MissingRepo(t *testing.T) {
 	t.Parallel()
 
-	p := &github.Provider{Env: func(string) string { return "" }}
+	p := &github.Provider{Env: func(k string) string {
+		return map[string]string{"GITHUB_SERVER_URL": "https://github.com"}[k]
+	}}
 	if _, err := p.ResolveForgeMavenRegistry(); !errors.Is(err, errs.ErrUsage) {
 		t.Errorf("missing GITHUB_REPOSITORY should be ErrUsage, got %v", err)
 	}
@@ -42,7 +50,11 @@ func TestResolveForgeNPMRegistry_GitHub(t *testing.T) {
 	t.Parallel()
 
 	p := &github.Provider{Env: func(k string) string {
-		return map[string]string{"GITHUB_REPOSITORY_OWNER": "org", "GITHUB_TOKEN": "ght"}[k]
+		return map[string]string{
+			"GITHUB_REPOSITORY_OWNER": "org",
+			"GITHUB_TOKEN":            "ght",
+			"GITHUB_SERVER_URL":       "https://github.com",
+		}[k]
 	}}
 
 	reg, err := p.ResolveForgeNPMRegistry()
@@ -55,6 +67,79 @@ func TestResolveForgeNPMRegistry_GitHub(t *testing.T) {
 	}
 }
 
+func TestResolveForgeRegistries_GHESRefusesPublicEndpoints(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		resolve func(*github.Provider) error
+	}{
+		{name: "maven", resolve: func(p *github.Provider) error {
+			_, err := p.ResolveForgeMavenRegistry()
+
+			return err
+		}},
+		{name: "npm", resolve: func(p *github.Provider) error {
+			_, err := p.ResolveForgeNPMRegistry()
+
+			return err
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			tokenRead := false
+			p := &github.Provider{Env: func(k string) string {
+				if k == "GITHUB_TOKEN" {
+					tokenRead = true
+				}
+
+				return map[string]string{
+					"GITHUB_REPOSITORY":       "org/app",
+					"GITHUB_REPOSITORY_OWNER": "org",
+					"GITHUB_TOKEN":            "ghes-token",
+					"GITHUB_SERVER_URL":       "https://github.acme.example",
+				}[k]
+			}}
+
+			if err := test.resolve(p); !errors.Is(err, errs.ErrUnsupported) {
+				t.Errorf("GHES registry resolution should be ErrUnsupported, got %v", err)
+			}
+
+			if tokenRead {
+				t.Error("GITHUB_TOKEN was read before GHES registry resolution was refused")
+			}
+		})
+	}
+}
+
+func TestResolveForgeMavenRegistry_MissingServerRefusesPublicEndpoint(t *testing.T) {
+	t.Parallel()
+
+	tokenRead := false
+	p := &github.Provider{Env: func(k string) string {
+		if k == "GITHUB_TOKEN" {
+			tokenRead = true
+		}
+
+		return map[string]string{
+			"GITHUB_REPOSITORY": "org/app",
+			"GITHUB_ACTOR":      "ci",
+			"GITHUB_TOKEN":      "token",
+		}[k]
+	}}
+
+	if _, err := p.ResolveForgeMavenRegistry(); !errors.Is(err, errs.ErrUsage) {
+		t.Errorf("missing GITHUB_SERVER_URL should be ErrUsage, got %v", err)
+	}
+
+	if tokenRead {
+		t.Error("GITHUB_TOKEN was read before the missing server URL was refused")
+	}
+}
+
 // TestResolveForgeMavenRegistry_ForgeNeutralNames pins the fix: the GitHub
 // package registry understands the forge-neutral $REPOSITORY, so a run
 // configured with it no longer resolves in `release publish` and fails here
@@ -63,7 +148,11 @@ func TestResolveForgeMavenRegistry_ForgeNeutralNames(t *testing.T) {
 	t.Parallel()
 
 	p := &github.Provider{Env: func(k string) string {
-		return map[string]string{"REPOSITORY": "owner/repo", "GITHUB_TOKEN": "gt"}[k]
+		return map[string]string{
+			"REPOSITORY":        "owner/repo",
+			"GITHUB_TOKEN":      "gt",
+			"GITHUB_SERVER_URL": "https://github.com",
+		}[k]
 	}}
 
 	reg, err := p.ResolveForgeMavenRegistry()
@@ -76,36 +165,61 @@ func TestResolveForgeMavenRegistry_ForgeNeutralNames(t *testing.T) {
 	}
 }
 
-// TestResolveForgeMavenRegistry_TokenIsNotCrossForge is a SECURITY boundary,
+// TestResolveForgeRegistries_TokenIsNotCrossForge is a SECURITY boundary,
 // not a style preference.
 //
 // The obvious "finish the migration" change here is Token:
 // runcontext.Token().Resolve(env). That chain consults FORGEJO_TOKEN BEFORE
-// GITHUB_TOKEN, so with both set this resolver would hand a Forgejo
+// GITHUB_TOKEN, so with both set the Maven or npm resolver would hand a Forgejo
 // credential to github.com. A cross-forge token cannot authenticate anyway,
 // so the only outcomes are auth failure or disclosure to a host the token
 // was never issued for.
 //
 // This test fails the moment the token starts spanning forges.
-func TestResolveForgeMavenRegistry_TokenIsNotCrossForge(t *testing.T) {
+func TestResolveForgeRegistries_TokenIsNotCrossForge(t *testing.T) {
 	t.Parallel()
 
-	p := &github.Provider{Env: func(k string) string {
-		return map[string]string{
-			"REPOSITORY":    "owner/repo",
-			"FORGEJO_TOKEN": "forgejo-secret-for-another-host",
-			"CI_TOKEN":      "neutral-secret-for-another-host",
-			"GITHUB_TOKEN":  "github-token",
-		}[k]
-	}}
+	resolvers := map[string]func(*github.Provider) (string, error){
+		"maven": func(p *github.Provider) (string, error) {
+			reg, err := p.ResolveForgeMavenRegistry()
 
-	reg, err := p.ResolveForgeMavenRegistry()
-	if err != nil {
-		t.Fatal(err)
+			return reg.Token, err
+		},
+		"npm": func(p *github.Provider) (string, error) {
+			reg, err := p.ResolveForgeNPMRegistry()
+
+			return reg.Token, err
+		},
 	}
 
-	if reg.Token != "github-token" {
-		t.Errorf("token sent to github.com = %q, want the $GITHUB_TOKEN value;"+
-			" a non-GitHub credential must never be transmitted to github.com", reg.Token)
+	// Without $GITHUB_TOKEN the token is empty rather than the next credential
+	// along: an empty token fails authentication, a borrowed one discloses it.
+	for githubToken, want := range map[string]string{"github-token": "github-token", "": ""} {
+		for name, resolve := range resolvers {
+			t.Run(name+" github token "+want, func(t *testing.T) {
+				t.Parallel()
+
+				env := map[string]string{
+					"REPOSITORY":        "owner/repo",
+					"FORGEJO_TOKEN":     "forgejo-secret-for-another-host",
+					"GITEA_TOKEN":       "gitea-secret-for-another-host",
+					"CI_TOKEN":          "neutral-secret-for-another-host",
+					"GITHUB_SERVER_URL": "https://github.com",
+				}
+				if githubToken != "" {
+					env["GITHUB_TOKEN"] = githubToken
+				}
+
+				got, err := resolve(&github.Provider{Env: func(k string) string { return env[k] }})
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if got != want {
+					t.Errorf("token sent to github.com = %q, want %q;"+
+						" a non-GitHub credential must never be transmitted to github.com", got, want)
+				}
+			})
+		}
 	}
 }

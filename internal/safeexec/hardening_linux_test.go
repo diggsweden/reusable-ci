@@ -6,10 +6,12 @@
 package safeexec_test
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -37,23 +39,74 @@ func TestHardenProcess_DisablesCoreDumpsAndPtrace(t *testing.T) {
 		return
 	}
 
-	//nolint:gosec // os.Args[0] is this test binary.
-	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=TestHardenProcess_DisablesCoreDumpsAndPtrace", "-test.v")
+	parentLimit, parentDumpable := processHardeningState(t)
 
-	cmd.Env = append(os.Environ(), hardenChildEnv+"=1")
+	ctx, cancel := context.WithTimeout(t.Context(), hardenChildTimeout)
+	defer cancel()
+
+	// The child is selected by an anchored name and gets only its marker in
+	// the environment, so neither a sibling test nor an inherited variable
+	// decides what it runs.
+	//nolint:gosec // os.Args[0] is this test binary.
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestHardenProcess_DisablesCoreDumpsAndPtrace$", "-test.v", "-test.count=1")
+	cmd.Env = []string{hardenChildEnv + "=1"}
 
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("hardening child failed: %v\n%s", err, out)
+
+	// The two processes share nothing, but say so: the parent keeps its own
+	// limits whatever the child did.
+	if limit, dumpable := processHardeningState(t); limit != parentLimit || dumpable != parentDumpable {
+		t.Errorf("parent state changed: RLIMIT_CORE %+v -> %+v, dumpable %d -> %d", parentLimit, limit, parentDumpable, dumpable)
 	}
 
-	// Deliberately not a bare "PASS": a child that skipped every
-	// assertion still ends its output with PASS, and a skip here means
-	// the environment made the before/after states indistinguishable --
-	// which is exactly the case this test must not silently accept.
-	if !strings.Contains(string(out), "--- PASS: TestHardenProcess") {
-		t.Fatalf("hardening child did not run its assertions:\n%s", out)
+	outcome, reason := hardenChildOutcome(string(out))
+
+	switch {
+	case outcome == "skip":
+		// An unavailable premise is not a hardening failure, and it is not
+		// proof either: the test is skipped with the child's reason.
+		t.Skipf("hardening premise unavailable in this environment: %s", reason)
+	case err != nil || outcome != "pass":
+		t.Fatalf("hardening child did not pass its assertions (err %v):\n%s", err, out)
 	}
+}
+
+// hardenChildTimeout bounds the re-exec so a wedged child cannot hold the run.
+const hardenChildTimeout = 30 * time.Second
+
+// hardenChildOutcome reads the child's verdict for this test by name: "pass",
+// "skip" with the skip reason, or "" when it neither passed nor skipped. A bare
+// PASS at the end of the output does not count; a child that skipped ends
+// with PASS too.
+func hardenChildOutcome(out string) (string, string) {
+	const name = "TestHardenProcess_DisablesCoreDumpsAndPtrace"
+
+	lines := strings.Split(out, "\n")
+	for i, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "--- PASS: "+name+" "):
+			return "pass", ""
+		case strings.HasPrefix(line, "--- SKIP: "+name+" "):
+			if i+1 < len(lines) {
+				return "skip", strings.TrimSpace(lines[i+1])
+			}
+
+			return "skip", ""
+		}
+	}
+
+	return "", ""
+}
+
+func processHardeningState(t *testing.T) (unix.Rlimit, int) {
+	t.Helper()
+
+	var limit unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_CORE, &limit); err != nil {
+		t.Fatalf("getrlimit: %v", err)
+	}
+
+	return limit, getDumpable(t)
 }
 
 // runHardenChild is the body that executes in the re-exec'd process.
@@ -113,4 +166,27 @@ func getDumpable(t *testing.T) int {
 	}
 
 	return dumpable
+}
+
+// TestHardenChildOutcome_OnlyANamedPassIsProof pins how the parent reads the
+// child: a named pass is proof, a named skip carries its reason and is not,
+// and a trailing PASS, a failure or another test's pass are not proof.
+func TestHardenChildOutcome_OnlyANamedPassIsProof(t *testing.T) {
+	t.Parallel()
+
+	const name = "TestHardenProcess_DisablesCoreDumpsAndPtrace"
+
+	for _, tc := range []struct {
+		out, outcome, reason string
+	}{
+		{"=== RUN   " + name + "\n--- PASS: " + name + " (0.00s)\nPASS\n", "pass", ""},
+		{"=== RUN   " + name + "\n--- SKIP: " + name + " (0.00s)\n    hardening_linux_test.go:1: RLIMIT_CORE is pinned at 0\nPASS\n", "skip", "hardening_linux_test.go:1: RLIMIT_CORE is pinned at 0"},
+		{"testing: warning: no tests to run\nPASS\n", "", ""},
+		{"--- FAIL: " + name + " (0.00s)\nFAIL\n", "", ""},
+		{"--- PASS: " + name + "Extra (0.00s)\nPASS\n", "", ""},
+	} {
+		if outcome, reason := hardenChildOutcome(tc.out); outcome != tc.outcome || reason != tc.reason {
+			t.Errorf("hardenChildOutcome(%q) = (%q, %q), want (%q, %q)", tc.out, outcome, reason, tc.outcome, tc.reason)
+		}
+	}
 }

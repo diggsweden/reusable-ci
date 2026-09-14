@@ -5,14 +5,14 @@ package validate
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"gopkg.in/yaml.v3"
 )
 
-// IsolationConfig parameterises the SLSA Build L3 job-isolation checks. Job
+// IsolationConfig parameterises the static release-isolation checks. Job
 // names and the signing-secret set differ per pipeline, so they are supplied by
 // the caller rather than hard-coded.
 type IsolationConfig struct {
@@ -23,8 +23,8 @@ type IsolationConfig struct {
 	// (e.g. RELEASE_GPG_PRIVATE_KEY, COSIGN_PRIVATE_KEY).
 	SigningSecrets []string
 	// SignJob is the reusable signing workflow call-site job. Empty disables the
-	// Forgejo release-signing call-site checks, keeping the generic L3 validator
-	// backwards-compatible for workflows that only want the core SLSA isolation
+	// Forgejo release-signing call-site checks, keeping the generic validator
+	// backwards-compatible for workflows that only want the core release-isolation
 	// checks.
 	SignJob string
 	// PrepareJob is the job that produces release-tag/release-sha and may run
@@ -35,14 +35,15 @@ type IsolationConfig struct {
 	DistDigestOutput string
 }
 
-// IsolationViolation is one failed invariant, located for annotation against the
-// source workflow.
+// IsolationViolation is one failed static invariant. Secret diagnostics identify
+// the consuming job, secret and start of the containing source scalar (the anchor
+// definition for an alias), not an exact expression-token location.
 type IsolationViolation struct {
 	Line int
 	Msg  string
 }
 
-// CheckIsolation returns the SLSA Build L3 isolation violations in a workflow:
+// CheckIsolation returns the release-isolation violations in a workflow:
 //
 //  1. the build job referencing a signing secret (keys must live only in the
 //     separately-trusted signing job, never in the job that produces artifacts);
@@ -54,14 +55,31 @@ type IsolationViolation struct {
 func CheckIsolation(workflowYAML []byte, cfg IsolationConfig) ([]IsolationViolation, error) {
 	var doc struct {
 		Jobs map[string]yaml.Node `yaml:"jobs"`
+		Env  yaml.Node            `yaml:"env"`
 	}
 
 	if err := yaml.Unmarshal(workflowYAML, &doc); err != nil {
 		return nil, fmt.Errorf("parse workflow yaml: %w", err)
 	}
 
-	violations := buildJobSecretViolations(doc.Jobs, cfg)
-	violations = append(violations, prepareOrderingViolations(doc.Jobs, cfg)...)
+	violations, err := buildJobSecretViolations(doc.Jobs, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	inheritedViolations, err := workflowEnvSecretViolations(doc.Env, doc.Jobs, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	violations = append(violations, inheritedViolations...)
+
+	prepareViolations, err := prepareOrderingViolations(doc.Jobs, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	violations = append(violations, prepareViolations...)
 	violations = append(violations, signCallSiteViolations(doc.Jobs, cfg)...)
 	violations = append(violations, releaseIdentityViolations(doc.Jobs, cfg)...)
 	violations = append(violations, distDigestViolations(doc.Jobs, cfg)...)
@@ -71,12 +89,50 @@ func CheckIsolation(workflowYAML []byte, cfg IsolationConfig) ([]IsolationViolat
 	return violations, nil
 }
 
-// buildJobSecretViolations flags the build job referencing a signing secret —
-// the artifact-producing job must have no access to signing keys (SLSA Build
-// L3 isolation).
-func buildJobSecretViolations(jobs map[string]yaml.Node, cfg IsolationConfig) []IsolationViolation {
+func workflowEnvSecretViolations(env yaml.Node, jobs map[string]yaml.Node, cfg IsolationConfig) ([]IsolationViolation, error) {
+	job, exists := jobs[cfg.BuildJob]
+	if !exists || env.Kind == 0 {
+		return nil, nil
+	}
+
+	var inherited, overrides map[string]yaml.Node
+	if err := env.Decode(&inherited); err != nil {
+		return nil, fmt.Errorf("decode workflow env: %w", err)
+	}
+
+	if jobEnv := mappingValue(&job, "env"); jobEnv != nil {
+		if err := jobEnv.Decode(&overrides); err != nil {
+			return nil, fmt.Errorf("decode build job env: %w", err)
+		}
+	}
+
+	var violations []IsolationViolation
+
+	for _, key := range sortedKeys(inherited) {
+		if _, overridden := overrides[key]; overridden {
+			continue
+		}
+
+		value := inherited[key]
+
+		refs, err := findSecretRefs(&value, signingSecretPattern(cfg.SigningSecrets))
+		if err != nil {
+			return nil, fmt.Errorf("inspect workflow env %q: %w", key, err)
+		}
+
+		for _, ref := range refs {
+			violations = append(violations, IsolationViolation{Line: ref.line, Msg: fmt.Sprintf("build job %q inherits signing secret %s through workflow env %q", cfg.BuildJob, ref.describe(), key)})
+		}
+	}
+
+	return violations, nil
+}
+
+// buildJobSecretViolations flags the build job referencing a signing secret:
+// the artifact-producing job must have no access to signing keys.
+func buildJobSecretViolations(jobs map[string]yaml.Node, cfg IsolationConfig) ([]IsolationViolation, error) {
 	if cfg.BuildJob == "" || len(cfg.SigningSecrets) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	node, ok := jobs[cfg.BuildJob]
@@ -84,29 +140,43 @@ func buildJobSecretViolations(jobs map[string]yaml.Node, cfg IsolationConfig) []
 		return []IsolationViolation{{
 			Line: 1,
 			Msg:  fmt.Sprintf("build job %q is missing from workflow", cfg.BuildJob),
-		}}
+		}}, nil
 	}
 
-	line, secret, found := findSecretRef(&node, signingSecretPattern(cfg.SigningSecrets))
-	if !found {
-		return nil
+	refs, err := findSecretRefs(&node, signingSecretPattern(cfg.SigningSecrets))
+	if err != nil {
+		return nil, fmt.Errorf("inspect build job %q: %w", cfg.BuildJob, err)
 	}
 
-	return []IsolationViolation{{
-		Line: line,
-		Msg: fmt.Sprintf("build job %q references signing secret %q; the artifact-producing job must have no access to signing keys (SLSA Build L3 isolation)",
-			cfg.BuildJob, secret),
-	}}
+	var violations []IsolationViolation
+	for _, ref := range refs {
+		violations = append(violations, IsolationViolation{
+			Line: ref.line,
+			Msg: fmt.Sprintf("build job %q references signing secret %s; the artifact-producing job must have no access to signing keys (release isolation)",
+				cfg.BuildJob, ref.describe()),
+		})
+	}
+
+	// A reusable-workflow build job that inherits the caller's secrets holds
+	// every signing secret without naming one.
+	if scalarValue(mappingValue(&node, "secrets")) == "inherit" {
+		violations = append(violations, IsolationViolation{
+			Line: node.Line,
+			Msg:  fmt.Sprintf("build job %q inherits every caller secret (secrets: inherit); pass the build job only the secrets it needs (release isolation)", cfg.BuildJob),
+		})
+	}
+
+	return violations, nil
 }
 
-func prepareOrderingViolations(jobs map[string]yaml.Node, cfg IsolationConfig) []IsolationViolation {
+func prepareOrderingViolations(jobs map[string]yaml.Node, cfg IsolationConfig) ([]IsolationViolation, error) { //nolint:cyclop // Detect checkout, then attribute each secret-bearing scalar without losing traversal errors.
 	if cfg.PrepareJob == "" || len(cfg.SigningSecrets) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	node, ok := jobs[cfg.PrepareJob]
 	if !ok {
-		return nil
+		return nil, nil
 	}
 
 	steps := jobSteps(node)
@@ -114,7 +184,7 @@ func prepareOrderingViolations(jobs map[string]yaml.Node, cfg IsolationConfig) [
 
 	for i, step := range steps {
 		uses := scalarValue(mappingValue(&step, "uses"))
-		if strings.Contains(uses, "actions/checkout@") || strings.Contains(uses, "checkout-consumer") {
+		if usesAction(uses, "actions/checkout@") || usesAction(uses, "checkout-consumer") {
 			checkoutIndex = i
 
 			break
@@ -122,25 +192,27 @@ func prepareOrderingViolations(jobs map[string]yaml.Node, cfg IsolationConfig) [
 	}
 
 	if checkoutIndex < 0 {
-		return nil
+		return nil, nil
 	}
 
 	var violations []IsolationViolation
 
 	re := signingSecretPattern(cfg.SigningSecrets)
 	for _, step := range steps[checkoutIndex:] {
-		line, secret, found := findSecretRef(&step, re)
-		if !found {
-			continue
+		refs, err := findSecretRefs(&step, re)
+		if err != nil {
+			return nil, fmt.Errorf("inspect prepare job %q: %w", cfg.PrepareJob, err)
 		}
 
-		violations = append(violations, IsolationViolation{
-			Line: line,
-			Msg:  fmt.Sprintf("prepare job %q references signing secret %q at/after checkout; signing-secret checks must run before consumer code is checked out", cfg.PrepareJob, secret),
-		})
+		for _, ref := range refs {
+			violations = append(violations, IsolationViolation{
+				Line: ref.line,
+				Msg:  fmt.Sprintf("prepare job %q references signing secret %s at/after checkout; signing-secret checks must run before consumer code is checked out", cfg.PrepareJob, ref.describe()),
+			})
+		}
 	}
 
-	return violations
+	return violations, nil
 }
 
 func signCallSiteViolations(jobs map[string]yaml.Node, cfg IsolationConfig) []IsolationViolation {
@@ -278,41 +350,23 @@ func distDigestViolations(jobs map[string]yaml.Node, cfg IsolationConfig) []Isol
 }
 
 // persistCredentialViolations flags every actions/checkout step that does not
-// set persist-credentials: false.
+// set persist-credentials to the literal false (boolean or string). Identifying
+// checkout must not depend on successfully decoding its credential input.
 func persistCredentialViolations(jobs map[string]yaml.Node) []IsolationViolation {
 	var violations []IsolationViolation
 
 	for _, name := range sortedKeys(jobs) {
-		node := jobs[name]
-
-		var job struct {
-			Steps []yaml.Node `yaml:"steps"`
-		}
-
-		if err := node.Decode(&job); err != nil {
-			continue // a reusable-call job has no steps; nothing to check
-		}
-
-		for _, stepNode := range job.Steps {
-			var step struct {
-				Uses string `yaml:"uses"`
-				With struct {
-					PersistCredentials *bool `yaml:"persist-credentials"`
-				} `yaml:"with"`
-			}
-
-			if err := stepNode.Decode(&step); err != nil {
+		for _, step := range jobSteps(jobs[name]) {
+			uses := scalarValue(mappingValue(&step, "uses"))
+			if !usesAction(uses, "actions/checkout@") {
 				continue
 			}
 
-			if !strings.Contains(step.Uses, "actions/checkout@") {
-				continue
-			}
-
-			if step.With.PersistCredentials == nil || *step.With.PersistCredentials {
+			persist := mappingValue(mappingValue(&step, "with"), "persist-credentials")
+			if scalarValue(persist) != "false" || (persist.ShortTag() != "!!bool" && persist.ShortTag() != "!!str") {
 				violations = append(violations, IsolationViolation{
-					Line: stepNode.Line,
-					Msg:  fmt.Sprintf("job %q: actions/checkout step must set persist-credentials: false (SLSA Build L3 isolation)", name),
+					Line: step.Line,
+					Msg:  fmt.Sprintf("job %q: actions/checkout step must set persist-credentials: false (static literal required for release isolation)", name),
 				})
 			}
 		}
@@ -327,7 +381,7 @@ func setupToolchainCacheViolations(jobs map[string]yaml.Node) []IsolationViolati
 	for _, name := range sortedKeys(jobs) {
 		for _, step := range jobSteps(jobs[name]) {
 			uses := scalarValue(mappingValue(&step, "uses"))
-			if !strings.Contains(uses, "setup-toolchain@") {
+			if !usesAction(uses, "setup-toolchain@") {
 				continue
 			}
 
@@ -344,19 +398,23 @@ func setupToolchainCacheViolations(jobs map[string]yaml.Node) []IsolationViolati
 	return violations
 }
 
-// signingSecretPattern matches `secrets.<NAME>` for any configured secret. Names
-// are regexp-escaped so dots/specials in secret names can't widen the match.
-func signingSecretPattern(secrets []string) *regexp.Regexp {
-	escaped := make([]string, 0, len(secrets))
-	for _, s := range secrets {
-		if s == "" {
-			continue
-		}
+// usesAction reports whether a step's `uses:` names the action. Forges resolve
+// repository names case-insensitively, so `Actions/Checkout@` is the same
+// action as `actions/checkout@` and must not slip past a check by spelling.
+func usesAction(uses, action string) bool {
+	return strings.Contains(strings.ToLower(uses), action)
+}
 
-		escaped = append(escaped, regexp.QuoteMeta(s))
+// signingSecretPattern indexes exact configured names for literal member matching.
+func signingSecretPattern(secrets []string) map[string]bool {
+	names := make(map[string]bool, len(secrets))
+	for _, secret := range secrets {
+		if secret != "" {
+			names[secret] = true
+		}
 	}
 
-	return regexp.MustCompile(`secrets\.(` + strings.Join(escaped, "|") + `)`)
+	return names
 }
 
 func nodeContainsSecretRef(node *yaml.Node, secret string) bool {
@@ -364,43 +422,110 @@ func nodeContainsSecretRef(node *yaml.Node, secret string) bool {
 		return false
 	}
 
-	re := regexp.MustCompile(`secrets\.` + regexp.QuoteMeta(secret) + `\b`)
-	_, _, found := findSecretRef(node, re)
+	re := signingSecretPattern([]string{secret})
+	refs, err := findSecretRefs(node, re)
 
-	return found
+	return err == nil && len(refs) > 0
 }
 
-// findSecretRef walks a job's YAML node tree for the first scalar that matches
-// re, returning its source line (accurate, from the original document) and the
-// captured secret name.
-func findSecretRef(node *yaml.Node, re *regexp.Regexp) (int, string, bool) {
-	node = resolveAlias(node)
-	if node == nil {
-		return 0, "", false
+type signingSecretRef struct {
+	line   int
+	secret string // empty when the whole secrets context is referenced
+}
+
+// describe names the reference in a diagnostic: the secret, or the construct
+// that reaches every secret at once.
+func (r signingSecretRef) describe() string {
+	if r.secret == "" {
+		return "through the whole secrets context (toJSON(secrets) or a computed index)"
 	}
 
-	if node.Kind == yaml.ScalarNode {
-		if m := re.FindStringSubmatch(node.Value); m != nil {
-			if len(m) > 1 {
-				return node.Line, m[1], true
+	return fmt.Sprintf("%q", r.secret)
+}
+
+// findSecretRefs reports distinct literal secret names per scalar, not token
+// occurrences. yaml.v3 resolves effective mapping values before traversal, so
+// direct keys and earlier merge sources shadow defaults just as in env decoding.
+func findSecretRefs(node *yaml.Node, names map[string]bool) ([]signingSecretRef, error) { //nolint:cyclop,gocognit // Keep bounded traversal, cycle state and effective-value diagnostics in one walk.
+	var refs []signingSecretRef
+
+	active, seen := map[*yaml.Node]bool{}, map[*yaml.Node]bool{}
+
+	var walk func(*yaml.Node, int) error
+
+	walk = func(node *yaml.Node, depth int) error {
+		if node == nil {
+			return nil
+		}
+
+		if depth >= aliasDepthLimit || (node.Kind == yaml.AliasNode && resolveAlias(node) == nil) {
+			return fmt.Errorf("workflow alias/nesting limit %d exceeded at line %d: %w", aliasDepthLimit, node.Line, errs.ErrMalformedInput)
+		}
+
+		node = resolveAlias(node)
+		if active[node] {
+			return fmt.Errorf("cyclic workflow alias at line %d: %w", node.Line, errs.ErrMalformedInput)
+		}
+
+		if seen[node] {
+			return nil
+		}
+
+		active[node], seen[node] = true, true
+		defer delete(active, node)
+
+		if node.Kind == yaml.ScalarNode {
+			matched := map[string]bool{}
+
+			for _, ref := range expressionReferences(node.Value, "secrets", false) {
+				// toJSON(secrets), secrets[format(...)] and a bare `secrets`
+				// reach every secret without naming one. They are a
+				// reference to each configured secret, reported once.
+				secret := ""
+				if len(ref.members) > 0 {
+					secret = ref.members[0]
+				}
+
+				if (secret == "" || names[secret]) && !matched[secret] {
+					refs = append(refs, signingSecretRef{line: node.Line, secret: secret})
+					matched[secret] = true
+				}
 			}
 
-			return node.Line, m[0], true
+			return nil
 		}
+
+		children := node.Content
+		if node.Kind == yaml.MappingNode {
+			var values map[string]yaml.Node
+			if err := node.Decode(&values); err != nil {
+				return fmt.Errorf("decode workflow mapping at line %d: %w", node.Line, err)
+			}
+
+			children = make([]*yaml.Node, 0, len(values))
+			for _, key := range sortedKeys(values) {
+				value := values[key]
+				children = append(children, &value)
+			}
+		}
+
+		for _, child := range children {
+			if err := walk(child, depth+1); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+	if err := walk(node, 0); err != nil {
+		return nil, err
 	}
 
-	for _, child := range node.Content {
-		if l, s, ok := findSecretRef(child, re); ok {
-			return l, s, true
-		}
-	}
-
-	return 0, "", false
+	return refs, nil
 }
 
-// aliasDepthLimit bounds alias resolution. Valid YAML cannot nest
-// aliases indefinitely, but a hand-built node tree could, and this walk
-// runs over caller-supplied files.
+// aliasDepthLimit bounds alias chains and secret-walk nesting. Recursive aliases
+// and excessive nesting must not turn a partial inspection into a passing check.
 const aliasDepthLimit = 100
 
 // resolveAlias follows an alias node to the content it names.
@@ -409,7 +534,7 @@ const aliasDepthLimit = 100
 // sees an alias as a childless leaf: the anchored content is never
 // visited. That made the same workflow pass or fail depending on how it
 // was spelled, in the fail-open direction -- moving a build job's env
-// behind an anchor hid its signing secrets from the SLSA Build L3 check.
+// behind an anchor hid its signing secrets from the release-isolation check.
 //
 // Anchors are not exotic here. This repository's own consumer-facing
 // workflow_call files use them for shared `if:` conditions, so refusing
@@ -443,57 +568,25 @@ func jobSteps(job yaml.Node) []yaml.Node {
 	return steps
 }
 
-// mappingValue returns the value for key, following aliases and honouring
-// the merge key (`<<`). A key written directly wins over a merged one,
-// which is what the YAML merge-key spec says and what a reader expects.
+// mappingValue uses the same YAML merge precedence as the secret walk. Decoding
+// also bounds recursive merge aliases rather than recursively hand-walking them.
 func mappingValue(node *yaml.Node, key string) *yaml.Node {
 	node = resolveAlias(node)
 	if node == nil || node.Kind != yaml.MappingNode {
 		return nil
 	}
 
-	var merged []*yaml.Node
-
-	for idx := 0; idx+1 < len(node.Content); idx += 2 {
-		if node.Content[idx].Value == key {
-			return resolveAlias(node.Content[idx+1])
-		}
-
-		if node.Content[idx].Value == "<<" {
-			merged = append(merged, node.Content[idx+1])
-		}
+	var values map[string]yaml.Node
+	if err := node.Decode(&values); err != nil {
+		return nil
 	}
 
-	// Merge sources are searched only after every direct key, so a key
-	// written on the mapping wins over one pulled in by `<<`.
-	return mergedValue(merged, key)
-}
-
-// mergedValue searches `<<` merge sources for key, in order. A merge
-// value may be one mapping or a sequence of them.
-func mergedValue(sources []*yaml.Node, key string) *yaml.Node {
-	for _, source := range sources {
-		source = resolveAlias(source)
-		if source == nil {
-			continue
-		}
-
-		if source.Kind == yaml.SequenceNode {
-			for _, item := range source.Content {
-				if found := mappingValue(item, key); found != nil {
-					return found
-				}
-			}
-
-			continue
-		}
-
-		if found := mappingValue(source, key); found != nil {
-			return found
-		}
+	value, ok := values[key]
+	if !ok {
+		return nil
 	}
 
-	return nil
+	return resolveAlias(&value)
 }
 
 func scalarValue(node *yaml.Node) string {

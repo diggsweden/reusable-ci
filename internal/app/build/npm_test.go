@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,6 +20,8 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
+
+var errNPMPackFailed = errors.New("npm pack exited non-zero")
 
 type fakeNPMOps struct {
 	out    string
@@ -51,7 +54,7 @@ func TestNPMMetadata_EmitsOutputs(t *testing.T) {
 		t.Errorf("version = %q", got)
 	}
 
-	if !strings.Contains(out.String(), "@org/app@1.2.3") {
+	if out.String() != "Package: @org/app@1.2.3\n" || !slices.Equal(sink.Order(), []string{"name", "version"}) {
 		t.Errorf("out = %s", out.String())
 	}
 }
@@ -144,9 +147,9 @@ func TestNPMPack_PropagatesNPMFailure(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	err := appbuild.NPMPack(context.Background(), fakeNPMOps{stderr: "boom", err: errors.New("npm failed")}, sink, &bytes.Buffer{}, &stderr, appbuild.NPMMetadataInput{Dir: fsys.Root}) //nolint:err113 // test mock error
-	if err == nil {
-		t.Fatal("expected error")
+	err := appbuild.NPMPack(context.Background(), fakeNPMOps{stderr: "boom", err: errNPMPackFailed}, sink, &bytes.Buffer{}, &stderr, appbuild.NPMMetadataInput{Dir: fsys.Root})
+	if !errors.Is(err, errNPMPackFailed) {
+		t.Fatalf("err = %v, want npm's own error to survive wrapping", err)
 	}
 
 	if stderr.String() != "boom" {
@@ -188,6 +191,12 @@ func TestNPMPack_UsesWorkingDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// The tarball only exists under pkg/, so resolving it at all is the
+	// claim -- and the emitted output is what a later publish step reads.
+	if got := sink.Single("tarball"); got != "app.tgz" {
+		t.Errorf("tarball = %q, want app.tgz resolved relative to Dir", got)
+	}
 }
 
 type recordingNPMRunner struct {
@@ -214,8 +223,8 @@ func TestNPMApplication_RunsBuildScriptWhenPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := runner.args; len(got) != 2 || got[0] != "run" || got[1] != "build" {
-		t.Errorf("args = %v, want [run build]", got)
+	if want := []string{"run", "build"}; !slices.Equal(runner.args, want) {
+		t.Errorf("args = %v, want %v", runner.args, want)
 	}
 
 	if !strings.Contains(out.String(), `Running "build" npm script`) {
@@ -267,15 +276,7 @@ func TestNPMApplication_RejectsUnreadablePackageJSON(t *testing.T) {
 	}{
 		{name: "not json", body: `not json`, wantErr: errs.ErrInvalidConfig},
 		{name: "truncated json", body: `{"name":"x"`, wantErr: errs.ErrInvalidConfig},
-		{
-			// fs.ErrNotExist, not ErrMissingInput: npmHasScript returns the
-			// raw read error while its sibling readNPMPackageJSON maps the
-			// same condition to ErrMissingInput, so the exit code depends
-			// on which npm subcommand was run. Recorded in
-			// docs/open-questions.md; pinned here as it behaves today.
-			name:    "no package.json",
-			wantErr: fs.ErrNotExist,
-		},
+		{name: "no package.json", wantErr: errs.ErrMissingInput},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

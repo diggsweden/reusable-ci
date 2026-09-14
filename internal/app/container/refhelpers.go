@@ -66,7 +66,9 @@ func ContainerfileArgDefault(in ContainerfileArgDefaultInput) (string, error) {
 func scanContainerfileArgDefault(scanner *bufio.Scanner, argName string) (string, bool) {
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasPrefix(line, "FROM ") || strings.HasPrefix(line, "from ") {
+
+		fields := strings.Fields(line)
+		if len(fields) > 0 && strings.EqualFold(fields[0], "FROM") {
 			break
 		}
 
@@ -165,6 +167,10 @@ func platformDigest(raw []byte, wanted domaincontainer.Platform) (string, bool, 
 
 		if wanted.Variant != "" && manifest.Platform.Variant != wanted.Variant {
 			continue
+		}
+
+		if !domaincontainer.ValidDigest(manifest.Digest) {
+			return "", true, fmt.Errorf("matching platform manifest has an invalid digest: %w", errs.ErrMalformedInput)
 		}
 
 		return manifest.Digest, true, nil

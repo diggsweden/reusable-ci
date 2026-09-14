@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
-	"reflect"
+	"maps"
 	"strings"
 	"testing"
 
@@ -97,7 +97,7 @@ func TestSSHSigningSetup_InstallsTheKeyAndPointsGitAtIt(t *testing.T) {
 		"user.email":      "bot@example.org",
 		"commit.gpgsign":  "true",
 	}
-	if !reflect.DeepEqual(git.local, want) {
+	if !maps.Equal(git.local, want) {
 		t.Errorf("git config = %v\nwant %v", git.local, want)
 	}
 }

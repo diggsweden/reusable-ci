@@ -4,12 +4,14 @@
 package syncguard
 
 import (
-	"os"
-	"path/filepath"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
+	"github.com/stretchr/testify/require"
 )
 
 // TestGuardPackagesAreDocumented fails when a repo-wide guard package is
@@ -27,19 +29,10 @@ import (
 func TestGuardPackagesAreDocumented(t *testing.T) {
 	t.Parallel()
 
-	root := reporoot.Path(t)
-
-	entries, err := os.ReadDir(filepath.Join(root, "internal"))
-	if err != nil {
-		t.Fatalf("read internal/: %v", err)
-	}
-
-	doc, err := os.ReadFile(filepath.Join(root, "docs", "testing.md")) //nolint:gosec // repo-local doc.
-	if err != nil {
-		t.Fatalf("read docs/testing.md: %v", err)
-	}
-
-	table := string(doc)
+	entries := reporoot.ReadDir(t, "internal")
+	table := string(reporoot.ReadFile(t, "docs/testing.md"))
+	rows, err := guardPackagesNamedIn(table)
+	require.NoError(t, err)
 
 	var found []string
 
@@ -51,7 +44,7 @@ func TestGuardPackagesAreDocumented(t *testing.T) {
 		found = append(found, e.Name())
 
 		// The table cites each package as `internal/<name>` in a row.
-		if !strings.Contains(table, "`internal/"+e.Name()+"`") {
+		if !slices.Contains(rows, e.Name()) {
 			t.Errorf(
 				"internal/%s is a repo-wide guard package with no row in docs/testing.md.\n"+
 					"    Add one saying what it guards and what it reads. That table is the\n"+
@@ -67,8 +60,8 @@ func TestGuardPackagesAreDocumented(t *testing.T) {
 	}
 
 	// The reverse direction: a row naming a package that has been removed.
-	for _, name := range guardPackagesNamedIn(table) {
-		if !containsString(found, name) {
+	for _, name := range rows {
+		if !slices.Contains(found, name) {
 			t.Errorf(
 				"docs/testing.md has a row for internal/%s, which does not exist.\n"+
 					"    Remove the row, or restore the package.",
@@ -78,36 +71,60 @@ func TestGuardPackagesAreDocumented(t *testing.T) {
 	}
 }
 
-// guardPackagesNamedIn extracts every `internal/<something>guard` the document
-// cites in backticks.
-//
-// Only lower-case identifiers count, so the prose may still write the glob
-// `internal/*guard` when describing the family without it being read as a
-// package that ought to exist.
-func guardPackagesNamedIn(doc string) []string {
+// guardPackagesNamedIn accepts complete rows only in the exact guard table;
+// prose, unrelated tables, duplicate rows and missing columns cannot satisfy it.
+func guardPackagesNamedIn(doc string) ([]string, error) {
 	var out []string
 
-	for rest := doc; ; {
-		const marker = "`internal/"
+	active, found := false, false
 
-		i := strings.Index(rest, marker)
-		if i < 0 {
-			return out
+	for index, line := range strings.Split(doc, "\n") {
+		if line == "| Package | Guards | Reads |" {
+			if found {
+				return nil, fmt.Errorf("duplicate guard table at line %d: %w", index+1, errs.ErrValidation)
+			}
+
+			active, found = true, true
+
+			continue
 		}
 
-		rest = rest[i+len(marker):]
-
-		end := strings.IndexByte(rest, '`')
-		if end < 0 {
-			return out
+		if !active {
+			continue
 		}
 
-		if name := rest[:end]; isPackageIdent(name) && strings.HasSuffix(name, "guard") && !containsString(out, name) {
-			out = append(out, name)
+		if !strings.HasPrefix(line, "|") {
+			active = false
+
+			continue
 		}
 
-		rest = rest[end:]
+		cells := strings.Split(line, "|")
+		if len(cells) != 5 {
+			return nil, fmt.Errorf("guard table line %d needs three columns: %w", index+1, errs.ErrValidation)
+		}
+
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+
+		if strings.Trim(cells[1], "-:") == "" {
+			continue
+		}
+
+		name := strings.TrimSuffix(strings.TrimPrefix(cells[1], "`internal/"), "`")
+		if cells[1] != "`internal/"+name+"`" || !isPackageIdent(name) || !strings.HasSuffix(name, "guard") || cells[2] == "" || cells[3] == "" || slices.Contains(out, name) {
+			return nil, fmt.Errorf("invalid or duplicate guard row at line %d: %w", index+1, errs.ErrValidation)
+		}
+
+		out = append(out, name)
 	}
+
+	if !found || len(out) == 0 {
+		return nil, fmt.Errorf("guard-package table is missing or empty: %w", errs.ErrValidation)
+	}
+
+	return out, nil
 }
 
 // isPackageIdent reports whether s could be a Go package directory name, which
@@ -118,20 +135,10 @@ func isPackageIdent(s string) bool {
 	}
 
 	for _, r := range s {
-		if r < 'a' || r > 'z' {
+		if !strings.ContainsRune("abcdefghijklmnopqrstuvwxyz0123456789_", r) {
 			return false
 		}
 	}
 
 	return true
-}
-
-func containsString(haystack []string, want string) bool {
-	for _, s := range haystack {
-		if s == want {
-			return true
-		}
-	}
-
-	return false
 }

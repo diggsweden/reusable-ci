@@ -10,7 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,14 +19,54 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
-func TestXcodeExportIPA_WritesPlistAndInvokesXcodebuild(t *testing.T) {
+func xcodeExportFixture(t *testing.T) *testfs.Real {
+	t.Helper()
 	fsys := testfs.NewReal(t)
+
+	root, err := filepath.EvalSymlinks(fsys.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fsys.Root = root
+	for _, key := range []string{"TMPDIR", "TEMP", "TMP"} {
+		t.Setenv(key, fsys.MkdirAll(key))
+	}
+
+	return fsys
+}
+
+func TestXcodeExportIPA_WritesPlistAndInvokesXcodebuild(t *testing.T) {
+	fsys := xcodeExportFixture(t)
 	fsys.Chdir()
 
 	plist := `<?xml version="1.0"?>`
 	enc := base64.StdEncoding.EncodeToString([]byte(plist))
 
-	ops := &fakeXcodeBuild{}
+	fsys.WriteFile("export-options.plist", []byte("workspace canary"))
+
+	var plistPath string
+
+	ops := &fakeXcodeBuild{run: func(args []string) {
+		if len(args) != 7 {
+			t.Fatalf("args=%v", args)
+		}
+
+		plistPath = args[6]
+		if filepath.Dir(filepath.Dir(plistPath)) != fsys.Path("TMPDIR") {
+			t.Fatalf("export plist escaped fixture temp root: %s", plistPath)
+		}
+
+		body, err := os.ReadFile(plistPath)
+		if err != nil || string(body) != plist {
+			t.Fatalf("body=%q err=%v", body, err)
+		}
+
+		info, err := os.Lstat(plistPath)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+			t.Fatalf("plist info=%v err=%v", info, err)
+		}
+	}}
 	if err := appbuild.XcodeExportIPA(context.Background(), ops, io.Discard, io.Discard, appbuild.XcodeExportIPAInput{
 		ExportOptionsBase64: enc,
 		ExportOptionsVar:    "EXPORT_OPTIONS_BASE64",
@@ -34,20 +74,12 @@ func TestXcodeExportIPA_WritesPlistAndInvokesXcodebuild(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if body := fsys.ReadFile("export-options.plist"); string(body) != plist {
+	if body := fsys.ReadFile("export-options.plist"); string(body) != "workspace canary" {
 		t.Errorf("plist = %q", body)
 	}
 
-	// The plist carries the signing configuration -- team id, provisioning
-	// profile, distribution method -- and is written into the workspace, so
-	// it is owner-only by intent.
-	info, err := os.Stat(filepath.Join(fsys.Root, "export-options.plist"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if perm := info.Mode().Perm(); perm != 0o600 {
-		t.Errorf("plist mode = %v, want 0600", perm)
+	if _, err := os.Stat(plistPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("transient plist remains: %v", err)
 	}
 
 	// The whole invocation. Reading only calls[0][0] left the archive it
@@ -58,14 +90,14 @@ func TestXcodeExportIPA_WritesPlistAndInvokesXcodebuild(t *testing.T) {
 		"-exportArchive",
 		"-archivePath", filepath.Join("build", "app.xcarchive"),
 		"-exportPath", filepath.Join("build", "export"),
-		"-exportOptionsPlist", "export-options.plist",
+		"-exportOptionsPlist", plistPath,
 	}
 
 	if len(ops.calls) != 1 {
 		t.Fatalf("xcodebuild calls = %v, want 1", ops.calls)
 	}
 
-	if !reflect.DeepEqual(ops.calls[0], want) {
+	if !slices.Equal(ops.calls[0], want) {
 		t.Errorf("export = %q, want %q", ops.calls[0], want)
 	}
 }
@@ -75,8 +107,6 @@ func TestXcodeExportIPA_WritesPlistAndInvokesXcodebuild(t *testing.T) {
 // caller rather than hard-coded, so a workflow using its own name gets
 // told that name.
 func TestXcodeExportIPA_MissingOptionsNamesItsVariable(t *testing.T) {
-	t.Parallel()
-
 	for _, tc := range []struct {
 		name    string
 		varName string
@@ -93,7 +123,7 @@ func TestXcodeExportIPA_MissingOptionsNamesItsVariable(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
+			xcodeExportFixture(t)
 
 			ops := &fakeXcodeBuild{}
 

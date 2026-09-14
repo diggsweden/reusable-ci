@@ -5,16 +5,17 @@ package security
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
 	"github.com/diggsweden/reusable-ci/v3/internal/retry"
 )
 
@@ -59,7 +60,12 @@ func RawContainerScan(ctx context.Context, trivy TrivyOps, sink ci.OutputSink, o
 	scanners := rawContainerScanDefault(in.Scanners, defaultRawContainerScanScanners)
 
 	scanErr := retry.Run(ctx, nil, attempts, retryDelay, func() error {
-		_ = os.Remove(in.Output)
+		// A report left by an earlier run must not be validated as this
+		// run's: if it cannot be removed, nothing written afterwards can be
+		// trusted to be fresh, and retrying does not change that.
+		if err := os.Remove(in.Output); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return retry.Permanent(fmt.Errorf("remove previous trivy output %s: %w: %w", in.Output, err, errs.ErrValidation))
+		}
 
 		return runRawContainerTrivy(ctx, trivy, out, stderr, RawContainerScanInput{
 			ImageRef: in.ImageRef,
@@ -151,24 +157,16 @@ func runRawContainerTrivy(ctx context.Context, trivy TrivyOps, out, stderr io.Wr
 
 func validateRawContainerTrivyOutput(path string) error {
 	body, err := os.ReadFile(path) //nolint:gosec // caller-provided report path, same trust as CLI file flags.
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("trivy reported success but wrote no report to %s: %w", path, errs.ErrDependencyUnavailable)
+	}
+
 	if err != nil {
 		return fmt.Errorf("read trivy output %s: %w", path, err)
 	}
 
-	var report struct {
-		Results json.RawMessage `json:"Results"`
-	}
-	if err := json.Unmarshal(body, &report); err != nil {
-		return fmt.Errorf("parse trivy output %s: %w: %w", path, err, errs.ErrMalformedInput)
-	}
-
-	var results any
-	if len(report.Results) == 0 || json.Unmarshal(report.Results, &results) != nil {
-		return fmt.Errorf("trivy output %s must be an object with a Results array: %w", path, errs.ErrMalformedInput)
-	}
-
-	if _, ok := results.([]any); !ok {
-		return fmt.Errorf("trivy output %s must be an object with a Results array: %w", path, errs.ErrMalformedInput)
+	if _, err := security.ParseTrivyReport(body); err != nil {
+		return fmt.Errorf("parse trivy output %s: %w", path, err)
 	}
 
 	return nil

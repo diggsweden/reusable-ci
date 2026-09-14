@@ -19,9 +19,9 @@ func materializeBuildSecretsCmd() *cli.Command {
 		Name:  "materialize-build-secrets",
 		Usage: "unpack REUSABLE_CI_BUILD_SECRETS_JSON into mode-0600 tmpfiles and emit secret-mounts",
 		Description: "Reads the JSON envelope of build-secret values forwarded by the caller " +
-			"workflow, writes each declared name to a per-secret tmpfile at mode 0600 under " +
-			"$RUNNER_TEMP/build-secrets, and emits a `secret-mounts` output (id=NAME,src=PATH " +
-			"lines) for `container build --secrets`. Used by publish-container.yml; " +
+			"workflow, writes each declared name to a per-secret tmpfile at mode 0600 under a " +
+			"unique private directory, and emits `secret-dir` plus a scalar-safe `secret-mounts` JSON array " +
+			"of id=NAME,src=PATH entries for `container build --secrets`. Used by publish-container.yml; " +
 			"never invoke directly from an adopter workflow.\n\n" +
 			"EXAMPLE:\n" +
 			"   BUILD_SECRET_NAMES=\"DB_PASSWORD\" \\\n" +
@@ -41,7 +41,7 @@ func materializeBuildSecretsCmd() *cli.Command {
 			&cli.StringFlag{
 				Name:    "output-dir",
 				Sources: cli.EnvVars("BUILD_SECRETS_DIR"),
-				Usage:   "directory for the materialized tmpfiles; defaults to <temp-dir>/build-secrets",
+				Usage:   "existing parent for the unique materialized-secret directory; defaults to <temp-dir>",
 			},
 			&cli.StringFlag{
 				Name:    flagTempDir,

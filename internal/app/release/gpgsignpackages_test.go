@@ -9,9 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
-	"sort"
 	"testing"
 
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
@@ -30,11 +28,16 @@ var (
 const testPGPKeyArmor = "-----BEGIN PGP PRIVATE KEY BLOCK-----\n-----END PGP PRIVATE KEY BLOCK-----"
 
 type fakeGPGPackageSigner struct {
-	listed string
-	signed []string
+	listed      string
+	signed      []string
+	imports     int
+	lists       int
+	sidecarMode string
 }
 
 func (f *fakeGPGPackageSigner) ImportKey(_ context.Context, keyData []byte) error {
+	f.imports++
+
 	if len(keyData) == 0 {
 		return errEmptyKey
 	}
@@ -43,6 +46,8 @@ func (f *fakeGPGPackageSigner) ImportKey(_ context.Context, keyData []byte) erro
 }
 
 func (f *fakeGPGPackageSigner) ListSecretKeys(_ context.Context) (string, error) {
+	f.lists++
+
 	return f.listed, nil
 }
 
@@ -52,6 +57,16 @@ func (f *fakeGPGPackageSigner) DetachedSign(_ context.Context, fingerprint, pass
 	}
 
 	f.signed = append(f.signed, inputPath)
+	switch f.sidecarMode {
+	case "silent":
+		return nil
+	case "empty":
+		return os.WriteFile(outputPath, nil, 0o600)
+	case "directory":
+		return os.Mkdir(outputPath, 0o700)
+	case "link":
+		return os.Symlink(inputPath, outputPath)
+	}
 
 	return os.WriteFile(outputPath, []byte("sig"), 0o600)
 }
@@ -92,10 +107,10 @@ func TestGPGSignPackages_SignsOnlyDistroPackages(t *testing.T) {
 	}
 
 	signed := slices.Clone(gpg.signed)
-	sort.Strings(signed)
+	slices.Sort(signed)
 
 	wantSigned := []string{"dist/a.rpm", "dist/m.apk", "dist/z.deb"}
-	if !reflect.DeepEqual(signed, wantSigned) {
+	if !slices.Equal(signed, wantSigned) {
 		t.Errorf("signed = %v, want %v", gpg.signed, wantSigned)
 	}
 
@@ -118,6 +133,45 @@ func TestGPGSignPackages_SignsOnlyDistroPackages(t *testing.T) {
 	}
 }
 
+func TestGPGSignPackages_RequiresFreshNonEmptyRegularSidecars(t *testing.T) {
+	for _, mode := range []string{"silent", "empty", "directory", "link"} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+
+			path := filepath.Join(dir, "app.deb")
+			if err := os.WriteFile(path, []byte("package"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := os.WriteFile(path+".sig", []byte("stale signature"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			signer := &fakeGPGPackageSigner{listed: "fpr:::::::::ABCDEF:", sidecarMode: mode}
+
+			var out bytes.Buffer
+
+			count, err := apprelease.GPGSignPackages(t.Context(), signer, &out, apprelease.GPGSignPackagesInput{Dir: dir, PrivateKey: testPGPKeyArmor, Fingerprint: "ABCDEF", Passphrase: "secret"})
+			if !errors.Is(err, errs.ErrValidation) || count != 0 {
+				t.Errorf("count=%d err=%v, want zero and ErrValidation", count, err)
+			}
+
+			if out.Len() != 0 {
+				t.Error("reported success without a valid sidecar")
+			}
+
+			if len(signer.signed) != 1 {
+				t.Error("fixture did not reach the signer")
+			}
+
+			if body, _ := os.ReadFile(path + ".sig"); string(body) == "stale signature" {
+				t.Error("stale sidecar survived")
+			}
+		})
+	}
+}
+
 // TestGPGSignPackages_DefaultsToTheDistDirectory pins the fallback taken when
 // no directory is given. Every other test passes Dir explicitly, so the
 // default was never exercised.
@@ -137,7 +191,7 @@ func TestGPGSignPackages_DefaultsToTheDistDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if count != 1 || !reflect.DeepEqual(gpg.signed, []string{"dist/a.deb"}) {
+	if count != 1 || !slices.Equal(gpg.signed, []string{"dist/a.deb"}) {
 		t.Errorf("count = %d, signed = %v, want 1 and [dist/a.deb]", count, gpg.signed)
 	}
 }
@@ -151,6 +205,7 @@ func TestGPGSignPackages_FingerprintMismatch(t *testing.T) {
 		PrivateKey:  testPGPKeyArmor,
 		Fingerprint: "ABCDEF",
 		Passphrase:  "secret",
+		Dir:         t.TempDir(),
 	})
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation", err)

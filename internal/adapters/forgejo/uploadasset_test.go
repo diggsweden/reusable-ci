@@ -21,7 +21,7 @@ import (
 // UploadReleaseAsset was uncovered. It is how a signature, a checksum
 // file or an SBOM reaches a published release, and it resolves the
 // repository from the runner environment rather than from an argument --
-// so a mis-resolved repository publishes a release artifact to the wrong
+// so an incorrectly resolved repository publishes a release artifact to the wrong
 // project.
 
 // assetUploadServer answers the two calls the upload makes: resolve the
@@ -39,10 +39,14 @@ type assetUpload struct {
 	rawBody string
 }
 
-func newAssetUploadServer(t *testing.T, rec *assetUpload) *httptest.Server {
+type releaseAssetTransport func(*http.Request) (*http.Response, error)
+
+func (f releaseAssetTransport) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+func newAssetUploadClient(t *testing.T, rec *assetUpload) *http.Client {
 	t.Helper()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(r.URL.Path, "/releases/tags/"):
 			rec.releasePath = r.URL.Path
@@ -50,7 +54,9 @@ func newAssetUploadServer(t *testing.T, rec *assetUpload) *httptest.Server {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"id":42,"tag_name":"v1.0.0"}`)
 
-		case strings.Contains(r.URL.Path, "/assets"):
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/assets"):
+			_, _ = io.WriteString(w, `[]`)
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/assets"):
 			rec.uploadPath = r.URL.Path
 
 			if raw, err := io.ReadAll(r.Body); err == nil {
@@ -73,11 +79,16 @@ func newAssetUploadServer(t *testing.T, rec *assetUpload) *httptest.Server {
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
 		}
-	}))
+	})
 
-	t.Cleanup(srv.Close)
+	return &http.Client{Transport: releaseAssetTransport(func(req *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		response := recorder.Result()
+		response.Request = req
 
-	return srv
+		return response, nil
+	})}
 }
 
 // TestUploadReleaseAsset_UploadsUnderTheBasenameOnly is the claim worth
@@ -90,7 +101,7 @@ func TestUploadReleaseAsset_UploadsUnderTheBasenameOnly(t *testing.T) {
 
 	var rec assetUpload
 
-	srv := newAssetUploadServer(t, &rec)
+	client := newAssetUploadClient(t, &rec)
 
 	dir := t.TempDir()
 	nested := filepath.Join(dir, "dist", "linux-amd64")
@@ -109,8 +120,8 @@ func TestUploadReleaseAsset_UploadsUnderTheBasenameOnly(t *testing.T) {
 			"FORGEJO_TOKEN":      "tok",
 			"FORGEJO_REPOSITORY": "itiquette/gommitlint",
 		}),
-		HTTPClient:      srv.Client(),
-		APIBaseOverride: srv.URL,
+		HTTPClient:      client,
+		APIBaseOverride: "https://forgejo.invalid",
 	}
 
 	if err := provider.UploadReleaseAsset(context.Background(), "v1.0.0", asset); err != nil {
@@ -191,12 +202,12 @@ func TestUploadReleaseAsset_Refusals(t *testing.T) {
 
 			var rec assetUpload
 
-			srv := newAssetUploadServer(t, &rec)
+			client := newAssetUploadClient(t, &rec)
 
 			provider := &forgejo.Provider{
 				Env:             envMap(tc.env),
-				HTTPClient:      srv.Client(),
-				APIBaseOverride: srv.URL,
+				HTTPClient:      client,
+				APIBaseOverride: "https://forgejo.invalid",
 			}
 
 			err := provider.UploadReleaseAsset(context.Background(), tc.tag, tc.file)
@@ -219,15 +230,15 @@ func TestUploadReleaseAsset_MissingFileIsNotAnUpload(t *testing.T) {
 
 	var rec assetUpload
 
-	srv := newAssetUploadServer(t, &rec)
+	client := newAssetUploadClient(t, &rec)
 
 	provider := &forgejo.Provider{
 		Env: envMap(map[string]string{
 			"FORGEJO_TOKEN":      "tok",
 			"FORGEJO_REPOSITORY": "itiquette/gommitlint",
 		}),
-		HTTPClient:      srv.Client(),
-		APIBaseOverride: srv.URL,
+		HTTPClient:      client,
+		APIBaseOverride: "https://forgejo.invalid",
 	}
 
 	err := provider.UploadReleaseAsset(context.Background(), "v1.0.0",

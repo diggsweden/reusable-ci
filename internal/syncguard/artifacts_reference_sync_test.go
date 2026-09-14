@@ -8,7 +8,7 @@
 // docs/schemas/release-images.schema.json are generated: the guard regenerates
 // each in memory and compares, so a failure names the refresh command rather
 // than printing a diff. docs/artifacts-reference.md is written by hand, so the
-// guard asserts only that every schema enum value appears in it.
+// guard compares each governed vocabulary block exactly and in both directions.
 //
 // Either way the committed file is a claim about the code, and an unchecked
 // claim goes stale on the first change that forgets it. For a published JSON
@@ -20,8 +20,9 @@
 package syncguard
 
 import (
-	"os"
-	"path/filepath"
+	"fmt"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
@@ -29,6 +30,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
 // TestArtifactsReferenceDocumentsEverySchemaEnum guards
@@ -48,19 +51,46 @@ import (
 func TestArtifactsReferenceDocumentsEverySchemaEnum(t *testing.T) {
 	t.Parallel()
 
-	path := filepath.Join(reporoot.Path(t), "docs", "artifacts-reference.md")
-	body, err := os.ReadFile(path) //nolint:gosec // test reads repo-local docs file.
-	require.NoErrorf(t, err, "read %s", path)
+	doc := string(reporoot.ReadFile(t, "docs/artifacts-reference.md"))
 
-	doc := string(body)
-
-	for _, e := range schemaEnumValues() {
-		require.Containsf(t, doc, "`"+e.value+"`",
-			"docs/artifacts-reference.md does not document the %s value %q "+
-				"(expected it backtick-quoted); document new schema enum values "+
-				"there by hand — the reference is not generated",
-			e.group, e.value)
+	groups := map[string][]string{}
+	for _, entry := range schemaEnumValues() {
+		groups[entry.group] = append(groups[entry.group], entry.value)
 	}
+
+	names := make([]string, 0, len(groups))
+	for group := range groups {
+		names = append(names, group)
+	}
+
+	require.ElementsMatch(t, []string{"project-type", "build-type", "publish-to", "sboms layer", "go build-mode", "cargo build-mode", "sign.method", "sign.transparency", "git-signing.method", "sign.key schemes"}, names)
+
+	for group, want := range groups {
+		got, err := documentedValues(doc, group)
+		require.NoError(t, err)
+		require.Equal(t, want, got, "docs/artifacts-reference.md family "+group)
+	}
+}
+
+func documentedValues(doc, group string) ([]string, error) {
+	start, end := "<!-- schema-values:"+group+" -->", "<!-- /schema-values:"+group+" -->"
+	if strings.Count(doc, start) != 1 || strings.Count(doc, end) != 1 {
+		return nil, fmt.Errorf("family %s needs exactly one documentation block: %w", group, errs.ErrValidation)
+	}
+
+	_, body, _ := strings.Cut(doc, start)
+
+	body, _, ok := strings.Cut(body, end)
+	if !ok {
+		return nil, fmt.Errorf("family %s has reversed boundaries: %w", group, errs.ErrValidation)
+	}
+
+	var values []string
+	for _, match := range regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(body, -1) {
+		values = append(values, match[1])
+	}
+
+	return values, nil
 }
 
 type schemaEnum struct {
@@ -88,18 +118,26 @@ func schemaEnumValues() []schemaEnum {
 		out = append(out, schemaEnum{"publish-to", string(v)})
 	}
 
+	out = append(out, schemaEnum{"sboms layer", "all"}, schemaEnum{"sboms layer", "none"})
 	for _, v := range config.ValidSBOMLayers {
 		out = append(out, schemaEnum{"sboms layer", string(v)})
 	}
 
-	// Go and Cargo build modes share the same two tokens; a set dedupes them.
-	for _, v := range []string{
-		string(config.GoBuildModeArtifactFirst),
-		string(config.GoBuildModeContainerFirst),
-		string(config.CargoBuildModeArtifactFirst),
-		string(config.CargoBuildModeContainerFirst),
-	} {
-		out = append(out, schemaEnum{"build-mode", v})
+	out = append(out, schemaEnum{"go build-mode", string(config.GoBuildModeArtifactFirst)}, schemaEnum{"go build-mode", string(config.GoBuildModeContainerFirst)}, schemaEnum{"cargo build-mode", string(config.CargoBuildModeArtifactFirst)}, schemaEnum{"cargo build-mode", string(config.CargoBuildModeContainerFirst)})
+	for _, value := range release.ValidSignMethods {
+		out = append(out, schemaEnum{"sign.method", string(value)})
+	}
+
+	for _, value := range release.ValidTransparencies {
+		out = append(out, schemaEnum{"sign.transparency", string(value)})
+	}
+
+	for _, value := range config.ValidGitSignMethods {
+		out = append(out, schemaEnum{"git-signing.method", string(value)})
+	}
+
+	for _, value := range config.KMSKeySchemes() {
+		out = append(out, schemaEnum{"sign.key schemes", value})
 	}
 
 	return out

@@ -5,6 +5,7 @@ package container_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
@@ -74,13 +75,22 @@ func TestImageRequests_RequireADigestPinnedRef(t *testing.T) {
 				t.Errorf("empty ref: err = %v, want ErrUsage", err)
 			}
 
-			// Recorded limit: the rule is "carries an @sha256: marker",
-			// not "carries a well-formed digest". A malformed digest gets
-			// past this guard and is refused later by cosign or the
-			// registry, with a worse message. The package has ValidDigest
-			// if this is ever tightened.
-			if err := tc.with("registry.example/app@sha256:"); err != nil {
-				t.Errorf("the guard now rejects a malformed digest (%v) — it can be tightened with ValidDigest; update this comment", err)
+			for _, ref := range []string{
+				"registry.example/app@sha256:",
+				"registry.example/app@sha256:" + strings.Repeat("a", 63),
+				"registry.example/app@sha256:" + strings.Repeat("a", 65),
+				"registry.example/app@sha256:" + strings.Repeat("g", 64),
+				"registry.example/app@sha256:" + strings.Repeat("A", 64),
+				"registry.example/owner/../app@sha256:" + strings.Repeat("a", 64),
+				"owner/app@sha256:" + strings.Repeat("a", 64),
+			} {
+				if err := tc.with(ref); !errors.Is(err, errs.ErrUsage) {
+					t.Errorf("invalid digest reference accepted: %v", err)
+				}
+			}
+
+			if err := tc.with("registry.example/app:source@sha256:" + strings.Repeat("a", 64)); err != nil {
+				t.Errorf("valid tag-plus-digest rejected: %v", err)
 			}
 		})
 	}
@@ -90,9 +100,8 @@ func TestImageRequests_KeylessAndKeyAreExclusive(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
-		name              string
-		bothSet, neither  func() error
-		keylessNoIdentity func() error
+		name             string
+		bothSet, neither func() error
 	}{
 		{
 			name: "sign",
@@ -122,11 +131,6 @@ func TestImageRequests_KeylessAndKeyAreExclusive(t *testing.T) {
 				}.Validate()
 			},
 			neither: func() error { return container.ImageVerifyRequest{ImageRef: digestRef}.Validate() },
-			// Without an identity constraint a keyless verify accepts a
-			// signature from anyone.
-			keylessNoIdentity: func() error {
-				return container.ImageVerifyRequest{ImageRef: digestRef, Keyless: true, CertOIDCIssuer: "https://i"}.Validate()
-			},
 		},
 		{
 			name: "verify-attestation",
@@ -138,11 +142,6 @@ func TestImageRequests_KeylessAndKeyAreExclusive(t *testing.T) {
 			},
 			neither: func() error {
 				return container.AttestationVerifyRequest{ImageRef: digestRef, PredicateType: "cyclonedx"}.Validate()
-			},
-			keylessNoIdentity: func() error {
-				return container.AttestationVerifyRequest{
-					ImageRef: digestRef, PredicateType: "cyclonedx", Keyless: true, CertIdentityRegexp: "^https://x/",
-				}.Validate()
 			},
 		},
 	} {
@@ -159,11 +158,81 @@ func TestImageRequests_KeylessAndKeyAreExclusive(t *testing.T) {
 			if err := tc.neither(); !errors.Is(err, errs.ErrUsage) {
 				t.Errorf("neither keyless nor a key: err = %v, want ErrUsage", err)
 			}
+		})
+	}
+}
 
-			if tc.keylessNoIdentity != nil {
-				if err := tc.keylessNoIdentity(); !errors.Is(err, errs.ErrUsage) {
-					t.Errorf("keyless without a full identity constraint: err = %v, want ErrUsage", err)
+func TestImageVerification_KeylessIdentityRequirements(t *testing.T) {
+	t.Parallel()
+
+	for _, operation := range []struct {
+		name     string
+		validate func(identity, issuer string) error
+	}{
+		{"image", func(identity, issuer string) error {
+			return container.ImageVerifyRequest{ImageRef: digestRef, Keyless: true,
+				CertIdentityRegexp: identity, CertOIDCIssuer: issuer}.Validate()
+		}},
+		{"attestation", func(identity, issuer string) error {
+			return container.AttestationVerifyRequest{ImageRef: digestRef, PredicateType: "cyclonedx", Keyless: true,
+				CertIdentityRegexp: identity, CertOIDCIssuer: issuer}.Validate()
+		}},
+	} {
+		for _, tc := range []struct{ name, identity, issuer, missing string }{
+			{"valid", "^https://builder.example/release$", "https://issuer.example", ""},
+			{"missing-identity", "", "https://issuer.example", "cert-identity-regexp is empty"},
+			{"missing-issuer", "^https://builder.example/release$", "", "cert-oidc-issuer is empty"},
+		} {
+			t.Run(operation.name+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+
+				err := operation.validate(tc.identity, tc.issuer)
+				if tc.missing == "" {
+					if err != nil {
+						t.Fatalf("valid keyless request refused: %v", err)
+					}
+				} else if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), tc.missing) {
+					t.Fatalf("error = %v, want usage refusal for %q", err, tc.missing)
 				}
+			})
+		}
+	}
+}
+
+func TestAttestationRequests_PredicateRequirements(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name     string
+		validate func(predicateType, predicatePath string) error
+	}{
+		{"attest", func(predicateType, predicatePath string) error {
+			return container.ImageAttestRequest{ImageRef: digestRef, Keyless: true,
+				PredicateType: predicateType, PredicatePath: predicatePath}.Validate()
+		}},
+		{"verify", func(predicateType, _ string) error {
+			return container.AttestationVerifyRequest{ImageRef: digestRef, Keyless: true, PredicateType: predicateType,
+				CertIdentityRegexp: "^https://builder.example/release$", CertOIDCIssuer: "https://issuer.example"}.Validate()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := tc.validate("cyclonedx", "fixture-predicate.json"); err != nil {
+				t.Fatalf("valid predicate refused: %v", err)
+			}
+
+			if err := tc.validate("", "fixture-predicate.json"); !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "predicate type is empty") {
+				t.Fatalf("missing type error = %v", err)
+			}
+
+			err := tc.validate("cyclonedx", "")
+			if tc.name == "verify" {
+				if err != nil {
+					t.Fatalf("registry attestation verification must not require a local predicate file: %v", err)
+				}
+			} else if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "predicate path is empty") {
+				t.Fatalf("missing path error = %v", err)
 			}
 		})
 	}

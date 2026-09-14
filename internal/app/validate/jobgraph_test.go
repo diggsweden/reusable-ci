@@ -45,7 +45,9 @@ func TestJobGraph_CleanPasses(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := appvalidate.JobGraph(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.JobGraphInput{Root: ".", FS: mem.FS()}); err != nil {
-		t.Fatalf("JobGraph: %v", err)
+		// The annotations say which job was flagged; without them a
+		// regression here reports only "JobGraph: validation".
+		t.Fatalf("JobGraph: %v\n%s", err, out.String())
 	}
 }
 
@@ -75,7 +77,7 @@ func TestJobGraph_ExplicitForgejoWorkflow(t *testing.T) {
 		Workflows: []string{".forgejo/workflows/release.yml"},
 		FS:        mem.FS(),
 	}); err != nil {
-		t.Fatalf("JobGraph with explicit Forgejo workflow: %v", err)
+		t.Fatalf("JobGraph with explicit Forgejo workflow: %v\n%s", err, out.String())
 	}
 }
 

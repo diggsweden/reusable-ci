@@ -110,24 +110,7 @@ func TestArtifact_WithAStore_FailsOnTheRuntimeNotTheCapability(t *testing.T) {
 
 			run := livetest.CLI(t, target, repo, artifactUploadArgs(t)...)
 
-			// Succeeding would mean a run context leaked into the suite, which
-			// is worth knowing but is not this scenario's claim.
-			if run.ExitCode == 0 {
-				t.Skipf("%s: upload succeeded, so a run context was present", forge)
-			}
-
-			lower := strings.ToLower(run.Stderr)
-			if strings.Contains(lower, "unsupported on this platform") {
-				t.Errorf("%s claims run artifacts but the CLI refuses them as unsupported\nstderr: %s",
-					forge, run.Stderr)
-			}
-
-			// The honest answer here is "you are not in a CI run", which the
-			// exit ladder classifies as a usage problem rather than an outage.
-			if run.ExitCode == int(errs.ExitCodeUnavailable) {
-				t.Errorf("%s: exits %d (unavailable) off a runner, which a caller cannot tell from an outage\nstderr: %s",
-					forge, run.ExitCode, run.Stderr)
-			}
+			assertArtifactRuntimeRefusal(t, forge, run)
 		})
 	}
 }

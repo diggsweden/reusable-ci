@@ -4,6 +4,7 @@
 package sbom
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -12,12 +13,15 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 type workspace struct {
-	root string
-	fsys fs.FS
-	cwd  string
+	root   string
+	fsys   fs.FS
+	cwd    string
+	hostFS bool
+	host   *os.Root
 }
 
 func newWorkspace(in GenerateInput) (workspace, error) {
@@ -31,26 +35,34 @@ func newWorkspace(in GenerateInput) (workspace, error) {
 		return workspace{}, fmt.Errorf("abs %s: %w", dir, err)
 	}
 
-	info, err := os.Stat(abs)
+	root, err := pathsafe.OpenRoot(abs)
 	if err != nil {
 		return workspace{}, fmt.Errorf("working directory %s: %w", abs, err)
 	}
 
-	if !info.IsDir() {
-		return workspace{}, fmt.Errorf("working directory %s is not a directory: %w", abs, errs.ErrValidation)
-	}
-
 	cwd, err := os.Getwd()
 	if err != nil {
+		_ = root.Close()
+
 		return workspace{}, fmt.Errorf("getwd: %w", err)
 	}
 
 	fsys := in.FS
+
+	hostFS := fsys == nil
 	if fsys == nil {
-		fsys = os.DirFS(abs)
+		fsys = root.FS()
 	}
 
-	return workspace{root: abs, fsys: fsys, cwd: cwd}, nil
+	return workspace{root: abs, fsys: fsys, cwd: cwd, hostFS: hostFS, host: root}, nil
+}
+
+func (w workspace) close() error {
+	if w.host == nil {
+		return nil
+	}
+
+	return w.host.Close()
 }
 
 func (w workspace) readFile(name string) ([]byte, error) {
@@ -65,8 +77,113 @@ func (w workspace) stat(name string) (fs.FileInfo, error) {
 	return fs.Stat(w.fsys, cleanFSPath(name))
 }
 
-func (w workspace) open(name string) (fs.File, error) {
-	return w.fsys.Open(cleanFSPath(name))
+func (w workspace) lstat(name string) (fs.FileInfo, error) {
+	if w.hostFS {
+		return w.host.Lstat(cleanFSPath(name))
+	}
+
+	return fs.Stat(w.fsys, cleanFSPath(name))
+}
+
+func (w workspace) openInputRegular(name string) (fs.File, error) {
+	if w.hostFS {
+		return w.openOutputRegular(name)
+	}
+
+	clean := cleanFSPath(name)
+
+	info, err := fs.Stat(w.fsys, clean)
+	if err != nil {
+		return nil, err
+	}
+
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("SBOM input is not a regular file: %s: %w", name, errs.ErrValidation)
+	}
+
+	file, err := w.fsys.Open(clean)
+	if err != nil {
+		return nil, err
+	}
+
+	opened, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+
+		return nil, err
+	}
+
+	if !opened.Mode().IsRegular() {
+		_ = file.Close()
+
+		return nil, fmt.Errorf("SBOM input changed while opening: %s: %w", name, errs.ErrValidation)
+	}
+
+	return file, nil
+}
+
+func (w workspace) openOutputRegular(name string) (*os.File, error) {
+	clean := cleanFSPath(name)
+
+	info, err := w.host.Lstat(clean)
+	if err != nil {
+		return nil, err
+	}
+
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("SBOM input is not a regular file: %s: %w", name, errs.ErrValidation)
+	}
+
+	file, err := w.host.Open(clean)
+	if err != nil {
+		return nil, err
+	}
+
+	opened, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+
+		return nil, err
+	}
+
+	if !opened.Mode().IsRegular() || !os.SameFile(info, opened) {
+		_ = file.Close()
+
+		return nil, fmt.Errorf("SBOM input changed while opening: %s: %w", name, errs.ErrValidation)
+	}
+
+	return file, nil
+}
+
+func (w workspace) createOutput(name string, perm fs.FileMode) (*os.File, error) {
+	clean := cleanFSPath(name)
+
+	info, err := w.host.Lstat(clean)
+	if err == nil {
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("SBOM output is not a regular file: %s: %w", name, errs.ErrValidation)
+		}
+
+		if removeErr := w.host.Remove(clean); removeErr != nil {
+			return nil, removeErr
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+
+	return w.host.OpenFile(clean, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+}
+
+func (w workspace) removeOutput(name string) error {
+	return w.host.Remove(cleanFSPath(name))
+}
+
+func (w workspace) outputInfo(name string) (fs.FileInfo, error) {
+	return w.host.Lstat(cleanFSPath(name))
+}
+
+func (w workspace) outputEntries(name string) ([]fs.DirEntry, error) {
+	return fs.ReadDir(w.host.FS(), cleanFSPath(name))
 }
 
 func (w workspace) outputPath(name string) string {

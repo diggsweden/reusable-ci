@@ -58,7 +58,7 @@ EXAMPLES:
 
    # Bundle the assembled layers into a release-attached zip
    reusable-ci sbom assemble --project-type=maven --create-zip`,
-		Flags: []cli.Flag{
+		Flags: append([]cli.Flag{
 			&cli.StringFlag{Name: "project-type", Value: string(projecttype.Auto), Usage: "ecosystem driving the syft scan (auto/maven/gradle/npm/go/cargo/…)"},
 			&cli.StringFlag{Name: "layers", Value: "all", Usage: "comma/space/newline-separated CISA layers to assemble: all | build | analyzed-artifact | analyzed-container (\"all\" = every layer)"},
 			&cli.StringFlag{Name: "version", Usage: "release version embedded in the SBOM filenames"},
@@ -77,10 +77,7 @@ EXAMPLES:
 			&cli.StringFlag{Name: "repository", Sources: cienv.Repository(), Usage: "container mode: \"owner/repo\" used to derive the project slug"},
 			// Signing (any mode): cosign-sign each assembled SBOM into a .bundle.
 			&cli.BoolFlag{Name: "sign", Sources: cli.EnvVars("SIGN_SBOMS"), Usage: "cosign-sign each assembled SBOM (produces <file>.bundle); reuses the `release sign` signing path"},
-			&cli.StringFlag{Name: "sign-method", Value: "sigstore", Sources: cli.EnvVars("SIGN_METHOD"), Usage: "signing method when --sign: \"sigstore\" (keyless OIDC) or \"kms\""},
-			&cli.StringFlag{Name: "sign-key", Sources: cli.EnvVars("SIGN_KEY"), Usage: "cosign --key for --sign-method=kms (KMS/PKCS#11 URI or key-file path); forbidden for sigstore"},
-			&cli.StringFlag{Name: "oidc-issuer", Sources: cli.EnvVars("SIGN_OIDC_ISSUER"), Usage: "OIDC issuer for --sign-method=sigstore; defaults to the detected forge's"},
-		},
+		}, assembleSignFlags()...),
 		// One verb: assemble (one of three modes), then optionally sign. The
 		// signer is built FIRST so a bad --sign-method fails fast, before any
 		// assembly work.
@@ -104,7 +101,7 @@ EXAMPLES:
 				return nil
 			}
 
-			return appsbom.SignAssembled(ctx, signer, cmd.String(flagWorkingDir), os.Stderr, os.Stderr)
+			return appsbom.SignAssembled(ctx, signer, cmd.String(flagWorkingDir), os.Stderr)
 		},
 	}
 }
@@ -142,19 +139,47 @@ func runAssembleMode(ctx context.Context, cmd *cli.Command) error {
 	}
 }
 
+// assembleSignFlags is the shared cosign flag set (--method, --key,
+// --oidc-issuer and the self-hosted Sigstore endpoints) that every signing
+// verb declares, so SIGN_FULCIO_URL and friends reach --sign here too. The
+// spellings this verb used before, --sign-method and --sign-key, stay as
+// aliases.
+func assembleSignFlags() []cli.Flag {
+	flags := signflags.Cosign(signflags.CosignOpts{
+		MethodNote: "Applies with --sign; sigstore when omitted.",
+		KeyNote:    "Applies with --sign.",
+	})
+
+	for _, flag := range flags {
+		stringFlag, ok := flag.(*cli.StringFlag)
+		if !ok {
+			continue
+		}
+
+		switch stringFlag.Name {
+		case "method":
+			stringFlag.Aliases = append(stringFlag.Aliases, "sign-method")
+		case "key":
+			stringFlag.Aliases = append(stringFlag.Aliases, "sign-key")
+		}
+	}
+
+	return flags
+}
+
 // buildSBOMSigner constructs the cosign signer used by --sign, reusing the same
 // CosignSigner path as `release sign`. Sigstore (keyless) resolves the detected
-// forge's OIDC issuer when none is given; KMS takes an explicit --sign-key.
+// forge's OIDC issuer when none is given; KMS takes an explicit --key.
 func buildSBOMSigner(cmd *cli.Command) (appsbom.FileSigner, error) {
 	var method domainrelease.SignMethod
 
-	switch methodName := cmd.String("sign-method"); methodName {
+	switch methodName := cmd.String("method"); methodName {
 	case "sigstore", "":
 		method = domainrelease.SignMethodSigstore
 	case "kms":
 		method = domainrelease.SignMethodKMS
 	default:
-		return nil, fmt.Errorf("--sign-method must be \"sigstore\" or \"kms\", got %q: %w", methodName, errs.ErrUsage)
+		return nil, fmt.Errorf("--method must be \"sigstore\" or \"kms\", got %q: %w", methodName, errs.ErrUsage)
 	}
 
 	oidcIssuer := cmd.String("oidc-issuer")
@@ -166,7 +191,7 @@ func buildSBOMSigner(cmd *cli.Command) (appsbom.FileSigner, error) {
 
 	return apprelease.NewCosignSigner(cosign.New(), apprelease.CosignSignerInput{
 		Method:          method,
-		KeyRef:          cmd.String("sign-key"),
+		KeyRef:          cmd.String("key"),
 		OIDCIssuer:      oidcIssuer,
 		FulcioURL:       endpoints.FulcioURL,
 		RekorURL:        endpoints.RekorURL,

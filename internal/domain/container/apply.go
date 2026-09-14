@@ -77,10 +77,10 @@ func Apply(r Rule, ctx MetadataContext) (AppliedTag, bool, error) { //nolint:var
 	// operator-supplied raw value or template — surfaced as a loud config
 	// error instead of an "invalid reference format" surfacing deep in the
 	// build or a registry call.
-	if !dockerTagValid.MatchString(tag) {
+	if !ValidOCITagComponent(tag) {
 		return AppliedTag{}, false, fmt.Errorf(
 			"rule produced invalid image tag %q (must match %s): %w",
-			tag, dockerTagValid.String(), errs.ErrValidation,
+			tag, OCITagComponent, errs.ErrValidation,
 		)
 	}
 
@@ -119,10 +119,6 @@ const maxDockerTagLen = 128
 // often the '/' in `feat/refactor-go`, which would otherwise abort the push
 // with "invalid reference format".
 var dockerTagInvalid = regexp.MustCompile(`[^a-zA-Z0-9_.-]+`)
-
-// dockerTagValid is the OCI/distribution reference tag grammar. Every emitted
-// tag is checked against it as a final safety net (see Apply).
-var dockerTagValid = regexp.MustCompile(`^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$`)
 
 // IsCleanRefTag reports whether ref is already usable verbatim as an OCI tag
 // component — i.e. sanitizeRefTag would change nothing. Callers that build a
@@ -184,24 +180,15 @@ func refTag(event RefEvent, ctx MetadataContext) (string, bool, error) {
 	return "", false, fmt.Errorf("unsupported ref event %q: %w", event, errs.ErrValidation)
 }
 
-// semverRE is the official SemVer 2.0.0 grammar, verbatim from the named-group
-// variant published at
-// https://semver.org/#is-there-a-suggested-regular-expression-regex-to-check-a-semver-string
-// It is RE2-compatible (no look-around/back-references), so it compiles under
-// Go's regexp. Capture groups: major, minor, patch, prerelease, buildmetadata.
-var semverRE = regexp.MustCompile(`^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)(?:-(?P<prerelease>(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+(?P<buildmetadata>[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$`)
-
 func semverTag(pattern string, ctx MetadataContext) (string, bool, error) {
 	if ctx.RefType != provider.RefTypeTag {
 		return "", false, nil
 	}
 
-	stripped := version.StripVPrefix(ctx.RefName)
-
 	// Not a strict semver tag (e.g. a date or codename) — skip the semver
 	// rules rather than emit a malformed version.
-	match := semverRE.FindStringSubmatch(stripped)
-	if match == nil {
+	parsed, ok := version.ParseSemver(ctx.RefName)
+	if !ok {
 		return "", false, nil
 	}
 
@@ -209,12 +196,12 @@ func semverTag(pattern string, ctx MetadataContext) (string, bool, error) {
 	// text around them is preserved, so `v{{major}}` yields `v3` — letting the
 	// image tags match how consumers pin the workflow (`uses: …@v3`).
 	out := strings.NewReplacer(
-		"{{version}}", stripped,
-		"{{major}}.{{minor}}.{{patch}}", stripped,
-		"{{major}}.{{minor}}", match[semverRE.SubexpIndex("major")]+"."+match[semverRE.SubexpIndex("minor")],
-		"{{major}}", match[semverRE.SubexpIndex("major")],
-		"{{minor}}", match[semverRE.SubexpIndex("minor")],
-		"{{patch}}", match[semverRE.SubexpIndex("patch")],
+		"{{version}}", parsed.Version,
+		"{{major}}.{{minor}}.{{patch}}", parsed.Major+"."+parsed.Minor+"."+parsed.Patch,
+		"{{major}}.{{minor}}", parsed.Major+"."+parsed.Minor,
+		"{{major}}", parsed.Major,
+		"{{minor}}", parsed.Minor,
+		"{{patch}}", parsed.Patch,
 	).Replace(pattern)
 
 	// A leftover placeholder means the pattern used an unknown token.

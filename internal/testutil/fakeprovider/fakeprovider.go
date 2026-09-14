@@ -14,6 +14,7 @@ package fakeprovider
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 
@@ -278,6 +279,10 @@ func (f *Fake) CreateReleaseCalls() []ReleaseCall {
 	out := make([]ReleaseCall, len(f.createRelArgs))
 	copy(out, f.createRelArgs)
 
+	for index := range out {
+		out[index].Spec.Assets = slices.Clone(out[index].Spec.Assets)
+	}
+
 	return out
 }
 
@@ -285,6 +290,7 @@ func (f *Fake) CreateReleaseCalls() []ReleaseCall {
 func (f *Fake) CreateRelease(_ context.Context, repo string, spec provider.ReleaseSpec) error {
 	f.mu.Lock()
 	f.calls.CreateRelease++
+	spec.Assets = slices.Clone(spec.Assets)
 	f.createRelArgs = append(f.createRelArgs, ReleaseCall{Repo: repo, Spec: spec})
 	err := f.createRelErr
 	f.mu.Unlock()
@@ -307,6 +313,10 @@ func (f *Fake) PublishReleaseCalls() []ReleaseCall {
 	out := make([]ReleaseCall, len(f.publishRelArgs))
 	copy(out, f.publishRelArgs)
 
+	for index := range out {
+		out[index].Spec.Assets = slices.Clone(out[index].Spec.Assets)
+	}
+
 	return out
 }
 
@@ -314,6 +324,7 @@ func (f *Fake) PublishReleaseCalls() []ReleaseCall {
 func (f *Fake) PublishRelease(_ context.Context, repo string, spec provider.ReleaseSpec) error {
 	f.mu.Lock()
 	f.calls.PublishRelease++
+	spec.Assets = slices.Clone(spec.Assets)
 	f.publishRelArgs = append(f.publishRelArgs, ReleaseCall{Repo: repo, Spec: spec})
 	err := f.publishRelErr
 	f.mu.Unlock()
@@ -336,12 +347,17 @@ func (f *Fake) UploadSARIFCalls() []provider.SARIFUpload {
 	out := make([]provider.SARIFUpload, len(f.uploadCalls))
 	copy(out, f.uploadCalls)
 
+	for index := range out {
+		out[index].SARIF = slices.Clone(out[index].SARIF)
+	}
+
 	return out
 }
 
 // UploadSARIF implements provider.Provider.
 func (f *Fake) UploadSARIF(_ context.Context, up provider.SARIFUpload) error {
 	f.mu.Lock()
+	up.SARIF = slices.Clone(up.SARIF)
 	f.uploadCalls = append(f.uploadCalls, up)
 	err := f.uploadErr
 	f.mu.Unlock()
@@ -413,14 +429,16 @@ func (f *Fake) Describe() provider.Info {
 	}
 }
 
-// Capabilities implements provider.CapabilityReporter with a
-// platform-derived default mirroring the real adapters.
+// Capabilities conservatively reports supported fake roles and explicit
+// platform claims, not complete real-adapter parity or every role Fake has.
+// GitHub/GitLab assume the public issuers returned by Describe, so their
+// public-Fulcio trust also implies OIDC minting. Self-hosted issuers are not modelled.
 func (f *Fake) Capabilities() provider.Capabilities {
 	switch f.platform {
 	case provider.ForgeGitHub:
-		return provider.Capabilities{SARIFUpload: true, Attestation: true, PublicFulcioTrusted: true, ReleaseAssets: true}
+		return provider.Capabilities{SARIFUpload: true, Attestation: true, MintsOIDCToken: true, PublicFulcioTrusted: true, ReleaseAssets: true}
 	case provider.ForgeGitLab:
-		return provider.Capabilities{PublicFulcioTrusted: true, ReleaseAssets: true}
+		return provider.Capabilities{MintsOIDCToken: true, PublicFulcioTrusted: true, ReleaseAssets: true}
 	case provider.ForgeForgejo:
 		return provider.Capabilities{ReleaseAssets: true}
 	default:

@@ -4,6 +4,7 @@
 package security
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
@@ -38,13 +39,24 @@ func TrivyToSARIF(report *TrivyReport, opts Options) *sarif.Report {
 	rules := newRuleSet()
 	results := make([]*sarif.Result, 0, 64)
 
+	var findings []*TrivyVulnerability
+
 	for i := range report.Results {
-		res := &report.Results[i]
-		for j := range res.Vulnerabilities {
-			v := &res.Vulnerabilities[j]
-			rules.add(v)
-			results = append(results, buildSARIFResult(v, opts.ImageRef))
+		for j := range report.Results[i].Vulnerabilities {
+			findings = append(findings, &report.Results[i].Vulnerabilities[j])
 		}
+	}
+	// Canonical order also determines which duplicate rule metadata wins and
+	// breaks result ties without mutating the caller's report.
+	sort.SliceStable(findings, func(i, j int) bool {
+		a, b := findings[i], findings[j]
+
+		return slices.Compare([]string{a.VulnerabilityID, a.Title, a.Description, a.PrimaryURL, a.Severity, a.PkgName, a.InstalledVersion, a.FixedVersion}, []string{b.VulnerabilityID, b.Title, b.Description, b.PrimaryURL, b.Severity, b.PkgName, b.InstalledVersion, b.FixedVersion}) < 0
+	})
+
+	for _, finding := range findings {
+		rules.add(finding)
+		results = append(results, buildSARIFResult(finding, opts.ImageRef))
 	}
 
 	sortSARIFResults(results)

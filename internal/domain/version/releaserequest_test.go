@@ -9,7 +9,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
 
-func TestReleaseRequestVersion(t *testing.T) {
+func TestReleaseRequestVersion_ExtractsTheTagFromTheRef(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {

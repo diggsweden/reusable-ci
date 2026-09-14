@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 // XcodeVersionInfo is the (marketing-version, build-number) pair the
@@ -39,7 +41,7 @@ func ParseXcodeVersionFromPbxproj(body string) XcodeVersionInfo {
 		}
 
 		key := m[1]
-		val := strings.TrimSpace(strings.Trim(m[2], `"`))
+		val := strings.TrimSpace(strings.Trim(strings.TrimSpace(m[2]), `"`))
 
 		switch key {
 		case "MARKETING_VERSION":
@@ -80,22 +82,22 @@ func RenderXcodeSummary(in XcodeSummaryInput, now time.Time) string {
 	_, _ = fmt.Fprintf(&b, "### Configuration\n")
 	_, _ = fmt.Fprintf(&b, "| Setting | Value |\n")
 	_, _ = fmt.Fprintf(&b, "|---------|-------|\n")
-	_, _ = fmt.Fprintf(&b, "| **Xcode** | %s |\n", in.XcodeVersion)
-	_, _ = fmt.Fprintf(&b, "| **Scheme** | %s |\n", in.Scheme)
-	_, _ = fmt.Fprintf(&b, "| **Configuration** | %s |\n", in.Configuration)
-	_, _ = fmt.Fprintf(&b, "| **Destination** | %s |\n", in.Destination)
+	_, _ = fmt.Fprintf(&b, "| **Xcode** | %s |\n", summary.LiteralText(in.XcodeVersion))
+	_, _ = fmt.Fprintf(&b, "| **Scheme** | %s |\n", summary.LiteralText(in.Scheme))
+	_, _ = fmt.Fprintf(&b, "| **Configuration** | %s |\n", summary.LiteralText(in.Configuration))
+	_, _ = fmt.Fprintf(&b, "| **Destination** | %s |\n", summary.LiteralText(in.Destination))
 	_, _ = fmt.Fprintf(&b, "| **Signing** | %s |\n", boolStatus(in.Signing))
 
 	if in.Version != "" && in.Version != "unknown" {
-		_, _ = fmt.Fprintf(&b, "| **Version** | %s (%s) |\n", in.Version, in.BuildNumber)
+		_, _ = fmt.Fprintf(&b, "| **Version** | %s (%s) |\n", summary.LiteralText(in.Version), summary.LiteralText(in.BuildNumber))
 	}
 
 	_, _ = fmt.Fprintf(&b, "\n### Artifacts Generated\n")
 
 	if in.Signing {
-		_, _ = fmt.Fprintf(&b, "✓ IPA: `%s`\n", in.IPAName)
+		_, _ = fmt.Fprintf(&b, "✓ IPA: %s\n", summary.InlineCode(in.IPAName))
 	} else {
-		_, _ = fmt.Fprintf(&b, "✓ Archive: `%s-archive`\n", in.IPAName)
+		_, _ = fmt.Fprintf(&b, "✓ Archive: %s\n", summary.InlineCode(in.IPAName+"-archive"))
 	}
 
 	_, _ = fmt.Fprintf(&b, "\n*Build completed at %s*\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))

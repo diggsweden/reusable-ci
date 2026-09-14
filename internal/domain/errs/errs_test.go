@@ -7,8 +7,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,7 +20,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-func TestExitCodeFromError(t *testing.T) {
+func TestExitCodeFromError_MapsSentinelsToExitCodes(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -39,6 +43,7 @@ func TestExitCodeFromError(t *testing.T) {
 		{name: "malformed_input", err: errs.ErrMalformedInput, want: errs.ExitCodeDataErr, wraps: true},
 		{name: "permission_denied", err: errs.ErrPermissionDenied, want: errs.ExitCodeNoPerm, wraps: true},
 		{name: "dependency_unavailable", err: errs.ErrDependencyUnavailable, want: errs.ExitCodeUnavailable, wraps: true},
+		{name: "rate_limited", err: errs.ErrRateLimited, want: errs.ExitCodeUnavailable, wraps: true},
 		{name: "plain_error", err: errors.New("boom"), want: errs.ExitCodeSoftware}, //nolint:err113 // test mock error
 	}
 	for _, testCase := range tests {
@@ -80,6 +85,34 @@ func TestExitCodeFromError_NetworkErrorsAreUnavailable(t *testing.T) {
 			t.Parallel()
 			require.Equal(t, errs.ExitCodeUnavailable, errs.ExitCodeFromError(testCase.err))
 		})
+	}
+}
+
+// TestExitCodeFromError_AMalformedURLIsNotAnOutage covers the other thing a
+// *url.Error can be: url.Parse's own failure, produced before any request
+// exists. It implements net.Error like a dial failure does, so it exited 69
+// and told CI to retry a URL that cannot parse. Only a url.Error whose cause is
+// a network failure is one.
+func TestExitCodeFromError_AMalformedURLIsNotAnOutage(t *testing.T) {
+	t.Parallel()
+
+	_, parseErr := url.Parse("http://[::1") //nolint:staticcheck // the parse failure is the fixture
+	if parseErr == nil {
+		t.Fatal("fixture URL parsed")
+	}
+
+	for name, err := range map[string]error{
+		"bare parse error":    parseErr,
+		"wrapped parse error": fmt.Errorf("build request: %w", parseErr),
+	} {
+		if got := errs.ExitCodeFromError(err); got == errs.ExitCodeUnavailable {
+			t.Errorf("%s exits %d (unavailable), which asks CI to retry a URL that cannot parse", name, got)
+		}
+	}
+
+	dial := &url.Error{Op: "Get", URL: "http://127.0.0.1:1/x", Err: &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}}
+	if got := errs.ExitCodeFromError(dial); got != errs.ExitCodeUnavailable {
+		t.Errorf("a url.Error wrapping a dial failure exits %d, want %d", got, errs.ExitCodeUnavailable)
 	}
 }
 
@@ -199,4 +232,66 @@ func TestExitCode_UnsupportedIsNotRetryable(t *testing.T) {
 		t.Errorf("unsupported exits %d, want %d (EX_CONFIG): asking a forge for a capability it lacks is a configuration mismatch",
 			unsupported, errs.ExitCodeConfiguration)
 	}
+}
+
+// TestExitCodeFromError_FilesystemErrorsAreNotNetworkErrors covers the
+// operating-system errors no caller classified. syscall.Errno satisfies
+// net.Error, so a missing file used to exit 69, "dependency unavailable",
+// which CI reads as worth retrying. A missing path is EX_NOINPUT and a refused
+// one EX_NOPERM, whether bare or wrapped; a socket failure carrying the same
+// kind of errno inside *net.OpError is still a network error.
+func TestExitCodeFromError_FilesystemErrorsAreNotNetworkErrors(t *testing.T) {
+	t.Parallel()
+
+	_, missing := os.Stat(filepath.Join(t.TempDir(), "absent"))
+
+	cases := map[string]struct {
+		err  error
+		want errs.ExitCodeType
+	}{
+		"missing path":            {err: missing, want: errs.ExitCodeNoInput},
+		"wrapped missing path":    {err: fmt.Errorf("read digest dir: %w", missing), want: errs.ExitCodeNoInput},
+		"permission refused":      {err: &fs.PathError{Op: "open", Path: "/x", Err: syscall.EACCES}, want: errs.ExitCodeNoPerm},
+		"unclassified errno":      {err: &fs.PathError{Op: "write", Path: "/x", Err: syscall.EIO}, want: errs.ExitCodeSoftware},
+		"socket errno in OpError": {err: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}, want: errs.ExitCodeUnavailable},
+	}
+
+	for name, testCase := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			require.Equal(t, testCase.want, errs.ExitCodeFromError(testCase.err))
+		})
+	}
+}
+
+// TestCredentialRequired_NamesEveryWayToSupplyTheSecret covers the builder
+// sixteen commands refuse through. The message has to say how to supply the
+// credential, in both its forms, and the error has to be a usage error: a
+// missing secret is the invocation's fault, exit 2, not a bug report.
+func TestCredentialRequired_NamesEveryWayToSupplyTheSecret(t *testing.T) {
+	t.Parallel()
+
+	err := errs.CredentialRequired(
+		errs.Credential{What: "release-bot token", Flag: "token-file", Env: "RELEASE_TOKEN"},
+		errs.Credential{What: "signing key", Env: "GPG_PRIVATE_KEY"},
+	)
+	require.ErrorIs(t, err, errs.ErrUsage)
+	require.Equal(t,
+		`the release-bot token is required: pass --token-file <path> ("-" for stdin) or set $RELEASE_TOKEN; `+
+			"the signing key is required: set $GPG_PRIVATE_KEY: usage error",
+		err.Error())
+}
+
+// TestRuntimeRequired_NamesTheProviderOrNone: outside any CI job there is no
+// detected provider, and the message says so rather than printing an empty
+// name the operator would read as a rendering bug.
+func TestRuntimeRequired_NamesTheProviderOrNone(t *testing.T) {
+	t.Parallel()
+
+	err := errs.RuntimeRequired("transfer run artifacts", "", []errs.EnvVar{{Name: "ACTIONS_RUNTIME_TOKEN", What: "runner-minted token"}})
+	require.ErrorIs(t, err, errs.ErrCIRuntimeRequired)
+	require.Contains(t, err.Error(), "Detected provider: none.")
+	require.Contains(t, err.Error(), "ACTIONS_RUNTIME_TOKEN")
+
+	require.Contains(t, errs.RuntimeRequired("x", "gitlab", nil).Error(), "Detected provider: gitlab.")
 }

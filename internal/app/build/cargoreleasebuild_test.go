@@ -6,14 +6,19 @@ package build_test
 import (
 	"bytes"
 	"context"
-	"reflect"
+	"errors"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
 )
 
-// cargoCallArgs returns each recorded cargo invocation's first arg.
+var errCycloneDXFailed = errors.New("cyclonedx failed")
+
+// cargoSubcommands returns each recorded cargo invocation's first arg.
 func cargoSubcommands(calls []appbuild.CargoRunInput) []string {
 	out := make([]string, 0, len(calls))
 	for _, c := range calls {
@@ -75,7 +80,7 @@ func TestCargoReleaseBuild_RunsStepsInOrder(t *testing.T) {
 			// string for each subcommand, so it saw neither order nor
 			// repetition -- and its skip cases were satisfied by a run in
 			// which nothing happened at all.
-			if got := cargoSubcommands(tool.calls); !reflect.DeepEqual(got, tc.want) {
+			if got := cargoSubcommands(tool.calls); !slices.Equal(got, tc.want) {
 				t.Errorf("cargo subcommands = %v, want %v", got, tc.want)
 			}
 		})
@@ -111,5 +116,39 @@ func TestCargoReleaseBuild_UsesTheLockfileAsWritten(t *testing.T) {
 		if !slices.Contains(c.Args, "--locked") {
 			t.Errorf("cargo %v ran without --locked", c.Args)
 		}
+	}
+}
+
+func TestCargoReleaseBuild_BuildSBOMFailureBlocksRelease(t *testing.T) {
+	t.Parallel()
+
+	tool := &fakeCargoTool{
+		metadata:    sampleCargoMetadata,
+		binaryNames: []string{"hello"},
+		failOn:      "cyclonedx",
+		runErr:      errCycloneDXFailed,
+	}
+	summary := &recordingSummarySink{}
+	dir := t.TempDir()
+
+	err := appbuild.CargoReleaseBuild(context.Background(), summary, tool, &bytes.Buffer{}, &bytes.Buffer{}, appbuild.CargoReleaseBuildInput{
+		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: dir, EnableBuildSBOM: true},
+		Version:             "1.2.3",
+		Platforms:           "linux/amd64",
+	})
+	if !errors.Is(err, errCycloneDXFailed) {
+		t.Fatalf("Build SBOM error = %v, want wrapped tool error", err)
+	}
+
+	if !strings.Contains(summary.buf.String(), "release blocked") {
+		t.Fatalf("failure summary = %q, want blocked release", summary.buf.String())
+	}
+
+	if len(tool.calls) != 4 || tool.calls[3].Args[0] != "cyclonedx" {
+		t.Fatalf("work continued after the SBOM failure: %v", tool.calls)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "dist")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failure produced dist: %v", err)
 	}
 }

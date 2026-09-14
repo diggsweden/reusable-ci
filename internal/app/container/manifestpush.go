@@ -76,7 +76,7 @@ func PushManifest(ctx context.Context, tool ManifestPushTool, registry RawManife
 		return nil, err
 	}
 
-	result := &PushManifestOutput{Digest: registryDigest, Ref: in.Destination + "@" + registryDigest}
+	result := &PushManifestOutput{Digest: registryDigest, Ref: domaincontainer.StripDigest(in.Destination) + "@" + registryDigest}
 	if sink != nil {
 		if err := sink.Set(ctx, outputKeyDigest, result.Digest); err != nil {
 			return nil, err
@@ -145,6 +145,10 @@ func validatePushManifestInput(tool ManifestPushTool, registry RawManifestRegist
 
 	if strings.TrimSpace(in.Destination) == "" || strings.ContainsAny(in.Destination, " \t\n\r") {
 		return fmt.Errorf("container manifest push: destination ref is empty or unsafe: %w", errs.ErrUsage)
+	}
+
+	if _, err := domaincontainer.CanonicalImageRef(in.Destination); err != nil {
+		return err
 	}
 
 	switch in.TLSVerify {

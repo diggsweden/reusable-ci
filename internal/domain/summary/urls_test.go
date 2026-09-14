@@ -41,16 +41,25 @@ func TestPackagesURL_DelegatesToTheBuilder(t *testing.T) {
 	}
 }
 
-// A platform with no hosted web UI does not implement the role, and the summary
-// must still render something a reader can parse rather than an empty cell.
-func TestURLs_PlaceholderWhenThePlatformHasNoWebUI(t *testing.T) {
+// TestURLs_NoLinkWithoutAPage pins the empty result, and the arguments reaching
+// the builder. A platform with no hosted web UI passes a nil builder; a run
+// missing its server, repository or version has nothing to link to either.
+// Returning a placeholder here used to put text such as "(release: v1.0.0)"
+// into a Markdown link destination, so the renderer now decides the fallback.
+func TestURLs_NoLinkWithoutAPage(t *testing.T) {
 	t.Parallel()
 
-	if got := summary.ReleaseURL(nil, "", "owner/repo", "v1.0.0"); got != "(release: v1.0.0)" {
-		t.Errorf("release placeholder = %q", got)
-	}
-
-	if got := summary.PackagesURL(nil, "", "owner/repo"); got != "(packages)" {
-		t.Errorf("packages placeholder = %q", got)
+	for name, got := range map[string]string{
+		"release, no builder":    summary.ReleaseURL(nil, "https://forge.example", "owner/repo", "v1.0.0"),
+		"release, no server":     summary.ReleaseURL(fakeURLs{}, "", "owner/repo", "v1.0.0"),
+		"release, no repository": summary.ReleaseURL(fakeURLs{}, "https://forge.example", "", "v1.0.0"),
+		"release, no version":    summary.ReleaseURL(fakeURLs{}, "https://forge.example", "owner/repo", ""),
+		"packages, no builder":   summary.PackagesURL(nil, "https://forge.example", "owner/repo"),
+		"packages, no server":    summary.PackagesURL(fakeURLs{}, "", "owner/repo"),
+		"packages, no repo":      summary.PackagesURL(fakeURLs{}, "https://forge.example", ""),
+	} {
+		if got != "" {
+			t.Errorf("%s = %q, want no link", name, got)
+		}
 	}
 }

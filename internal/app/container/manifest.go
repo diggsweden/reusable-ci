@@ -5,8 +5,10 @@ package container
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +17,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // ManifestRegistry is the registry surface the manifest helpers need: digest
@@ -73,13 +76,19 @@ func MergeManifest(ctx context.Context, reg ManifestRegistry, w io.Writer, in Me
 		return err
 	}
 
+	// No marker means no platform build handed over a digest: the input the
+	// merge needs is missing, which is not a configuration problem.
 	if len(digests) == 0 {
-		return fmt.Errorf("no digest files found in %s: %w", dir, errs.ErrInvalidConfig)
+		return fmt.Errorf("no digest files found in %s: %w", dir, errs.ErrMissingInput)
 	}
 
 	tags := nonEmptyLines(in.Tags)
 	if len(tags) == 0 {
 		return fmt.Errorf("tags is required: %w", errs.ErrUsage)
+	}
+
+	if err := domaincontainer.ValidateManifestTags(image, tags); err != nil {
+		return err
 	}
 
 	if err := reg.MergeManifest(ctx, image, digests, tags); err != nil {
@@ -103,13 +112,30 @@ func WriteDigestMarker(in WriteDigestMarkerInput) (string, error) {
 		dir = domaincontainer.DefaultDigestsDir
 	}
 
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // digest marker dir read by next step; 0755 expected.
-		return "", fmt.Errorf("mkdir digest dir %s: %w", dir, err)
+	root, err := pathsafe.MkdirRoot(dir, 0o755)
+	if err != nil {
+		return "", err
 	}
+	defer func() { _ = root.Close() }()
 
 	path := filepath.Join(dir, digest)
-	if err := os.WriteFile(path, nil, 0o644); err != nil { //nolint:gosec // empty marker file; 0644 is the workflow contract.
-		return "", fmt.Errorf("write digest marker %s: %w", path, err)
+
+	file, err := root.OpenFile(digest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if errors.Is(err, os.ErrExist) {
+		info, statErr := root.Lstat(digest)
+		if statErr == nil && info.Mode().IsRegular() && info.Size() == 0 {
+			return path, nil
+		}
+
+		return "", fmt.Errorf("digest marker already exists and is not an empty regular file: %w", errs.ErrValidation)
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	if err := file.Close(); err != nil {
+		return "", err
 	}
 
 	return path, nil
@@ -126,6 +152,11 @@ func InspectManifest(ctx context.Context, reg ManifestRegistry, sink ci.OutputSi
 
 	if image == "" {
 		return nil, fmt.Errorf("image or tags is required: %w", errs.ErrUsage)
+	}
+
+	image, err := domaincontainer.CanonicalImageRef(image)
+	if err != nil {
+		return nil, err
 	}
 
 	manifest, err := reg.Manifest(ctx, image)
@@ -162,6 +193,11 @@ func InspectManifest(ctx context.Context, reg ManifestRegistry, sink ci.OutputSi
 // yaml free of string-munging — `${{ steps.x.outputs.image-digest-ref
 // }}` is exactly what `cosign sign` / `container sign` expects.
 func emitManifestOutputs(ctx context.Context, sink ci.OutputSink, image, digest string) error {
+	name, err := domaincontainer.ImageNameForRef(image)
+	if err != nil {
+		return err
+	}
+
 	if err := sink.Set(ctx, "image", image); err != nil {
 		return fmt.Errorf("set image: %w", err)
 	}
@@ -170,7 +206,7 @@ func emitManifestOutputs(ctx context.Context, sink ci.OutputSink, image, digest 
 		return fmt.Errorf("set digest: %w", err)
 	}
 
-	if err := sink.Set(ctx, "image-digest-ref", domaincontainer.StripTag(image)+"@"+digest); err != nil {
+	if err := sink.Set(ctx, "image-digest-ref", name+"@"+digest); err != nil {
 		return fmt.Errorf("set image-digest-ref: %w", err)
 	}
 
@@ -203,14 +239,25 @@ func nonEmptyLines(value string) []string {
 
 func digestFiles(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("read digest dir %s: %w: %w", dir, err, errs.ErrMissingInput)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("read digest dir %s: %w", dir, err)
 	}
 
 	digests := make([]string, 0, len(entries))
+
+	seen := make(map[string]bool, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+		info, err := entry.Info()
+		if err != nil {
+			return nil, fmt.Errorf("stat digest marker: %w", err)
+		}
+
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("digest marker must be a regular file: %w", errs.ErrValidation)
 		}
 
 		digest, err := normalizeDigest(filepath.Base(entry.Name()))
@@ -218,6 +265,11 @@ func digestFiles(dir string) ([]string, error) {
 			return nil, fmt.Errorf("invalid digest marker %q: %w", entry.Name(), err)
 		}
 
+		if seen[digest] {
+			return nil, fmt.Errorf("duplicate normalized digest marker: %w", errs.ErrValidation)
+		}
+
+		seen[digest] = true
 		digests = append(digests, digest)
 	}
 

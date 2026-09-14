@@ -81,29 +81,12 @@ func AttestImage(ctx context.Context, attestor cosignImageAttestor, out io.Write
 		return fmt.Errorf("container attest: predicate type is required: %w", errs.ErrMissingInput)
 	}
 
-	predicatePath, predicateType, cleanup, err := resolvePredicate(in)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
+	var keyless bool
 
 	switch in.Method {
 	case domainrelease.SignMethodSigstore:
-		_, _ = fmt.Fprintf(out, "Attesting %s to %s (type=%s, method=sigstore)\n", predicateType, in.Image, predicateType)
-
-		return attestor.AttestImage(ctx, container.ImageAttestRequest{
-			ImageRef: in.Image, PredicateType: predicateType, PredicatePath: predicatePath,
-			Recursive: in.Recursive, Keyless: true, OIDCIssuer: in.OIDCIssuer,
-			FulcioURL: in.FulcioURL, RekorURL: in.RekorURL,
-			TrustedRootPath: in.TrustedRootPath,
-		}, out)
+		keyless = true
 	case domainrelease.SignMethodKMS:
-		_, _ = fmt.Fprintf(out, "Attesting %s to %s (type=%s, method=kms)\n", predicateType, in.Image, predicateType)
-
-		return attestor.AttestImage(ctx, container.ImageAttestRequest{
-			ImageRef: in.Image, PredicateType: predicateType, PredicatePath: predicatePath,
-			Recursive: in.Recursive, KeyRef: in.KeyRef,
-		}, out)
 	case domainrelease.SignMethodGPG:
 		return fmt.Errorf(
 			"container attest: method=gpg cannot attest OCI images — use --method=sigstore or --method=kms: %w",
@@ -111,6 +94,25 @@ func AttestImage(ctx context.Context, attestor cosignImageAttestor, out io.Write
 	default:
 		return fmt.Errorf("container attest: --method is required (sigstore or kms): %w", errs.ErrMissingInput)
 	}
+
+	predicatePath, predicateType, cleanup, err := resolvePredicate(in)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	_, _ = fmt.Fprintf(out, "Attesting %s to %s (method=%s)\n", predicateType, in.Image, in.Method)
+
+	// Every identity and endpoint field is forwarded for both methods, and
+	// the request's own validation decides which combinations are allowed.
+	// Picking fields per method here dropped a key given with sigstore, and
+	// the Sigstore endpoints and trust root given with kms, without a word,
+	// where the release signer refuses the same mistakes.
+	return attestor.AttestImage(ctx, container.ImageAttestRequest{
+		ImageRef: in.Image, PredicateType: predicateType, PredicatePath: predicatePath,
+		Recursive: in.Recursive, Keyless: keyless, KeyRef: in.KeyRef, OIDCIssuer: in.OIDCIssuer,
+		FulcioURL: in.FulcioURL, RekorURL: in.RekorURL, TrustedRootPath: in.TrustedRootPath,
+	}, out)
 }
 
 // resolvePredicate returns the predicate file path, the predicate type to pass
@@ -156,7 +158,11 @@ func resolvePredicate(in AttestImageInput) (string, string, func(), error) {
 		return "", "", noop, fmt.Errorf("container attest: write predicate: %w", err)
 	}
 
-	_ = file.Close()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(file.Name())
+
+		return "", "", noop, fmt.Errorf("container attest: close predicate: %w", err)
+	}
 
 	return file.Name(), container.PredicateTypeSLSAProvenance1, func() { _ = os.Remove(file.Name()) }, nil
 }

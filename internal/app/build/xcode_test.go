@@ -198,11 +198,8 @@ func TestXcodeVersionInfo_AutoDiscoversXcodeproj(t *testing.T) {
 	}
 }
 
-// TestXcodeVersionInfo_AutoDiscoveryIsDeterministic covers the guarantee
-// findFirstXcodeproj makes in its own comment. A repository holding an app
-// project alongside a framework project is ordinary, and which one supplies
-// the version has to be answerable without running the build -- otherwise
-// the released version could change with an unrelated rename.
+// With no selector, retain the historical first-project behavior. This is not
+// evidence that the discovered project belongs to any selected archive scheme.
 func TestXcodeVersionInfo_AutoDiscoveryIsDeterministic(t *testing.T) {
 	t.Parallel()
 
@@ -221,6 +218,10 @@ func TestXcodeVersionInfo_AutoDiscoveryIsDeterministic(t *testing.T) {
 
 		if got := sink.Single("version"); got != "1.0.0" {
 			t.Fatalf("version = %q, want the lexically first project's 1.0.0", got)
+		}
+
+		if got := sink.Single("build"); got != "100" {
+			t.Fatalf("build = %q, want the lexically first project's 100", got)
 		}
 	}
 }

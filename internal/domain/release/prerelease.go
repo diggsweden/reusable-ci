@@ -4,27 +4,50 @@
 package release
 
 import (
-	"regexp"
+	"slices"
 	"strings"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
 
 // PrereleaseIdentifiers is the canonical list of pre-release tokens
 // recognised across the project. Single source of truth — both the
-// "tag carries a prerelease marker?" check here and the "the suffix
-// after `-` matches a known token?" check in domain/validate build
-// their regexes from this list.
+// "tag carries a prerelease marker?" check here and the canonical-suffix
+// classification in domain/validate use this list.
 //
 //nolint:gochecknoglobals // canonical prerelease identifier list.
 var PrereleaseIdentifiers = []string{"alpha", "beta", "rc", "dev", "snapshot", "SNAPSHOT"}
 
-// prereleasePattern matches the canonical pre-release identifiers
-// embedded in a tag name (with the leading dash).
-//
-//nolint:gochecknoglobals // precompiled regex derived from the list above.
-var prereleasePattern = regexp.MustCompile(`-(` + strings.Join(PrereleaseIdentifiers, "|") + `)`)
+// IsCanonicalPrerelease reports whether a validated SemVer prerelease is one
+// canonical identifier, optionally followed by one numeric component.
+func IsCanonicalPrerelease(prerelease string) bool {
+	identifier, sequence, hasSequence := strings.Cut(prerelease, ".")
+	if !slices.Contains(PrereleaseIdentifiers, identifier) {
+		return false
+	}
 
-// IsPrereleaseTag reports whether the tag name embeds a known
-// pre-release identifier (alpha/beta/rc/dev/snapshot/SNAPSHOT).
+	if !hasSequence {
+		return true
+	}
+
+	if sequence == "" || strings.Contains(sequence, ".") {
+		return false
+	}
+
+	for _, char := range sequence {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+
+	return true
+}
+
+// IsPrereleaseTag reports whether a valid v-prefixed semantic-version tag has
+// any pre-release identifier. Canonical naming is a separate warning-level
+// policy; a valid noncanonical suffix must still be published as a prerelease.
 func IsPrereleaseTag(tag string) bool {
-	return prereleasePattern.MatchString(tag)
+	parsed, ok := version.ParseSemverTag(tag)
+
+	return ok && parsed.Prerelease != ""
 }

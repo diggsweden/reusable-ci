@@ -9,7 +9,7 @@ import (
 	"errors"
 	"io"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -38,10 +38,12 @@ type fakeSwiftFormat struct {
 	exitCode int
 	err      error
 	files    [][]string
+	dirs     []string
 }
 
-func (f *fakeSwiftFormat) Lint(_ context.Context, _ string, files []string) (string, int, error) {
+func (f *fakeSwiftFormat) Lint(_ context.Context, dir string, files []string) (string, int, error) {
 	f.files = append(f.files, files)
+	f.dirs = append(f.dirs, dir)
 
 	return f.output, f.exitCode, f.err
 }
@@ -52,10 +54,12 @@ type fakeSwiftLint struct {
 	exitCode int
 	err      error
 	configs  []string
+	inputs   []appbuild.SwiftLintRunInput
 }
 
 func (f *fakeSwiftLint) Lint(_ context.Context, in appbuild.SwiftLintRunInput) (string, int, error) {
 	f.configs = append(f.configs, in.ConfigPath)
+	f.inputs = append(f.inputs, in)
 
 	return f.output, f.exitCode, f.err
 }
@@ -84,7 +88,7 @@ func TestSwiftFormatLint_PassedAppendsCheck(t *testing.T) {
 
 	// Which files, not how many: a count passes even if the listing was
 	// mangled into two wrong names.
-	if len(sf.files) != 1 || !reflect.DeepEqual(sf.files[0], []string{"a.swift", "b.swift"}) {
+	if len(sf.files) != 1 || !slices.Equal(sf.files[0], []string{"a.swift", "b.swift"}) {
 		t.Errorf("swift-format files = %v, want one invocation with [a.swift b.swift]", sf.files)
 	}
 
@@ -109,17 +113,17 @@ func TestSwiftFormatLint_ListsFilesSafely(t *testing.T) {
 	}{
 		{
 			name: "default pattern",
-			want: []string{"ls-files", "--", "*.swift"},
+			want: []string{"-C", ".", "ls-files", "--", "*.swift"},
 		},
 		{
 			name:    "caller pattern",
 			pattern: "Sources/**/*.swift",
-			want:    []string{"ls-files", "--", "Sources/**/*.swift"},
+			want:    []string{"-C", ".", "ls-files", "--", "Sources/**/*.swift"},
 		},
 		{
 			name:    "a pattern that looks like an option stays an argument",
 			pattern: "--exclude-standard",
-			want:    []string{"ls-files", "--", "--exclude-standard"},
+			want:    []string{"-C", ".", "ls-files", "--", "--exclude-standard"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -131,7 +135,7 @@ func TestSwiftFormatLint_ListsFilesSafely(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if len(files.args) != 1 || !reflect.DeepEqual(files.args[0], tc.want) {
+			if len(files.args) != 1 || !slices.Equal(files.args[0], tc.want) {
 				t.Errorf("git args = %v, want one call %v", files.args, tc.want)
 			}
 		})

@@ -6,13 +6,17 @@
 package security
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
 )
 
@@ -46,6 +50,10 @@ type TransformInput struct {
 // the dependency-scanning shape, and writes the result to OutputPath.
 // Returns the number of findings written.
 func TrivyToGitLabDep(in TransformInput) (int, error) {
+	if err := validateReportPaths(in.InputPath, in.OutputPath); err != nil {
+		return 0, err
+	}
+
 	report, err := loadTrivy(in.InputPath)
 	if err != nil {
 		return 0, err
@@ -66,6 +74,10 @@ func TrivyToGitLabDep(in TransformInput) (int, error) {
 // it to the container-scanning shape (location.image / operating_system),
 // and writes the result.
 func TrivyToGitLabContainer(in TransformInput) (int, error) {
+	if err := validateReportPaths(in.InputPath, in.OutputPath); err != nil {
+		return 0, err
+	}
+
 	report, err := loadTrivy(in.InputPath)
 	if err != nil {
 		return 0, err
@@ -89,6 +101,10 @@ func TrivyToGitLabContainer(in TransformInput) (int, error) {
 // subprocess per container scan and removes trivy as a runtime
 // dependency for the conversion step.
 func TrivyToSARIF(in TransformInput) error {
+	if err := validateReportPaths(in.InputPath, in.OutputPath); err != nil {
+		return err
+	}
+
 	report, err := loadTrivy(in.InputPath)
 	if err != nil {
 		return err
@@ -100,32 +116,42 @@ func TrivyToSARIF(in TransformInput) error {
 		Now:          reportTimestamp(),
 	})
 
+	// Render before the destination is opened, as writeJSON marshals first: a
+	// rendering failure must not truncate the previous report to nothing.
+	var body bytes.Buffer
+	if renderErr := doc.PrettyWrite(&body); renderErr != nil {
+		return fmt.Errorf("render SARIF: %w", renderErr)
+	}
+
 	out, err := os.OpenFile(in.OutputPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644) //nolint:gosec // SARIF report read by workflow / Code Scanning.
 	if err != nil {
 		return fmt.Errorf("create %q: %w", in.OutputPath, err)
 	}
 
-	defer func() { _ = out.Close() }()
+	if _, writeErr := out.Write(body.Bytes()); writeErr != nil {
+		_ = out.Close()
 
-	if err := doc.PrettyWrite(out); err != nil {
-		return fmt.Errorf("write SARIF: %w", err)
+		return fmt.Errorf("write SARIF %q: %w", in.OutputPath, writeErr)
+	}
+
+	if closeErr := out.Close(); closeErr != nil {
+		return fmt.Errorf("close SARIF %q: %w", in.OutputPath, closeErr)
 	}
 
 	return nil
 }
 
 func loadTrivy(path string) (*security.TrivyReport, error) {
-	data, err := os.ReadFile(path) //nolint:gosec // path is a CLI-flag value.
+	data, err := cliio.ReadFile(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("read trivy report %q: %w: %w", path, err, errs.ErrMissingInput)
+		}
+
 		return nil, fmt.Errorf("read trivy report %q: %w", path, err)
 	}
 
-	var r security.TrivyReport
-	if err := json.Unmarshal(data, &r); err != nil {
-		return nil, fmt.Errorf("parse trivy report %q: %w", path, err)
-	}
-
-	return &r, nil
+	return security.ParseTrivyReport(data)
 }
 
 func writeJSON(path string, v any) error {

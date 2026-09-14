@@ -13,13 +13,9 @@
 //
 // # Why this is a leaf rather than part of internal/cli/cienv
 //
-// The layering forbids adapters->cli and app->cli, so a name list living
-// under cli/ is unreachable from HALF the hexagon. Those layers coped by
-// re-declaring the names inline, and the lists drifted apart — the exact
-// failure cienv was created to prevent, reintroduced by cienv's own
-// address. The names are not a CLI concept; only their BINDING to
-// urfave/cli flags is. So the binding stays in cienv and the names live
-// here, where all four layers can reach them.
+// The layering forbids adapters->cli and app->cli. Run-context names therefore
+// live here so every layer can use one definition; only their binding to
+// urfave/cli flags belongs in cienv.
 //
 // A concept therefore has exactly ONE definition. cienv turns it into a
 // flag's ValueSourceChain; an adapter resolves it against its injected env
@@ -33,8 +29,8 @@
 //  2. the GitLab/Forgejo-native CI_*/FORGEJO_* name (runner-provided);
 //  3. the GitHub-native GITHUB_* name (runner-provided).
 //
-// Set-but-EMPTY counts as ABSENT throughout: a forge-neutral var blanked by
-// a workflow's `${{ env.X || ” }}` expression must fall through to a
+// Set-but-EMPTY counts as ABSENT throughout: a forge-neutral var blanked by a
+// workflow expression that falls back to an empty string must continue to a
 // populated fallback rather than shadow it.
 //
 // Each chain is the UNION of every variant its consumers accept, so existing
@@ -43,6 +39,7 @@ package runcontext
 
 import (
 	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -400,10 +397,9 @@ func Workspace() Var {
 	}
 }
 
-// tokenVar names the forge API/clone token for the forge this run BELONGS
-// to. It is unexported because the NAMES are shared (cienv binds them to a
-// flag, All enumerates them) while the VALUE must only ever leave this
-// package as a Credential — see Token.
+// tokenVar names forge API/clone token candidates. It is unexported because the
+// NAMES are shared (cienv binds them to a flag, All enumerates them) while the
+// VALUE must only ever leave this package as a Credential — see Token.
 //
 // Non-empty semantics matter: an empty GITHUB_TOKEN must not shadow a
 // populated FORGEJO_TOKEN, and an empty result means an anonymous
@@ -411,7 +407,7 @@ func Workspace() Var {
 //
 // GITEA_TOKEN is the Gitea-native name that Forgejo still accepts.
 func tokenVar() Var {
-	return Var{Concept: conceptToken, Names: append(forgeNeutralTokenNames(), githubInjected(nameGitHubToken))}
+	return Var{Concept: conceptToken, Names: append(forgeTokenNames(), githubInjected(nameGitHubToken))}
 }
 
 // conceptToken labels both token chains: they name the same concept, only
@@ -424,12 +420,14 @@ const conceptToken = "token"
 // say why.
 const nameGitHubToken = "GITHUB_TOKEN" //nolint:gosec // G101: an env var NAME; this package holds names, never values.
 
-// forgeNeutralTokenNames are the names no runner injects on its own: a
-// workflow sets them deliberately, so they say which forge they mean.
+// forgeTokenNames combines the orchestrated cross-forge name with the native
+// names that a Forgejo/Gitea runner injects. Their Name metadata stays distinct:
+// CI_TOKEN is deliberate and unbound, while FORGEJO_TOKEN and GITEA_TOKEN are
+// ambient on Forgejo/Gitea and remain bound to that runner's server.
 //
 // Returned fresh so callers can append without aliasing a shared backing
 // array — and declared once so the two chains below cannot drift.
-func forgeNeutralTokenNames() []Name {
+func forgeTokenNames() []Name {
 	return []Name{
 		orchestrated("CI_TOKEN"),
 		forgejoInjected("FORGEJO_TOKEN"),
@@ -437,12 +435,12 @@ func forgeNeutralTokenNames() []Name {
 	}
 }
 
-// releaseTokenVar names the write-scoped token used to push the release
-// commit and tag. The dedicated RELEASE_TOKEN wins (least-privilege: a
-// separate write token, distinct from the read-only clone token), then the
-// same chain as tokenVar so the push works on any forge. Empty semantics
-// matter here too: an unset RELEASE_TOKEN (a `${{ secrets.* }}` that
-// resolved to "") must fall through, not shadow the forge's ambient token.
+// releaseTokenVar names the token used to push the release commit and tag.
+// RELEASE_TOKEN has precedence over the normal forge-token chain. This ordering
+// does not establish its scope; the operator is responsible for provisioning a
+// token limited to the required repository and operations. Empty semantics
+// matter here too: an unset RELEASE_TOKEN (a `${{ secrets.* }}` that resolved
+// to "") must fall through, not shadow the forge's ambient token.
 //
 // Built from tokenVar rather than restating it, so the two cannot drift.
 func releaseTokenVar() Var {
@@ -456,7 +454,7 @@ func releaseTokenVar() Var {
 // returns a chain that yields a Credential rather than a string.
 func Token() CredentialVar { return CredentialVar{v: tokenVar()} }
 
-// ReleaseToken resolves the write-scoped token for the release commit and tag.
+// ReleaseToken resolves the token used for release commit and tag operations.
 func ReleaseToken() CredentialVar { return CredentialVar{v: releaseTokenVar()} }
 
 // CredentialVar is a token concept. It is a distinct type from Var for one
@@ -502,15 +500,17 @@ func (c CredentialVar) String() string { return c.v.String() }
 // Fails closed: an ambient token whose runner exposes no attested server URL
 // gets no audience and is therefore usable nowhere, which degrades to an
 // anonymous request rather than guessing a destination.
+// Environment-sourced tokens lose trailing CR/LF only, as secret files do.
+// Other whitespace and explicit OperatorCredential values remain unchanged.
 func (c CredentialVar) Resolve(env func(string) string) Credential {
 	for _, name := range c.v.Names {
-		secret := env(name.Key)
+		secret := strings.TrimRight(env(name.Key), "\r\n")
 		if secret == "" {
 			continue
 		}
 
 		if !name.injected(env) {
-			return Credential{secret: secret}
+			return Credential{secret: &secret}
 		}
 
 		own, ok := ServerURL().ResolveAttested(env)
@@ -521,10 +521,10 @@ func (c CredentialVar) Resolve(env func(string) string) Credential {
 			// "no credential" instead would be a small lie, and Present() is
 			// what callers use to tell "none configured" from "not usable
 			// here".
-			return Credential{secret: secret, bound: true}
+			return Credential{secret: &secret, bound: true}
 		}
 
-		return Credential{secret: secret, audience: own.String(), bound: true}
+		return Credential{secret: &secret, audience: own.String(), bound: true}
 	}
 
 	return Credential{}
@@ -540,7 +540,7 @@ func (c CredentialVar) Resolve(env func(string) string) Credential {
 // also the one way to launder an ambient token past its audience. Only the
 // composition root may call it: enforced by
 // archguard.TestOnlyCompositionRootMintsOperatorCredentials.
-func OperatorCredential(secret string) Credential { return Credential{secret: secret} }
+func OperatorCredential(secret string) Credential { return Credential{secret: &secret} }
 
 // Credential is a secret together with the destination it may be sent to.
 //
@@ -552,10 +552,12 @@ func OperatorCredential(secret string) Credential { return Credential{secret: se
 // Basic auth. There is no method that returns the secret without being told
 // where it is going.
 //
-// String/GoString redact, so a Credential cannot leak through a %v, a log
-// line, or a struct dump.
+// String/GoString redact direct formatting. The private immutable string pointer
+// also prevents ordinary fmt/slog dumps of private wrapper fields from printing
+// the secret inline. Explicit reflection/dereferencing and strings returned by
+// For are not protected diagnostic surfaces.
 type Credential struct {
-	secret string
+	secret *string
 
 	// audience is the origin the secret may be sent to. Meaningful only
 	// when bound; an unbound Credential was set deliberately and its holder,
@@ -567,7 +569,7 @@ type Credential struct {
 // Present reports whether a secret was found at all, without revealing it.
 // A caller that only needs to say "no token configured" uses this and never
 // has to name a destination.
-func (c Credential) Present() bool { return c.secret != "" }
+func (c Credential) Present() bool { return c.secret != nil && *c.secret != "" }
 
 // For returns the secret if it may be sent to destination, and "" otherwise.
 //
@@ -581,16 +583,16 @@ func (c Credential) Present() bool { return c.secret != "" }
 // remote such as git@forgejo.example.com:o/r.git — matches nothing, which is
 // correct: HTTP credentials have no meaning there.
 func (c Credential) For(destination string) string {
-	if c.secret == "" {
+	if !c.Present() {
 		return ""
 	}
 
 	if !c.bound {
-		return c.secret
+		return *c.secret
 	}
 
 	if sameOrigin(c.audience, destination) {
-		return c.secret
+		return *c.secret
 	}
 
 	return ""
@@ -598,7 +600,7 @@ func (c Credential) For(destination string) string {
 
 // String redacts. A Credential must never render its secret.
 func (c Credential) String() string {
-	if c.secret == "" {
+	if !c.Present() {
 		return "<no credential>"
 	}
 
@@ -608,14 +610,15 @@ func (c Credential) String() string {
 // GoString redacts under %#v too.
 func (c Credential) GoString() string { return "runcontext.Credential{" + c.String() + "}" }
 
-// sameOrigin reports whether two absolute URLs share scheme, host and port.
+// sameOrigin compares HTTP(S) scheme, hostname and effective port. Default
+// ports are equivalent; userinfo, empty/invalid ports and other schemes refuse.
 //
 // It compares PARSED origins rather than strings on purpose. A prefix or
 // substring test would accept https://github.com.evil.example for an audience
 // of https://github.com — the same class of mistake AnchorIdentity avoids by
 // escaping and anchoring its regexp. Both URLs must be absolute and carry a
 // host; anything else is not a comparable origin and reports false.
-func sameOrigin(audience, destination string) bool {
+func sameOrigin(audience, destination string) bool { //nolint:cyclop // explicit URL, authority, scheme and effective-port checks define the credential boundary.
 	issued, err := url.Parse(audience)
 	if err != nil || issued.Host == "" || issued.Scheme == "" {
 		return false
@@ -626,8 +629,39 @@ func sameOrigin(audience, destination string) bool {
 		return false
 	}
 
-	return strings.EqualFold(issued.Scheme, target.Scheme) &&
-		strings.EqualFold(issued.Host, target.Host)
+	for _, origin := range []*url.URL{issued, target} {
+		if origin.User != nil || origin.Hostname() == "" || strings.HasSuffix(origin.Host, ":") {
+			return false
+		}
+
+		origin.Scheme = strings.ToLower(origin.Scheme)
+
+		var defaultPort string
+
+		switch origin.Scheme {
+		case "http":
+			defaultPort = "80"
+		case "https":
+			defaultPort = "443"
+		default:
+			return false
+		}
+
+		port := origin.Port()
+		if port == "" {
+			port = defaultPort
+		}
+
+		portNumber, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || portNumber == 0 {
+			return false
+		}
+
+		port = strconv.FormatUint(portNumber, 10)
+		origin.Host = strings.ToLower(origin.Hostname()) + ":" + port
+	}
+
+	return issued.Scheme == target.Scheme && issued.Host == target.Host
 }
 
 // Tag resolves a release tag. Tag-specific vars win, then the generic
@@ -679,6 +713,38 @@ func ForgejoRunner(env func(string) string) bool {
 	return truthy(env("FORGEJO_ACTIONS")) ||
 		truthy(env("GITEA_ACTIONS")) ||
 		env("FORGEJO_OUTPUT") != ""
+}
+
+// ProvenanceEnv exposes only the active runner's namespace. Target overrides
+// and neutral orchestration variables are not evidence of where a build ran.
+func ProvenanceEnv(env func(string) string) func(string) string {
+	var prefixes []string
+
+	marker := ""
+
+	switch {
+	case ForgejoRunner(env):
+		prefixes = []string{"FORGEJO_", "GITEA_", "GITHUB_"}
+	case env("GITHUB_ACTIONS") == valueTrue:
+		prefixes = []string{"GITHUB_"}
+	case env("GITLAB_CI") == valueTrue:
+		prefixes = []string{"CI_"}
+		marker = "GITLAB_CI"
+	}
+
+	return func(key string) string {
+		if marker != "" && key == marker {
+			return env(key)
+		}
+
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(key, prefix) {
+				return env(key)
+			}
+		}
+
+		return ""
+	}
 }
 
 // truthy reports whether v holds a conventional truthy value. It matches

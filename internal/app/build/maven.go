@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/build"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
@@ -52,9 +53,9 @@ type mavenMeta struct {
 	artifactID string
 }
 
-// resolveMavenMetadata reads pom.xml and resolves version/groupId/artifactId,
-// expanding ${property} references via `mvn help:evaluate` only when needed.
-func resolveMavenMetadata(ctx context.Context, ops MavenOps, in MavenMetadataInput) (mavenMeta, error) {
+// loadMavenPOM checks all required local coordinates, including parent fallback,
+// without invoking Maven. Property expansion may need a subsequent module install.
+func loadMavenPOM(in MavenMetadataInput) (build.POM, error) {
 	dir := in.Dir
 	if dir == "" {
 		dir = "."
@@ -65,17 +66,33 @@ func resolveMavenMetadata(ctx context.Context, ops MavenOps, in MavenMetadataInp
 	body, err := os.ReadFile(pomPath) //nolint:gosec // dir is CLI-flag-derived; filename component is hardcoded.
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return mavenMeta{}, fmt.Errorf("pom.xml not found at %q: %w", pomPath, errs.ErrMissingInput)
+			return build.POM{}, fmt.Errorf("pom.xml not found at %q: %w", pomPath, errs.ErrMissingInput)
 		}
 
-		return mavenMeta{}, fmt.Errorf("read pom.xml at %q: %w", pomPath, err)
+		return build.POM{}, fmt.Errorf("read pom.xml at %q: %w", pomPath, err)
 	}
 
 	pom, err := build.ParsePOM(body)
 	if err != nil {
-		return mavenMeta{}, err
+		return build.POM{}, err
 	}
 
+	for _, field := range []struct{ value, expr string }{
+		{pom.Version, "project.version"},
+		{pom.GroupID, "project.groupId"},
+		{pom.ArtifactID, "project.artifactId"},
+	} {
+		if field.value == "" {
+			return build.POM{}, fmt.Errorf("%s missing from pom.xml: %w", field.expr, errs.ErrMissingInput)
+		}
+	}
+
+	return pom, nil
+}
+
+// resolveMavenMetadata expands ${property} references in the captured local POM
+// via `mvn help:evaluate` only when needed.
+func resolveMavenMetadata(ctx context.Context, ops MavenOps, pom build.POM) (mavenMeta, error) {
 	version, err := resolvePOMField(ctx, ops, pom.Version, "project.version")
 	if err != nil {
 		return mavenMeta{}, err
@@ -96,7 +113,12 @@ func resolveMavenMetadata(ctx context.Context, ops MavenOps, in MavenMetadataInp
 
 // MavenMetadata reads project.{version,groupId,artifactId} and emits them.
 func MavenMetadata(ctx context.Context, sink ci.OutputSink, ops MavenOps, w io.Writer, in MavenMetadataInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	meta, err := resolveMavenMetadata(ctx, ops, in)
+	pom, err := loadMavenPOM(in)
+	if err != nil {
+		return err
+	}
+
+	meta, err := resolveMavenMetadata(ctx, ops, pom)
 	if err != nil {
 		return err
 	}
@@ -127,14 +149,9 @@ func MavenMetadata(ctx context.Context, sink ci.OutputSink, ops MavenOps, w io.W
 }
 
 // resolvePOMField returns the literal value when it does not carry a
-// property reference, or asks Maven to expand it when it does. Errors
-// from the parse path are propagated; mvn failures are wrapped with the
-// field name so callers see which property failed.
+// property reference, or asks Maven to expand it when it does. Local presence
+// has already been checked; mvn failures are wrapped with the field name.
 func resolvePOMField(ctx context.Context, ops MavenOps, value, mvnExpr string) (string, error) {
-	if value == "" {
-		return "", fmt.Errorf("%s missing from pom.xml: %w", mvnExpr, errs.ErrMissingInput)
-	}
-
 	if !build.POMHasUnresolvedProperty(value) {
 		return value, nil
 	}
@@ -146,6 +163,11 @@ func resolvePOMField(ctx context.Context, ops MavenOps, value, mvnExpr string) (
 	resolved, err := ops.EvalExpression(ctx, mvnExpr)
 	if err != nil {
 		return "", fmt.Errorf("expand %s via mvn help:evaluate: %w", mvnExpr, err)
+	}
+
+	resolved = strings.TrimSpace(resolved)
+	if resolved == "" {
+		return "", fmt.Errorf("expand %s returned an empty value: %w", mvnExpr, errs.ErrMalformedInput)
 	}
 
 	return resolved, nil
@@ -194,11 +216,12 @@ func MavenApplication(ctx context.Context, ops MavenOps, w, stderr io.Writer, in
 	return ops.RunInherit(ctx, w, stderr, args...)
 }
 
-// MavenLibrary builds a Maven library with sources + javadoc JARs.
-// w receives the human-readable status banner; mvn's own output
-// streams via ops.RunInherit.
+// MavenLibrary runs the library lifecycle and optional profile. The project
+// POM/profile owns any attached sources or javadoc artifacts; this function
+// deliberately does not invoke unpinned plugin goals. w receives the status
+// banner and mvn's output streams via ops.RunInherit.
 func MavenLibrary(ctx context.Context, ops MavenOps, w, stderr io.Writer, in MavenLibraryInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	_, _ = fmt.Fprintf(w, "Building Maven library with sources and javadoc...\n")
+	_, _ = fmt.Fprintln(w, "Building Maven library lifecycle...")
 
 	profileArg := ""
 	if in.Profile != "" {
@@ -231,7 +254,7 @@ func MavenLibrary(ctx context.Context, ops MavenOps, w, stderr io.Writer, in Mav
 		}
 	}
 
-	_, _ = fmt.Fprintf(w, "Creating library package with sources and javadoc...\n")
+	_, _ = fmt.Fprintln(w, "Packaging library with project-configured artifacts...")
 	// mvn $MAVEN_CLI_OPTS package -DskipTests=$SKIP_TESTS $PROFILE_ARG -Dgpg.skip=true
 	pkgArgs := mvn("package", "-DskipTests="+strconv.FormatBool(in.SkipTests))
 

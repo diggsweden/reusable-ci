@@ -52,12 +52,20 @@ func resolveNPMMetadata(in NPMMetadataInput) (npmPackageJSON, error) {
 		return npmPackageJSON{}, err
 	}
 
-	if meta.Name == "" {
+	if strings.TrimSpace(meta.Name) == "" {
 		return npmPackageJSON{}, fmt.Errorf("package.json name is required: %w", errs.ErrInvalidConfig)
 	}
 
-	if meta.Version == "" {
+	if strings.TrimSpace(meta.Version) == "" {
 		return npmPackageJSON{}, fmt.Errorf("package.json version is required: %w", errs.ErrInvalidConfig)
+	}
+	// The identity reaches artifact names, summaries and output sinks, so it has
+	// to be printable text before any of that. JSON carries control characters
+	// happily; a sink further down does not.
+	for _, field := range []struct{ name, value string }{{"name", meta.Name}, {outKeyVersion, meta.Version}} {
+		if err := validateScalarValue(field.value); err != nil {
+			return npmPackageJSON{}, fmt.Errorf("package.json %s: %w: %w", field.name, err, errs.ErrInvalidConfig)
+		}
 	}
 
 	return meta, nil
@@ -145,6 +153,10 @@ func NPMApplication(ctx context.Context, ops NPMRunner, w, stderr io.Writer, in 
 func npmHasScript(dir, name string) (bool, error) {
 	body, err := os.ReadFile(filepath.Join(dir, "package.json")) //nolint:gosec // dir is CLI-flag-derived; filename component is hardcoded.
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, fmt.Errorf("read package.json: %w", errs.ErrMissingInput)
+		}
+
 		return false, fmt.Errorf("read package.json: %w", err)
 	}
 
@@ -156,6 +168,35 @@ func npmHasScript(dir, name string) (bool, error) {
 	}
 
 	return strings.TrimSpace(pkg.Scripts[name]) != "", nil
+}
+
+// preflightNPMScript checks only the container and selected value. Unselected
+// scripts may be repaired by install hooks before npmHasScript checks all values.
+func preflightNPMScript(dir, name string) error {
+	body, err := os.ReadFile(filepath.Join(dir, "package.json")) //nolint:gosec // dir is CLI-flag-derived; filename component is hardcoded.
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			err = errs.ErrMissingInput
+		}
+
+		return fmt.Errorf("read package.json: %w", err)
+	}
+
+	var pkg struct {
+		Scripts map[string]json.RawMessage `json:"scripts"`
+	}
+	if err := json.Unmarshal(body, &pkg); err != nil {
+		return fmt.Errorf("parse package.json: %w: %w", err, errs.ErrInvalidConfig)
+	}
+
+	if selected, ok := pkg.Scripts[name]; ok {
+		var script string
+		if err := json.Unmarshal(selected, &script); err != nil {
+			return fmt.Errorf("package.json selected script must be a string: %w", errs.ErrInvalidConfig)
+		}
+	}
+
+	return nil
 }
 
 // NPMPack runs `npm pack --json`, validates the machine-readable result, and

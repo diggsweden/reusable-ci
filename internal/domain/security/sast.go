@@ -4,7 +4,7 @@
 package security
 
 import (
-	"fmt"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +23,7 @@ const (
 // can populate the GitLab merge-request Security tab via
 // `artifacts:reports:sast` — parity with GitHub Code Scanning. The scanner
 // identity is read from the SARIF tool.driver; each finding gets a
-// deterministic UUID from (ruleId|file|startLine|message); opts.Now stamps the
+// deterministic UUID from an unambiguous result tuple; opts.Now stamps the
 // scan times (tests pass a fixed time for golden output).
 func SARIFToGitLabSAST(doc map[string]any, opts Options) *GitLabReport {
 	scannerID, scannerName, scannerVersion := sarifTool(doc)
@@ -90,7 +90,7 @@ func buildSASTVuln(scannerID string, result map[string]any) GitLabVulnerability 
 	}
 
 	return GitLabVulnerability{
-		ID:          DeterministicUUID(fmt.Sprintf("%s|%s|%d|%s", ruleID, uri, startLine, msg)),
+		ID:          DeterministicUUID(sarifResultIdentity(ruleID, uri, startLine, msg)),
 		Name:        name,
 		Description: msg,
 		Severity:    sarifSeverity(result),
@@ -198,10 +198,15 @@ func cvssScore(raw any) (float64, bool) {
 	switch value := raw.(type) {
 	case string:
 		score, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+		if err != nil {
+			return 0, false
+		}
 
-		return score, err == nil
+		return cvssScore(score)
+	case json.Number:
+		return cvssScore(value.String())
 	case float64:
-		return value, true
+		return value, value >= 0 && value <= 10
 	default:
 		return 0, false
 	}
@@ -228,14 +233,7 @@ func extractEndLine(result map[string]any) int {
 		return 0
 	}
 
-	switch value := region["endLine"].(type) {
-	case float64:
-		return int(value)
-	case int:
-		return value
-	default:
-		return 0
-	}
+	return sarifLine(region["endLine"])
 }
 
 func sarifRegion(result map[string]any) map[string]any {

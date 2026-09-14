@@ -11,7 +11,7 @@ import "github.com/urfave/cli/v3"
 // New returns the `build` subgroup command tree.
 func New() *cli.Command {
 	return &cli.Command{
-		Name:  "build",
+		Name:  subCmdBuild,
 		Usage: "toolchain build wrappers (go, cargo, maven, npm, gradle, gradle-android, xcode-ios)",
 		Commands: []*cli.Command{
 			goCmd(),

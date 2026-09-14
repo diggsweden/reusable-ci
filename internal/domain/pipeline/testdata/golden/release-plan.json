@@ -297,7 +297,7 @@
         "kind": "build_sbom",
         "name": "lib-build-sbom",
         "path": "./release-artifacts/",
-        "required": false
+        "required": true
       },
       {
         "kind": "build_artifact",
@@ -309,25 +309,25 @@
         "kind": "build_sbom",
         "name": "web-build-sbom",
         "path": "./release-artifacts/",
-        "required": false
+        "required": true
       },
       {
         "kind": "build_sbom",
         "name": "api-go-build-sbom",
         "path": "./release-artifacts/",
-        "required": false
+        "required": true
       },
       {
         "kind": "analyzed_container_sbom",
         "name_template": "analyzed-container-sbom-{run_id}-api-amd64",
         "path": "./sbom-artifacts/",
-        "required": false
+        "required": true
       },
       {
         "kind": "analyzed_container_sbom",
         "name_template": "analyzed-container-sbom-{run_id}-api-arm64",
         "path": "./sbom-artifacts/",
-        "required": false
+        "required": true
       },
       {
         "kind": "extracted_binaries",

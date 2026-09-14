@@ -5,13 +5,17 @@ package version
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domaingit "github.com/diggsweden/reusable-ci/v3/internal/domain/git"
@@ -38,7 +42,7 @@ type ChangelogReleaseInput struct {
 	Tag               string // final stable release tag, e.g. v1.2.3
 	Repository        string // owner/name, validated against the SSH origin URL path
 	GitURL            string // required: exact ssh://git@host[:port]/owner/name.git origin URL
-	RemoteName        string // empty defaults to origin
+	RemoteName        string // empty defaults to origin; other remotes are unsupported
 	Branch            string // empty defaults to main
 	ChangelogPath     string // empty defaults to CHANGELOG.md
 	CommitMessageFile string // empty defaults to commit-msg.txt
@@ -54,20 +58,48 @@ type ChangelogReleaseInput struct {
 // pushes the release bump to main without force, creates the final tag once,
 // and checks out that tag. Consumer-owned template rendering stays outside this
 // function; this owns only the trusted signing/tagging mutation sequence.
+// Routing/destination checks precede effects and are repeated after remote
+// setup. A later refusal retains local config changes; there is no rollback.
 //
 // DryRun keeps every validation and the changelog status inspection, then
 // narrates and skips each git mutation (signing/remote config, stage, commit,
 // push, tag create/push, checkout).
-func ChangelogRelease(ctx context.Context, repo changelogReleaseOps, sink ci.OutputSink, out io.Writer, in ChangelogReleaseInput) (*TagReleaseOutput, error) {
+func ChangelogRelease(ctx context.Context, repo changelogReleaseOps, sink ci.OutputSink, out io.Writer, in ChangelogReleaseInput) (*TagReleaseOutput, error) { //nolint:cyclop // subject and immutable-tag preflight precede the existing signed release sequence.
 	if err := validateChangelogReleaseInput(in); err != nil {
 		return nil, err
 	}
 
 	in = withChangelogReleaseDefaults(in)
+	if err := validateChangelogSubject(in); err != nil {
+		return nil, err
+	}
+
+	if err := repo.CheckOriginPushDestination(ctx); err != nil {
+		return nil, fmt.Errorf("commit-changelog: inspect initial publication destination: %w", err)
+	}
 
 	status, err := inspectChangelogReleaseFiles(ctx, repo, in)
 	if err != nil {
 		return nil, err
+	}
+
+	if strings.TrimSpace(status) != "" { //nolint:nestif // changed work must not create another commit for an existing final tag; unchanged reruns verify exact identity instead.
+		_, exists, lookupErr := repo.RemoteTagCommitIfExists(ctx, in.GitURL, in.Tag, in.Token)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("preflight release tag: %w", lookupErr)
+		}
+
+		if exists {
+			return nil, fmt.Errorf("release tag already exists; recover it before making another release commit: %w", errs.ErrValidation)
+		}
+
+		if exists, lookupErr := repo.TagExists(ctx, in.Tag); lookupErr != nil {
+			return nil, lookupErr
+		} else if exists {
+			return nil, fmt.Errorf("local release tag already exists: %w", errs.ErrValidation)
+		}
+	} else if _, _, _, tagErr := inspectReleaseTag(ctx, repo, in.GitURL, TagReleaseInput{Tag: in.Tag, Signed: in.TagSigned, Token: in.Token}); tagErr != nil {
+		return nil, tagErr
 	}
 
 	if in.DryRun {
@@ -152,12 +184,38 @@ func ChangelogReleasePreflight(in ChangelogReleaseInput) error {
 	}
 
 	in = withChangelogReleaseDefaults(in)
+	if err := validateChangelogSubject(in); err != nil {
+		return err
+	}
 
 	return requireRegularFile("CHANGELOG.md must be generated before loading the SSH signing key", in.ChangelogPath)
 }
 
+func validateChangelogSubject(in ChangelogReleaseInput) error {
+	body, err := cliio.ReadFile(in.CommitMessageFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	} // unchanged reruns do not need a new message.
+
+	if err != nil {
+		return err
+	}
+
+	subject, _, _ := strings.Cut(string(body), "\n")
+	if !utf8.Valid(body) || strings.ContainsFunc(subject, unicode.IsControl) || subject != "chore(release): bump to "+in.Tag {
+		return fmt.Errorf("release commit subject does not match the requested tag: %w", errs.ErrValidation)
+	}
+
+	return nil
+}
+
+//nolint:cyclop // Flat fail-fast validation keeps each workflow-facing input error specific.
 func validateChangelogReleaseInput(in ChangelogReleaseInput) error {
 	switch {
+	case in.RemoteName != "" && in.RemoteName != defaultRemoteName:
+		return fmt.Errorf("commit-changelog: only origin is supported as the publication remote: %w", errs.ErrUsage)
+	case in.Branch != "" && (strings.HasPrefix(in.Branch, "-") || strings.HasPrefix(in.Branch, "+") || !domaingit.ValidRefName("refs/heads/"+in.Branch)):
+		return fmt.Errorf("commit-changelog: branch must be a literal branch name: %w", errs.ErrUsage)
 	case in.Tag == "":
 		return fmt.Errorf("commit-changelog: tag is required: %w", errs.ErrUsage)
 	case strings.ContainsAny(in.Tag, "\n\r") || !domainversion.IsStableSemverTag(in.Tag):
@@ -203,6 +261,8 @@ type ChangelogReleaseGitEndpoint struct {
 
 // ParseChangelogReleaseGitURL validates the pre-release SSH URL contract and
 // returns the connection endpoint used for host-key pinning.
+//
+//nolint:cyclop // Each branch enforces one exact SSH URL or repository ambiguity rule.
 func ParseChangelogReleaseGitURL(rawURL, repository string) (ChangelogReleaseGitEndpoint, error) {
 	parts := strings.Split(repository, "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || parts[0] == "." || parts[0] == ".." || parts[1] == "." || parts[1] == ".." ||
@@ -233,6 +293,7 @@ func ParseChangelogReleaseGitURL(rawURL, repository string) (ChangelogReleaseGit
 	}
 
 	port := 22
+
 	portText := parsed.Port()
 	if portText == "" {
 		if strings.HasSuffix(parsed.Host, ":") {
@@ -267,7 +328,7 @@ func withChangelogReleaseDefaults(in ChangelogReleaseInput) ChangelogReleaseInpu
 	}
 
 	if in.ChangelogPath == "" {
-		in.ChangelogPath = "CHANGELOG.md"
+		in.ChangelogPath = defaultChangelogFile
 	}
 
 	if in.CommitMessageFile == "" {
@@ -293,6 +354,10 @@ func configureChangelogReleaseGit(ctx context.Context, repo changelogReleaseOps,
 
 	if err := repo.SetRemoteURL(ctx, in.RemoteName, in.GitURL); err != nil {
 		return fmt.Errorf("commit-changelog: set %s URL: %w", in.RemoteName, err)
+	}
+
+	if err := repo.CheckOriginPushDestination(ctx); err != nil {
+		return fmt.Errorf("commit-changelog: inspect configured publication destination: %w", err)
 	}
 
 	return nil

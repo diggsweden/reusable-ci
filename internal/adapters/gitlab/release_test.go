@@ -5,12 +5,15 @@ package gitlab_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/gitlab"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakegitlabserver"
 )
@@ -33,6 +36,8 @@ func hasCall(reqs []fakegitlabserver.Request, method, path string) bool {
 }
 
 func TestPublishRelease_CreatesWhenMissing(t *testing.T) {
+	t.Parallel()
+
 	srv := fakegitlabserver.New(t)
 
 	// The release does not exist yet.
@@ -48,6 +53,7 @@ func TestPublishRelease_CreatesWhenMissing(t *testing.T) {
 
 	p := &gitlab.Provider{
 		APIBaseOverride: srv.URL(),
+		HTTPClient:      srv.Client(),
 		Env:             envFunc(map[string]string{"GITLAB_TOKEN": "t"}),
 	}
 
@@ -75,6 +81,8 @@ func TestPublishRelease_CreatesWhenMissing(t *testing.T) {
 }
 
 func TestPublishRelease_UpdatesInPlaceAndReconcilesAssets(t *testing.T) {
+	t.Parallel()
+
 	srv := fakegitlabserver.New(t)
 
 	// The release already exists.
@@ -107,6 +115,7 @@ func TestPublishRelease_UpdatesInPlaceAndReconcilesAssets(t *testing.T) {
 
 	p := &gitlab.Provider{
 		APIBaseOverride: srv.URL(),
+		HTTPClient:      srv.Client(),
 		Env:             envFunc(map[string]string{"GITLAB_TOKEN": "t"}),
 	}
 
@@ -144,10 +153,75 @@ func TestPublishRelease_UpdatesInPlaceAndReconcilesAssets(t *testing.T) {
 }
 
 func TestPublishRelease_EmptyTagErrors(t *testing.T) {
+	t.Parallel()
+
 	p := &gitlab.Provider{}
 
 	err := p.PublishRelease(context.Background(), "itiquette/repo", provider.ReleaseSpec{})
-	if err == nil {
-		t.Fatal("expected empty-tag error")
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "tag is empty") {
+		t.Fatalf("err = %v, want ErrUsage naming the empty tag", err)
+	}
+}
+
+func TestPublishRelease_AssetUploadRequiresGitLabTokenBeforeMutation(t *testing.T) {
+	t.Parallel()
+
+	asset := filepath.Join(t.TempDir(), "artifact.tar.gz")
+	if err := os.WriteFile(asset, []byte("owned asset"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	p := &gitlab.Provider{
+		APIBaseOverride: "https://gitlab.invalid",
+		Env:             envFunc(map[string]string{"CI_JOB_TOKEN": "ci-job-token"}),
+		HTTPClient: &http.Client{Transport: releasePolicyTransport(func(*http.Request) (*http.Response, error) {
+			calls++
+
+			return nil, errs.ErrDependencyUnavailable
+		})},
+	}
+
+	err := p.PublishRelease(context.Background(), "itiquette/repo", provider.ReleaseSpec{
+		Tag:    glTag,
+		Assets: []string{asset},
+	})
+	if !errors.Is(err, errs.ErrPermissionDenied) || !strings.Contains(err.Error(), "GITLAB_TOKEN") {
+		t.Fatalf("err = %v, want GITLAB_TOKEN permission error", err)
+	}
+
+	if calls != 0 {
+		t.Fatalf("provider called before rejecting unsupported asset auth: %d", calls)
+	}
+}
+
+// TestPublishRelease_UnreadableNotesFileFailsBeforeAnyRequest pins that a
+// notes file that cannot be read fails the publish instead of shipping the
+// release with its name as the body, matching GitHub and Forgejo.
+func TestPublishRelease_UnreadableNotesFileFailsBeforeAnyRequest(t *testing.T) {
+	t.Parallel()
+
+	srv := fakegitlabserver.New(t)
+
+	p := &gitlab.Provider{
+		APIBaseOverride: srv.URL(),
+		HTTPClient:      srv.Client(),
+		Env:             envFunc(map[string]string{"GITLAB_TOKEN": "t"}),
+	}
+
+	spec := provider.ReleaseSpec{Tag: glTag, Name: "v1.0.0", NotesFile: filepath.Join(t.TempDir(), "missing-notes.md")}
+
+	for name, publish := range map[string]func() error{
+		"PublishRelease": func() error { return p.PublishRelease(context.Background(), "itiquette/repo", spec) },
+		"CreateRelease":  func() error { return p.CreateRelease(context.Background(), "itiquette/repo", spec) },
+	} {
+		err := publish()
+		if err == nil || !strings.Contains(err.Error(), "release notes") {
+			t.Errorf("%s = %v, want a read-notes failure", name, err)
+		}
+	}
+
+	if reqs := srv.Requests(); len(reqs) != 0 {
+		t.Errorf("requests were sent although the notes could not be read: %v", reqs)
 	}
 }

@@ -95,6 +95,20 @@ func TestBlobVerifyRequest_Validate(t *testing.T) {
 
 		{name: "keyless with a key", mutate: func(r *release.BlobVerifyRequest) { r.KeyRef = "./pubkey.pem" }, wantErr: true},
 		{
+			name: "kms with an identity regexp",
+			mutate: func(r *release.BlobVerifyRequest) {
+				r.Keyless, r.CertOIDCIssuer, r.KeyRef = false, "", "./pubkey.pem"
+			},
+			wantErr: true,
+		},
+		{
+			name: "kms with an issuer",
+			mutate: func(r *release.BlobVerifyRequest) {
+				r.Keyless, r.CertIdentityRegexp, r.KeyRef = false, "", "./pubkey.pem"
+			},
+			wantErr: true,
+		},
+		{
 			name: "non-keyless without a key",
 			mutate: func(r *release.BlobVerifyRequest) {
 				r.Keyless, r.CertIdentityRegexp, r.CertOIDCIssuer = false, "", ""

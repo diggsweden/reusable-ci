@@ -9,6 +9,34 @@
 // no subprocess.
 package security
 
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+)
+
+// ParseTrivyReport decodes consumed fields and requires a Results array (possibly
+// empty) or a nonblank ArtifactName. Omitted and null Results decode alike.
+// Unknown fields are allowed; this is not full native-schema validation.
+func ParseTrivyReport(body []byte) (*TrivyReport, error) {
+	var report *TrivyReport
+	if err := json.Unmarshal(body, &report); err != nil {
+		return nil, fmt.Errorf("parse Trivy report: %w: %w", err, errs.ErrMalformedInput)
+	}
+
+	if report == nil {
+		return nil, fmt.Errorf("trivy report must be an object, not null: %w", errs.ErrMalformedInput)
+	}
+
+	if report.Results == nil && strings.TrimSpace(report.ArtifactName) == "" {
+		return nil, fmt.Errorf("trivy report requires a Results array or nonblank ArtifactName: %w", errs.ErrMalformedInput)
+	}
+
+	return report, nil
+}
+
 // TrivyReport is the subset of Trivy's JSON output we care about.
 // Fields not used by the transforms are omitted; encoding/json ignores
 // extra keys silently.

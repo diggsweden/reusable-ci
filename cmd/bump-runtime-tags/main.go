@@ -20,6 +20,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,21 +47,24 @@ func run() error {
 	}
 
 	version := os.Args[1]
-	if !runtimetags.VersionPattern.MatchString(version) {
+	if !runtimetags.ValidVersion(version) {
 		return fmt.Errorf("version %q: %w", version, errBadVersion)
 	}
 
-	workflowsDir := filepath.Join(".github", "workflows")
-
-	entries, err := os.ReadDir(workflowsDir)
+	files, err := runtimetags.Files(".")
 	if err != nil {
-		return fmt.Errorf("read %s (run from the repo root): %w", workflowsDir, err)
+		return fmt.Errorf("discover runtime surfaces (run from the repo root): %w", err)
 	}
 
 	total := 0
 
-	for _, entry := range entries {
-		count, rewriteErr := rewriteFile(workflowsDir, entry, version)
+	for _, path := range files {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+
+		count, rewriteErr := rewriteFile(filepath.Dir(path), fs.FileInfoToDirEntry(info), version)
 		if rewriteErr != nil {
 			return rewriteErr
 		}
@@ -69,7 +73,7 @@ func run() error {
 	}
 
 	if total == 0 {
-		return fmt.Errorf("%w under %s", errNoRefs, workflowsDir)
+		return fmt.Errorf("%w in workflows/templates", errNoRefs)
 	}
 
 	fmt.Printf("Rewrote %d runtime-image reference(s) to %s\n", total, version)
@@ -81,7 +85,7 @@ func run() error {
 // workflow file, reporting how many it moved. Non-.yml entries are
 // skipped; untouched files are not rewritten.
 func rewriteFile(dir string, entry os.DirEntry, version string) (int, error) {
-	if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yml") {
+	if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yml") && !strings.HasSuffix(entry.Name(), ".yaml") {
 		return 0, nil
 	}
 

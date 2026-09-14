@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	domaingit "github.com/diggsweden/reusable-ci/v3/internal/domain/git"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
@@ -18,6 +19,8 @@ import (
 // the trust boundary.
 type tagVerifyGit interface {
 	RevParse(ctx context.Context, ref string) (string, error)
+	CatFileType(ctx context.Context, ref string) (string, error)
+	RemoteTagObjectAtURL(ctx context.Context, repoURL, tag string, cred runcontext.Credential) (string, error)
 	RemoteTagCommit(ctx context.Context, repoURL, tag string, cred runcontext.Credential) (string, error)
 	RemoteVersionTags(ctx context.Context, repoURL string, cred runcontext.Credential) ([]string, error)
 }
@@ -26,7 +29,7 @@ type tagVerifyGit interface {
 type VerifyReleaseTagInput struct {
 	ReleaseSHA string // the commit the release is built from
 	Tag        string // the release tag, e.g. v1.2.3
-	RepoURL    string // remote URL for ls-remote
+	RepoURL    string // original repository argument for ls-remote; empty defaults to origin
 	Token      runcontext.Credential
 }
 
@@ -42,8 +45,12 @@ type VerifyReleaseTagInput struct {
 //
 //nolint:cyclop // three trust-boundary invariants, one branch each — flatter is clearer than splitting.
 func VerifyReleaseTag(ctx context.Context, git tagVerifyGit, out io.Writer, in VerifyReleaseTagInput) error {
-	if in.ReleaseSHA == "" || in.Tag == "" || in.RepoURL == "" {
-		return fmt.Errorf("verify-release-tag: release-sha, tag, and repo-url are required: %w", errs.ErrUsage)
+	if in.ReleaseSHA == "" || in.Tag == "" {
+		return fmt.Errorf("verify-release-tag: release-sha and tag are required: %w", errs.ErrUsage)
+	}
+
+	if !domaingit.ValidCommitSHA(in.ReleaseSHA) {
+		return fmt.Errorf("verify-release-tag: release-sha must be a full lowercase commit ID: %w", errs.ErrValidation)
 	}
 
 	if !version.IsStableSemverTag(in.Tag) {
@@ -59,7 +66,37 @@ func VerifyReleaseTag(ctx context.Context, git tagVerifyGit, out io.Writer, in V
 		return fmt.Errorf("verify-release-tag: checkout %s does not match release-sha %s: %w", head, in.ReleaseSHA, errs.ErrValidation)
 	}
 
-	tagCommit, err := git.RemoteTagCommit(ctx, in.RepoURL, in.Tag, in.Token)
+	objType, err := git.CatFileType(ctx, "refs/tags/"+in.Tag)
+	if err != nil {
+		return fmt.Errorf("verify-release-tag: inspect local tag object: %w", err)
+	}
+
+	if objType != "tag" {
+		return fmt.Errorf("verify-release-tag: final tag %s is not an annotated tag object: %w", in.Tag, errs.ErrValidation)
+	}
+
+	repoURL := in.RepoURL
+	if repoURL == "" {
+		// Keep the original argument. Replaying an effective RemoteURL result
+		// through Git could rewrite it again and inspect a different repository.
+		repoURL = "origin"
+	}
+
+	localObject, err := git.RevParse(ctx, "refs/tags/"+in.Tag)
+	if err != nil {
+		return fmt.Errorf("verify-release-tag: resolve local tag object: %w", err)
+	}
+
+	remoteObject, err := git.RemoteTagObjectAtURL(ctx, repoURL, in.Tag, in.Token)
+	if err != nil {
+		return fmt.Errorf("verify-release-tag: resolve remote tag object: %w", err)
+	}
+
+	if !domaingit.ValidCommitSHA(localObject) || !domaingit.ValidCommitSHA(remoteObject) || remoteObject != localObject {
+		return fmt.Errorf("verify-release-tag: local tag object %s does not match remote object %s: %w", localObject, remoteObject, errs.ErrValidation)
+	}
+
+	tagCommit, err := git.RemoteTagCommit(ctx, repoURL, in.Tag, in.Token)
 	if err != nil {
 		return fmt.Errorf("verify-release-tag: resolve remote tag: %w", err)
 	}
@@ -68,7 +105,7 @@ func VerifyReleaseTag(ctx context.Context, git tagVerifyGit, out io.Writer, in V
 		return fmt.Errorf("verify-release-tag: remote tag %s points to %s, not release-sha %s: %w", in.Tag, tagCommit, in.ReleaseSHA, errs.ErrValidation)
 	}
 
-	tags, err := git.RemoteVersionTags(ctx, in.RepoURL, in.Token)
+	tags, err := git.RemoteVersionTags(ctx, repoURL, in.Token)
 	if err != nil {
 		return fmt.Errorf("verify-release-tag: list remote tags: %w", err)
 	}

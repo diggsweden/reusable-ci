@@ -20,7 +20,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
@@ -40,14 +40,17 @@ const regenerateContractsEnv = "REGENERATE_CONTRACTS"
 type consumerInput struct {
 	Required bool   `json:"required"`
 	Type     string `json:"type"`
+	Default  any    `json:"default,omitempty"`
 }
 
 // consumerContract is one orchestrator's public API surface: the
 // `on.workflow_call` inputs (name, required, type) and secret names
 // that every consuming repository's thin caller workflow codes against.
 type consumerContract struct {
-	Inputs  map[string]consumerInput `json:"inputs"`
-	Secrets []string                 `json:"secrets"`
+	Inputs          map[string]consumerInput `json:"inputs"`
+	Secrets         []string                 `json:"secrets"`
+	RequiredSecrets []string                 `json:"required_secrets"`
+	Outputs         map[string]string        `json:"outputs"`
 }
 
 // TestConsumerContractSnapshot pins the consumer-facing API of this
@@ -114,17 +117,17 @@ func parseConsumerContract(t *testing.T, path string) consumerContract {
 	body, err := os.ReadFile(path) //nolint:gosec // test reads repo-local workflow.
 	require.NoErrorf(t, err, "read %s", path)
 
-	var doc yaml.Node
+	doc, err := effectiveWorkflow(body)
+	require.NoErrorf(t, err, "parse %s", path)
 
-	require.NoErrorf(t, yaml.Unmarshal(body, &doc), "parse %s", path)
-	require.Truef(t, doc.Kind == yaml.DocumentNode && len(doc.Content) > 0, "%s: empty YAML document", path)
-
-	call := mappingChild(mappingChild(doc.Content[0], "on"), "workflow_call")
+	call := mappingChild(mappingChild(doc, "on"), "workflow_call")
 	require.NotNilf(t, call, "%s: no on.workflow_call block — not a consumer-facing reusable workflow", path)
 
 	contract := consumerContract{
-		Inputs:  map[string]consumerInput{},
-		Secrets: []string{},
+		Inputs:          map[string]consumerInput{},
+		Secrets:         []string{},
+		RequiredSecrets: []string{},
+		Outputs:         map[string]string{},
 	}
 
 	if inputs := mappingChild(call, "inputs"); inputs != nil && inputs.Kind == yaml.MappingNode {
@@ -135,15 +138,30 @@ func parseConsumerContract(t *testing.T, path string) consumerContract {
 				Required: scalarChild(spec, "required") == "true",
 				Type:     scalarChild(spec, "type"),
 			}
+			if value := mappingChild(spec, "default"); value != nil {
+				input := contract.Inputs[inputs.Content[i].Value]
+				require.NoError(t, value.Decode(&input.Default))
+				contract.Inputs[inputs.Content[i].Value] = input
+			}
 		}
 	}
 
 	if secrets := mappingChild(call, "secrets"); secrets != nil && secrets.Kind == yaml.MappingNode {
 		for i := 0; i < len(secrets.Content); i += 2 {
 			contract.Secrets = append(contract.Secrets, secrets.Content[i].Value)
+			if scalarChild(secrets.Content[i+1], "required") == "true" {
+				contract.RequiredSecrets = append(contract.RequiredSecrets, secrets.Content[i].Value)
+			}
 		}
 
-		sort.Strings(contract.Secrets)
+		slices.Sort(contract.Secrets)
+		slices.Sort(contract.RequiredSecrets)
+	}
+
+	if outputs := mappingChild(call, "outputs"); outputs != nil {
+		for i := 0; i+1 < len(outputs.Content); i += 2 {
+			contract.Outputs[outputs.Content[i].Value] = scalarChild(outputs.Content[i+1], "value")
+		}
 	}
 
 	return contract

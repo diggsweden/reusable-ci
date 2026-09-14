@@ -11,8 +11,10 @@ import (
 	"testing"
 
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
@@ -47,7 +49,7 @@ func TestJVMReproducibility_RejectsUnsafeWorkingDirectory(t *testing.T) {
 			fsys := testfs.NewReal(t)
 			fsys.Chdir()
 
-			_, _, err := runJVMRepro(t, configPlanJSON(`"maven":[{"name":"api","project_type":"maven","working_directory":"`+testCase.dir+`"}]`))
+			_, _, err := runJVMRepro(t, configPlanJSON(t, projecttype.Maven, "api", testCase.dir))
 			if !errors.Is(err, errs.ErrInvalidConfig) || !strings.Contains(err.Error(), testCase.want) {
 				t.Errorf("err = %v, want an invalid-config error mentioning %q", err, testCase.want)
 			}
@@ -67,7 +69,7 @@ func TestJVMReproducibility_MavenWithTimestampPasses(t *testing.T) {
 </project>`))
 	fsys.Chdir()
 
-	out, errs, err := runJVMRepro(t, configPlanJSON(`"maven":[{"name":"api","project_type":"maven","working_directory":"services/api"}]`))
+	out, stderr, err := runJVMRepro(t, configPlanJSON(t, projecttype.Maven, "api", "services/api"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -76,8 +78,8 @@ func TestJVMReproducibility_MavenWithTimestampPasses(t *testing.T) {
 		t.Errorf("expected pass marker in stdout, got:\n%s", out)
 	}
 
-	if strings.Contains(errs, "::warning") {
-		t.Errorf("unexpected warning when configured correctly:\n%s", errs)
+	if strings.Contains(stderr, "::warning") {
+		t.Errorf("unexpected warning when configured correctly:\n%s", stderr)
 	}
 }
 
@@ -94,13 +96,9 @@ func TestJVMReproducibility_MavenMissingTimestampFails(t *testing.T) {
 </project>`))
 	fsys.Chdir()
 
-	out, stderr, err := runJVMRepro(t, configPlanJSON(`"maven":[{"name":"a","project_type":"maven","working_directory":"."}]`))
-	if err == nil {
-		t.Fatal("expected validator to fail on missing <project.build.outputTimestamp>")
-	}
-
+	out, stderr, err := runJVMRepro(t, configPlanJSON(t, projecttype.Maven, "a", "."))
 	if !errors.Is(err, errs.ErrValidation) {
-		t.Errorf("err = %v, want wrapped ErrValidation", err)
+		t.Fatalf("err = %v, want ErrValidation for a pom without <project.build.outputTimestamp>", err)
 	}
 
 	if !strings.Contains(stderr, "::error") {
@@ -121,13 +119,9 @@ func TestJVMReproducibility_MavenEmptyTimestampFails(t *testing.T) {
 </project>`))
 	fsys.Chdir()
 
-	_, stderr, err := runJVMRepro(t, configPlanJSON(`"maven":[{"name":"a","project_type":"maven","working_directory":"."}]`))
-	if err == nil {
-		t.Fatal("expected validator to fail on empty outputTimestamp")
-	}
-
+	_, stderr, err := runJVMRepro(t, configPlanJSON(t, projecttype.Maven, "a", "."))
 	if !errors.Is(err, errs.ErrValidation) {
-		t.Errorf("err = %v, want wrapped ErrValidation", err)
+		t.Fatalf("err = %v, want ErrValidation for an empty outputTimestamp", err)
 	}
 
 	if !strings.Contains(stderr, "is set but empty") {
@@ -145,7 +139,7 @@ tasks.withType(AbstractArchiveTask).configureEach {
 `))
 	fsys.Chdir()
 
-	out, errs, err := runJVMRepro(t, configPlanJSON(`"gradle":[{"name":"app","project_type":"gradle","working_directory":"."}]`))
+	out, stderr, err := runJVMRepro(t, configPlanJSON(t, projecttype.Gradle, "app", "."))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -154,8 +148,8 @@ tasks.withType(AbstractArchiveTask).configureEach {
 		t.Errorf("expected pass marker, got:\n%s", out)
 	}
 
-	if strings.Contains(errs, "::warning") {
-		t.Errorf("unexpected warning, got:\n%s", errs)
+	if strings.Contains(stderr, "::warning") {
+		t.Errorf("unexpected warning, got:\n%s", stderr)
 	}
 }
 
@@ -169,7 +163,7 @@ tasks.withType<AbstractArchiveTask>().configureEach {
 `))
 	fsys.Chdir()
 
-	out, _, err := runJVMRepro(t, configPlanJSON(`"gradle":[{"name":"app","project_type":"gradle","working_directory":"."}]`))
+	out, _, err := runJVMRepro(t, configPlanJSON(t, projecttype.Gradle, "app", "."))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -188,13 +182,9 @@ func TestJVMReproducibility_GradleMissingOneSettingFails(t *testing.T) {
 `))
 	fsys.Chdir()
 
-	_, stderr, err := runJVMRepro(t, configPlanJSON(`"gradle":[{"name":"app","project_type":"gradle","working_directory":"."}]`))
-	if err == nil {
-		t.Fatal("expected validator to fail when reproducibleFileOrder is missing")
-	}
-
+	_, stderr, err := runJVMRepro(t, configPlanJSON(t, projecttype.Gradle, "app", "."))
 	if !errors.Is(err, errs.ErrValidation) {
-		t.Errorf("err = %v, want wrapped ErrValidation", err)
+		t.Fatalf("err = %v, want ErrValidation when reproducibleFileOrder is missing", err)
 	}
 
 	if !strings.Contains(stderr, "reproducibleFileOrder=true not found") {
@@ -207,13 +197,9 @@ func TestJVMReproducibility_GradleNoSettingsFails(t *testing.T) {
 	fsys.WriteFile("build.gradle", []byte(`plugins { id 'java' }`))
 	fsys.Chdir()
 
-	_, stderr, err := runJVMRepro(t, configPlanJSON(`"gradle":[{"name":"app","project_type":"gradle","working_directory":"."}]`))
-	if err == nil {
-		t.Fatal("expected validator to fail when both gradle reproducibility settings are missing")
-	}
-
+	_, stderr, err := runJVMRepro(t, configPlanJSON(t, projecttype.Gradle, "app", "."))
 	if !errors.Is(err, errs.ErrValidation) {
-		t.Errorf("err = %v, want wrapped ErrValidation", err)
+		t.Fatalf("err = %v, want ErrValidation when both gradle settings are missing", err)
 	}
 
 	if !strings.Contains(stderr, "neither preserveFileTimestamps") {
@@ -229,14 +215,14 @@ func TestJVMReproducibility_GradleNoSettingsFails(t *testing.T) {
 // were configured.
 func TestJVMReproducibility_GradleSubstringFalsePositiveGuard(t *testing.T) {
 	fsys := testfs.NewReal(t)
-	fsys.WriteFile("build.gradle", []byte(`def myPreserveFileTimestamps = false
-def myReproducibleFileOrder = true
+	fsys.WriteFile("build.gradle", []byte(`def mypreserveFileTimestamps = false
+def myreproducibleFileOrder = true
 `))
 	fsys.Chdir()
 
-	_, stderr, err := runJVMRepro(t, configPlanJSON(`"gradle":[{"name":"x","project_type":"gradle","working_directory":"."}]`))
-	if err == nil {
-		t.Fatal("expected validator to fail — identifier-prefixed names must not satisfy the check")
+	_, stderr, err := runJVMRepro(t, configPlanJSON(t, projecttype.Gradle, "x", "."))
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation — identifier-prefixed names must not satisfy the check", err)
 	}
 
 	if !strings.Contains(stderr, "neither") {
@@ -245,42 +231,93 @@ def myReproducibleFileOrder = true
 }
 
 func TestJVMReproducibility_NoJVMArtifactsNoop(t *testing.T) {
-	_, errs, err := runJVMRepro(t, configPlanJSON(`"cargo":[{"name":"x","project_type":"cargo","working_directory":"."}]`))
+	_, stderr, err := runJVMRepro(t, configPlanJSON(t, projecttype.Cargo, "x", "."))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(errs, "No Maven/Gradle artifacts") {
-		t.Errorf("expected explicit no-op notice, got:\n%s", errs)
+	if !strings.Contains(stderr, "No Maven/Gradle artifacts") {
+		t.Errorf("expected explicit no-op notice, got:\n%s", stderr)
 	}
 }
 
 func TestJVMReproducibility_EmptyPlanIsUsageError(t *testing.T) {
 	_, _, err := runJVMRepro(t, "")
-	if err == nil {
-		t.Fatalf("expected usage error on empty plan")
+	// The name is the claim: an absent --config-plan-json is a broken
+	// invocation (exit 2), not a reproducibility verdict (exit 1).
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
 	}
 }
 
-// configPlanJSON returns a minimal valid config plan with the
-// supplied per-type artifact lists slotted in.
-func configPlanJSON(inner string) string {
-	allLine := ""
-	// derive an "all" mirror from inner (the validator reads .Artifacts.All).
-	// For test ergonomics each inner snippet is single-typed, so we duplicate
-	// it under "all" verbatim.
-	if inner != "" {
-		// extract just the JSON array from inner "key":[...] — the simplest
-		// reliable way for fixtures is to require callers to wrap properly.
-		// All test callers pass `"<type>":[…]` so we mirror to all by taking
-		// the bracket span.
-		left := strings.Index(inner, "[")
-		right := strings.LastIndex(inner, "]")
+func configPlanJSON(t *testing.T, kind projecttype.Type, name, dir string) string {
+	t.Helper()
 
-		if left != -1 && right > left {
-			allLine = `"all":` + inner[left:right+1] + `,`
-		}
+	return validationPlanJSON(t, validationConfigPlan(t, config.Artifact{Name: name, ProjectType: kind, WorkingDirectory: dir}))
+}
+
+// TestJVMReproducibility_GradleKotlinDSLIsPrefixedPropertiesPass covers the
+// spelling Gradle's own reproducible-archives guide gives for
+// build.gradle.kts: the Kotlin DSL reaches the two booleans through their
+// is-getters, so a build that followed the guide to the letter was refused.
+func TestJVMReproducibility_GradleKotlinDSLIsPrefixedPropertiesPass(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("build.gradle.kts", []byte(`plugins { java }
+tasks.withType<AbstractArchiveTask>().configureEach {
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+}
+`))
+	fsys.Chdir()
+
+	out, stderr, err := runJVMRepro(t, configPlanJSON(t, projecttype.Gradle, "app", "."))
+	if err != nil {
+		t.Fatalf("err = %v, want the is-prefixed Kotlin spelling accepted\nstdout:\n%s\nstderr:\n%s", err, out, stderr)
 	}
 
-	return `{"version":1,"artifacts":{` + allLine + inner + `},"containers":{"all":[],"has_containers":false}}`
+	if !strings.Contains(out, "preserveFileTimestamps=false") {
+		t.Errorf("expected pass marker (Kotlin DSL is-getters), got:\n%s", out)
+	}
+}
+
+// The is-prefix must not widen the identifier guard: a variable that merely
+// embeds the Kotlin spelling is still not the setting.
+func TestJVMReproducibility_GradleKotlinIsPrefixSubstringGuard(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("build.gradle.kts", []byte(`val myisPreserveFileTimestamps = false
+val myisReproducibleFileOrder = true
+`))
+	fsys.Chdir()
+
+	_, stderr, err := runJVMRepro(t, configPlanJSON(t, projecttype.Gradle, "x", "."))
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation — identifier-prefixed Kotlin names must not satisfy the check", err)
+	}
+
+	if !strings.Contains(stderr, "neither") {
+		t.Errorf("substring should not match identifier-prefixed names; got:\n%s", stderr)
+	}
+}
+
+// TestJVMReproducibility_GradleCheckReadsTextNotTheEvaluatedBuild pins the
+// static contract docs/verification.md states: the Gradle check reads the
+// script's lines and never evaluates the build, so the settings written only
+// in a block comment, or overridden later in the script, still pass. A
+// strengthening that changes either verdict must update that section too.
+func TestJVMReproducibility_GradleCheckReadsTextNotTheEvaluatedBuild(t *testing.T) {
+	for name, script := range map[string]string{
+		"settings only inside a block comment": "/*\npreserveFileTimestamps = false\nreproducibleFileOrder = true\n*/\n",
+		"settings overridden later": "tasks.withType(AbstractArchiveTask).configureEach {\n    preserveFileTimestamps = false\n    reproducibleFileOrder = true\n}\n" +
+			"tasks.withType(AbstractArchiveTask).configureEach {\n    preserveFileTimestamps = true\n    reproducibleFileOrder = false\n}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fsys := testfs.NewReal(t)
+			fsys.WriteFile("build.gradle", []byte(script))
+			fsys.Chdir()
+
+			if _, _, err := runJVMRepro(t, configPlanJSON(t, projecttype.Gradle, "app", ".")); err != nil {
+				t.Fatalf("static text check refused %s: %v", name, err)
+			}
+		})
+	}
 }

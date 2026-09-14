@@ -20,3 +20,18 @@ func lockExclusive(f *os.File) error {
 func unlock(f *os.File) error {
 	return syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }
+
+func singleLink(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+
+	return ok && stat.Nlink == 1
+}
+
+// Nonblocking open prevents a named-pipe replacement from hanging before Stat.
+func openReadFile(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) //nolint:gosec // operator-selected input; the caller validates this descriptor and bounds the read.
+}
+
+func openRootReadFile(root *os.Root, path string) (*os.File, error) {
+	return root.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+}

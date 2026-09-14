@@ -4,22 +4,33 @@
 package validate
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+	"gopkg.in/yaml.v3"
 )
 
-var workflowInputDefaultPattern = regexp.MustCompile(`^[[:space:]]+default:[[:space:]].*\$\{\{`)
+// workflowDefaultsDocument reads only the trigger block. GitHub also accepts
+// `on: push` and `on: [push, pull_request]`; neither shape can declare
+// workflow_call inputs, so only a mapping is decoded further.
+type workflowDefaultsDocument struct {
+	On yaml.Node `yaml:"on"`
+}
+
+type workflowCallTrigger struct {
+	WorkflowCall struct {
+		Inputs map[string]struct {
+			Default yaml.Node `yaml:"default"`
+		} `yaml:"inputs"`
+	} `yaml:"workflow_call"`
+}
 
 // WorkflowInputDefaultsInput drives WorkflowInputDefaults.
 type WorkflowInputDefaultsInput struct {
@@ -42,61 +53,63 @@ type workflowInputDefaultsFSInput struct {
 // silently degrade to the empty string when callers don't override
 // them).
 func WorkflowInputDefaults(w io.Writer, annot output.Annotator, in WorkflowInputDefaultsInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	root := in.Root
-	if root == "" {
-		var err error
-
-		root, err = os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getwd: %w", err)
-		}
+	fsys, workflowsDir, err := workflowScanDir(in.Root, in.WorkflowsDir, in.FS)
+	if err != nil {
+		return err
 	}
 
-	workflowsDir := in.WorkflowsDir
+	return workflowInputDefaultsInFS(w, annot, workflowInputDefaultsFSInput{
+		workflowsDir: workflowsDir,
+		fsys:         fsys,
+	})
+}
+
+// workflowScanDir returns the filesystem and slash-separated directory a
+// workflow directory scan reads, with reported paths relative to the root. An
+// empty root is the working directory and an empty directory is
+// <root>/.github/workflows; a relative directory is taken from the working
+// directory, as a path flag is. The OS filesystem is rooted at root, so a
+// directory outside it is refused as usage rather than failing to read "..".
+func workflowScanDir(root, workflowsDir string, fsys fs.FS) (fs.FS, string, error) {
+	if root == "" {
+		root = "."
+	}
+
 	if workflowsDir == "" {
 		workflowsDir = filepath.Join(root, ".github", "workflows")
 	}
 
-	if in.FS != nil {
-		workflowsDir = filepath.ToSlash(filepath.Clean(workflowsDir))
-
-		return workflowInputDefaultsInFS(w, annot, workflowInputDefaultsFSInput{
-			workflowsDir: workflowDirForFS(workflowsDir),
-			fsys:         in.FS,
-		})
+	if fsys != nil {
+		return fsys, workflowDirForFS(filepath.ToSlash(filepath.Clean(workflowsDir))), nil
 	}
 
-	relDir, err := filepath.Rel(root, workflowsDir)
+	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		return fmt.Errorf("relative workflows dir %s from %s: %w", workflowsDir, root, err)
+		return nil, "", fmt.Errorf("resolve root %s: %w: %w", root, err, errs.ErrUsage)
 	}
 
-	return workflowInputDefaultsInFS(w, annot, workflowInputDefaultsFSInput{
-		workflowsDir: filepath.ToSlash(relDir),
-		fsys:         os.DirFS(root),
-	})
+	absDir, err := filepath.Abs(workflowsDir)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve workflows dir %s: %w: %w", workflowsDir, err, errs.ErrUsage)
+	}
+
+	rel, err := filepath.Rel(absRoot, absDir)
+	if err != nil || !filepath.IsLocal(rel) {
+		return nil, "", fmt.Errorf("workflows dir %s is not inside root %s: %w", workflowsDir, root, errs.ErrUsage)
+	}
+
+	return os.DirFS(absRoot), filepath.ToSlash(rel), nil
 }
 
 func workflowInputDefaultsInFS(w io.Writer, annot output.Annotator, in workflowInputDefaultsFSInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	entries, err := fs.ReadDir(in.fsys, in.workflowsDir)
 	if err != nil {
-		return fmt.Errorf("read workflows dir %s: %w", in.workflowsDir, err)
+		return workflowReadError(in.workflowsDir, err)
 	}
-
-	files := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ymlExt {
-			continue
-		}
-
-		files = append(files, path.Join(in.workflowsDir, entry.Name()))
-	}
-
-	sort.Strings(files)
 
 	failures := 0
 
-	for _, path := range files {
+	for _, path := range collectWorkflowFiles(entries, in.workflowsDir) {
 		count, err := scanWorkflowInputDefaults(annot, in.fsys, path)
 		if err != nil {
 			return err
@@ -115,39 +128,75 @@ func workflowInputDefaultsInFS(w io.Writer, annot output.Annotator, in workflowI
 }
 
 func scanWorkflowInputDefaults(annot output.Annotator, fsys fs.FS, path string) (int, error) {
-	file, err := fsys.Open(path)
+	body, err := fs.ReadFile(fsys, path)
 	if err != nil {
-		return 0, fmt.Errorf("open %s: %w", path, err)
+		return 0, workflowReadError(path, err)
 	}
 
-	defer func() { _ = file.Close() }()
+	defaults, err := expressionDefaults(body)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s: %w: %w", path, err, errs.ErrMalformedInput)
+	}
 
-	scanner := bufio.NewScanner(file)
-	lineNo := 0
-	failures := 0
+	lines := strings.Split(string(body), "\n")
 
-	for scanner.Scan() {
-		lineNo++
-
-		line := scanner.Text()
-		if !workflowInputDefaultPattern.MatchString(line) {
-			continue
+	for _, defaultNode := range defaults {
+		line := ""
+		if defaultNode.Line <= len(lines) {
+			line = lines[defaultNode.Line-1]
 		}
 
 		// The Annotator escapes the file path and message; on non-GitHub
 		// runners it renders a plain "Error: <file>:<line>: …" instead of a
 		// workflow command.
-		annot.ErrorAt(output.Annotation{File: path, Line: lineNo},
+		annot.ErrorAt(output.Annotation{File: path, Line: defaultNode.Line},
 			"workflow_call input defaults must be literal values, found expression: %s", line)
-
-		failures++
 	}
 
-	if err := scanner.Err(); err != nil {
-		return 0, fmt.Errorf("scan %s: %w", path, err)
+	return len(defaults), nil
+}
+
+// expressionDefaults returns the workflow_call input defaults in body that
+// hold an expression, in line order.
+func expressionDefaults(body []byte) ([]yaml.Node, error) {
+	var workflow workflowDefaultsDocument
+	if err := yaml.Unmarshal(body, &workflow); err != nil {
+		return nil, err
 	}
 
-	return failures, nil
+	var trigger workflowCallTrigger
+
+	if on := &workflow.On; on.Kind == yaml.MappingNode || (on.Kind == yaml.AliasNode && on.Alias != nil && on.Alias.Kind == yaml.MappingNode) {
+		if err := on.Decode(&trigger); err != nil {
+			return nil, err
+		}
+	}
+
+	defaults := make([]yaml.Node, 0, len(trigger.WorkflowCall.Inputs))
+	for _, input := range trigger.WorkflowCall.Inputs {
+		if input.Default.Line > 0 && yamlNodeContainsExpression(&input.Default) {
+			defaults = append(defaults, input.Default)
+		}
+	}
+
+	sort.Slice(defaults, func(i, j int) bool { return defaults[i].Line < defaults[j].Line })
+
+	return defaults, nil
+}
+
+// yamlNodeContainsExpression reports whether any scalar reachable from node,
+// through aliases, holds an expression. walkYAML visits each node once, so a
+// self-referencing anchor ends the walk instead of recursing without bound.
+func yamlNodeContainsExpression(node *yaml.Node) bool {
+	found := false
+
+	walkYAML(node, map[*yaml.Node]bool{}, func(visited *yaml.Node) {
+		if visited.Kind == yaml.ScalarNode && strings.Contains(visited.Value, "${{") {
+			found = true
+		}
+	})
+
+	return found
 }
 
 func workflowDirForFS(dir string) string {

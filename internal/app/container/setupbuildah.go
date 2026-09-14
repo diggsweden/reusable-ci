@@ -6,6 +6,7 @@ package container
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,9 +15,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 const (
@@ -90,6 +91,11 @@ func SetupBuildah(
 		return nil, err
 	}
 
+	paths, err := setupBuildahPaths(in)
+	if err != nil {
+		return nil, err
+	}
+
 	if in.InstallPackages {
 		if err = installBuildahPackages(ctx, tool, installer, packages, out); err != nil {
 			return nil, err
@@ -98,11 +104,6 @@ func SetupBuildah(
 
 	if !tool.CommandExists(buildahBinary) {
 		return nil, fmt.Errorf("buildah is not installed: %w", errs.ErrDependencyUnavailable)
-	}
-
-	paths, err := setupBuildahPaths(in)
-	if err != nil {
-		return nil, err
 	}
 
 	driver, err := configureBuildahStorage(ctx, tool, out, paths, in.ProbeBuild)
@@ -131,6 +132,7 @@ func SetupBuildah(
 }
 
 type buildahSetupPaths struct {
+	RunnerTemp  string
 	StorageConf string
 	StorageRoot string
 	TmpDir      string
@@ -197,39 +199,78 @@ func buildahPackageCommand(packageName string) string {
 }
 
 func setupBuildahPaths(in SetupBuildahInput) (buildahSetupPaths, error) {
-	runnerTemp := defaultString(in.RunnerTemp, defaultBuildahRunnerTemp)
+	runnerTemp, err := filepath.Abs(defaultString(in.RunnerTemp, defaultBuildahRunnerTemp))
+	if err != nil {
+		return buildahSetupPaths{}, err
+	}
+
+	root, err := pathsafe.OpenRoot(runnerTemp)
+	if err != nil {
+		return buildahSetupPaths{}, err
+	}
+
+	defer func() { _ = root.Close() }()
+
+	if runnerTemp == string(filepath.Separator) || runnerTemp == defaultBuildahRunnerTemp || runnerTemp == "/var/tmp" {
+		return buildahSetupPaths{}, fmt.Errorf("runner-temp must name an existing job-specific directory, not shared system temp: %w", errs.ErrUsage)
+	}
+
 	paths := buildahSetupPaths{
+		RunnerTemp:  runnerTemp,
 		StorageConf: defaultString(in.StorageConf, filepath.Join(runnerTemp, "containers-storage.conf")),
 		StorageRoot: defaultString(in.StorageRoot, filepath.Join(runnerTemp, "containers-storage")),
 		TmpDir:      defaultString(in.TmpDir, filepath.Join(runnerTemp, "container-tmp")),
 		ProbeDir:    filepath.Join(runnerTemp, "container-storage-probe"),
 	}
-
-	if err := rejectUnsafeBuildahPath("container storage root", paths.StorageRoot, true); err != nil {
-		return buildahSetupPaths{}, err
+	for _, path := range []*string{&paths.StorageRoot, &paths.StorageConf, &paths.TmpDir} {
+		*path, err = filepath.Abs(*path)
+		if err != nil {
+			return buildahSetupPaths{}, err
+		}
 	}
 
-	if err := rejectUnsafeBuildahPath("containers storage config path", paths.StorageConf, false); err != nil {
-		return buildahSetupPaths{}, err
-	}
-
-	if err := rejectUnsafeBuildahPath("container temp directory", paths.TmpDir, true); err != nil {
-		return buildahSetupPaths{}, err
+	for _, field := range []struct {
+		path      string
+		directory bool
+	}{{paths.StorageRoot, true}, {paths.ProbeDir, true}, {paths.TmpDir, true}, {paths.StorageConf, false}, {in.EnvFile, false}} {
+		if pathErr := validateBuildahJobPath(root, runnerTemp, field.path, field.directory); pathErr != nil {
+			return buildahSetupPaths{}, pathErr
+		}
 	}
 
 	return paths, nil
 }
 
-func rejectUnsafeBuildahPath(label, path string, directory bool) error {
-	clean := filepath.Clean(path)
-	if path == "" || clean == "." || clean == string(filepath.Separator) {
-		return fmt.Errorf("unsafe %s: %s: %w", label, path, errs.ErrUsage)
+//nolint:cyclop // containment, config serialization and each existing path component are independently validated.
+func validateBuildahJobPath(root *os.Root, runnerTemp, path string, directory bool) error {
+	if path == "" {
+		return nil
 	}
 
-	if directory {
-		switch clean {
-		case "/tmp", "/var", "/var/lib", "/var/tmp", "/run":
-			return fmt.Errorf("unsafe %s: %s: %w", label, path, errs.ErrUsage)
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+
+	rel, err := filepath.Rel(runnerTemp, abs)
+	if err != nil || rel == "." || !pathsafe.Relative(rel) || strings.ContainsAny(path, "\\\t\r\n\"") {
+		return fmt.Errorf("buildah paths must be below runner-temp and safe for storage config: %w", errs.ErrUsage)
+	}
+
+	parts := strings.Split(rel, string(filepath.Separator))
+	for index := range parts {
+		info, statErr := root.Lstat(filepath.Join(parts[:index+1]...))
+		if errors.Is(statErr, os.ErrNotExist) {
+			break
+		}
+
+		if statErr != nil {
+			return statErr
+		}
+
+		wantDir := directory || index < len(parts)-1
+		if info.Mode()&os.ModeSymlink != 0 || (wantDir && !info.IsDir()) || (!wantDir && !info.Mode().IsRegular()) {
+			return fmt.Errorf("buildah paths must not contain symlinks or unexpected file types: %w", errs.ErrUsage)
 		}
 	}
 
@@ -282,16 +323,37 @@ func writeBuildahStorage(ctx context.Context, tool BuildahSetupTool, out io.Writ
 }
 
 func resetBuildahStorage(paths buildahSetupPaths) error {
-	if err := os.RemoveAll(paths.StorageRoot); err != nil {
+	root, err := pathsafe.OpenRoot(paths.RunnerTemp)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
+	storage, err := filepath.Rel(paths.RunnerTemp, paths.StorageRoot)
+	if err != nil {
+		return err
+	}
+
+	probe, err := filepath.Rel(paths.RunnerTemp, paths.ProbeDir)
+	if err != nil {
+		return err
+	}
+
+	if err := root.RemoveAll(storage); err != nil {
 		return fmt.Errorf("reset container storage root: %w", err)
 	}
 
-	if err := os.RemoveAll(paths.ProbeDir); err != nil {
+	if err := root.RemoveAll(probe); err != nil {
 		return fmt.Errorf("reset container storage probe dir: %w", err)
 	}
 
 	for _, dir := range []string{paths.StorageRoot, paths.ProbeDir, paths.TmpDir, filepath.Dir(paths.StorageConf)} {
-		if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec,mnd // job-local runner-temp storage dirs; buildah needs them traversable.
+		rel, err := filepath.Rel(paths.RunnerTemp, dir)
+		if err != nil {
+			return err
+		}
+
+		if err := root.MkdirAll(rel, 0o755); err != nil {
 			return fmt.Errorf("create %s: %w", dir, err)
 		}
 	}
@@ -311,11 +373,23 @@ func writeBuildahStorageConf(paths buildahSetupPaths, driver string) error {
 		return fmt.Errorf("unsupported storage driver: %s: %w", driver, errs.ErrUsage)
 	}
 
-	return cliio.WriteFile(paths.StorageConf, []byte(body), 0o644)
+	root, err := pathsafe.OpenRoot(filepath.Dir(paths.StorageConf))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
+	return root.WriteFile(filepath.Base(paths.StorageConf), []byte(body), 0o644)
 }
 
 func runBuildahProbe(ctx context.Context, tool BuildahSetupTool, env []string, probeDir string, out io.Writer) error {
-	if err := cliio.WriteFile(filepath.Join(probeDir, "probe.txt"), []byte("probe\n"), 0o644); err != nil {
+	root, err := pathsafe.OpenRoot(probeDir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
+	if err := root.WriteFile("probe.txt", []byte("probe\n"), 0o644); err != nil {
 		return err
 	}
 
@@ -341,7 +415,7 @@ func runBuildahProbe(ctx context.Context, tool BuildahSetupTool, env []string, p
 		"\n" +
 		"FROM owner\n" +
 		"COPY probe.txt /owned/second.txt\n"
-	if err := cliio.WriteFile(filepath.Join(probeDir, "Containerfile"), []byte(probeContainerfile), 0o644); err != nil {
+	if err := root.WriteFile("Containerfile", []byte(probeContainerfile), 0o644); err != nil {
 		return err
 	}
 
@@ -404,18 +478,33 @@ func emitBuildahSetupOutputs(ctx context.Context, sink ci.OutputSink, result *Se
 }
 
 func appendBuildahEnvFile(path string, result *SetupBuildahResult) error {
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // CI runner env file chosen by caller.
+	root, err := pathsafe.MkdirRoot(filepath.Dir(path), 0o755)
 	if err != nil {
-		return fmt.Errorf("open env file %s: %w", path, err)
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
+	base := filepath.Base(path)
+
+	info, err := root.Lstat(base)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	if err == nil && !info.Mode().IsRegular() {
+		return fmt.Errorf("buildah env file must be regular: %w", errs.ErrUsage)
+	}
+
+	file, err := root.OpenFile(base, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+	if err != nil {
+		return err
 	}
 
 	defer func() { _ = file.Close() }()
 
-	if _, err := fmt.Fprintf(file, "CONTAINERS_STORAGE_CONF=%s\nTMPDIR=%s\n", result.StorageConf, result.TmpDir); err != nil {
-		return fmt.Errorf("append buildah env file %s: %w", path, err)
-	}
+	_, err = fmt.Fprintf(file, "CONTAINERS_STORAGE_CONF=%s\nTMPDIR=%s\n", result.StorageConf, result.TmpDir)
 
-	return nil
+	return err
 }
 
 func printBuildahStore(ctx context.Context, tool BuildahSetupTool, out io.Writer, paths buildahSetupPaths) {

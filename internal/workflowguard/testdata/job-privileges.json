@@ -1,0 +1,96 @@
+{
+  "build-cli.yml jobs.build": [
+    "id-token: write"
+  ],
+  "promote-stage.yml jobs.promote": [
+    "packages: write"
+  ],
+  "publish-container.yml jobs.build-arch": [
+    "id-token: write",
+    "packages: write"
+  ],
+  "publish-container.yml jobs.merge": [
+    "id-token: write",
+    "packages: write"
+  ],
+  "publish-maven-github.yml jobs.publish-maven-github": [
+    "packages: write"
+  ],
+  "publish-snapshot-npm.yml jobs.build-and-publish": [
+    "packages: write"
+  ],
+  "release-binary.yml jobs.goreleaser": [
+    "contents: write",
+    "id-token: write"
+  ],
+  "release-create-github.yml jobs.create-release": [
+    "contents: write",
+    "id-token: write"
+  ],
+  "release-orchestrator.yml jobs.create-release": [
+    "contents: write",
+    "id-token: write"
+  ],
+  "release-orchestrator.yml jobs.execute-prepare-stage": [
+    "contents: write"
+  ],
+  "release-orchestrator.yml jobs.execute-publish-stage": [
+    "contents: write",
+    "id-token: write",
+    "packages: write"
+  ],
+  "release-orchestrator.yml jobs.promote-dev": [
+    "packages: write"
+  ],
+  "release-orchestrator.yml jobs.promote-release": [
+    "packages: write"
+  ],
+  "release-orchestrator.yml jobs.promote-staging": [
+    "packages: write"
+  ],
+  "release-prepare-stage.yml jobs.version-bump": [
+    "contents: write"
+  ],
+  "release-publish-stage.yml jobs.containers": [
+    "id-token: write",
+    "packages: write"
+  ],
+  "release-publish-stage.yml jobs.forge-packages": [
+    "packages: write"
+  ],
+  "release-snapshot-orchestrator.yml jobs.execute-snapshot-publish-stage": [
+    "packages: write"
+  ],
+  "release-snapshot-publish-stage.yml jobs.npm": [
+    "packages: write"
+  ],
+  "security-openssf-scorecard.yml jobs.analysis": [
+    "id-token: write"
+  ],
+  "self-release.yml jobs.release": [
+    "contents: write",
+    "id-token: write",
+    "packages: write"
+  ],
+  "self-runtime-container.yml jobs.build-cli": [
+    "id-token: write"
+  ],
+  "self-runtime-container.yml jobs.publish-arch": [
+    "id-token: write",
+    "packages: write",
+    "security-events: write"
+  ],
+  "self-runtime-container.yml jobs.publish-cli": [
+    "contents: write"
+  ],
+  "self-runtime-container.yml jobs.publish-merge": [
+    "id-token: write",
+    "packages: write"
+  ],
+  "slsa-attestor.yml jobs.attest": [
+    "packages: write"
+  ],
+  "version-bump.yml jobs.bump-version": [
+    "contents: write"
+  ]
+}

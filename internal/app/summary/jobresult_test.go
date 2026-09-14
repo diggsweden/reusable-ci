@@ -5,10 +5,12 @@ package summary_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	appsummary "github.com/diggsweden/reusable-ci/v3/internal/app/summary"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakejobresultstore"
 )
 
@@ -48,7 +50,18 @@ func TestJobResult_RequiresName(t *testing.T) {
 	js := fakejobresultstore.New(t)
 
 	err := appsummary.JobResult(context.Background(), js, appsummary.JobResultInput{Job: "  ", Status: "success"})
-	if err == nil || !strings.Contains(err.Error(), "--name is required") {
-		t.Fatalf("err = %v", err)
+	// A blank --name is a broken invocation: ErrUsage, exit 2.
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
+	}
+
+	if !strings.Contains(err.Error(), "--name is required") {
+		t.Errorf("err = %v, want it to name the flag", err)
+	}
+
+	// Nothing recorded: a whitespace name would otherwise land as a record
+	// no later step could look up.
+	if got := js.Body("  "); got != "" {
+		t.Errorf("recorded a result under a blank name: %s", got)
 	}
 }

@@ -109,7 +109,7 @@ type CargoConfig struct {
 }
 
 // PythonConfig holds the typed `config:` block for Python artifacts.
-// Empty today; same rationale as CargoConfig.
+// It is empty while Python remains a rejected future placeholder.
 type PythonConfig struct{}
 
 // Artifact-level accessors. These read directly from the typed

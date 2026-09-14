@@ -5,13 +5,14 @@ package container_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-func TestValidateNamespace(t *testing.T) {
+func TestValidateNamespace_AcceptsOnlyTheOwnersPrefixAndItsSubpaths(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -191,49 +192,60 @@ func TestValidateNamespace(t *testing.T) {
 	}
 }
 
-// TestValidateNamespace_EmptyRepositoryFailsOpen records a gap.
-//
-// The expected prefix is built as "<registry>/<namespace>/<repo-short>".
-// With an empty Repository the prefix ends in a bare slash, and the
-// optional "-suffix" / "/subpath" tail then matches anything shaped like
-// "<registry>/<namespace>/-<x>" or "<registry>/<namespace>//<x>" -- so
-// the check passes images it exists to refuse.
-//
-// Reach is narrow. The shipped workflow invokes the command with no
-// flags and lets the env sources fill them, and an unset or empty
-// $GITHUB_REPOSITORY fails the Required check before this code runs.
-// It takes an explicit `--repository ""` on the command line, which a
-// consumer interpolating an unset variable would produce.
-//
-// The direction is what makes it worth writing down: a guard on an
-// empty input should refuse, not accept. See docs/open-questions.md.
-func TestValidateNamespace_EmptyRepositoryFailsOpen(t *testing.T) {
+func TestValidateNamespace_EmptyRepositoryFailsClosed(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range []struct {
-		image        string
-		wantAccepted bool
-	}{
-		{image: "ghcr.io/myorg/-evil", wantAccepted: true},
-		{image: "ghcr.io/myorg//evil/deeper", wantAccepted: true},
-		{image: "ghcr.io/myorg/", wantAccepted: true},
-
-		// A plain sibling is still refused, so the hole is specifically
-		// the suffix/subpath tail rather than the check being disabled.
-		{image: "ghcr.io/myorg/legit", wantAccepted: false},
-		{image: "ghcr.io/other/evil", wantAccepted: false},
+	for _, image := range []string{
+		"ghcr.io/myorg/-evil",
+		"ghcr.io/myorg//evil/deeper",
+		"ghcr.io/myorg/",
+		"ghcr.io/myorg/legit",
+		"ghcr.io/other/evil",
 	} {
-		t.Run(tc.image, func(t *testing.T) {
+		t.Run(image, func(t *testing.T) {
 			t.Parallel()
 
 			err := container.ValidateNamespace(container.ValidateNamespaceInput{
-				ImageName:        tc.image,
+				ImageName:        image,
 				Repository:       "",
 				Registry:         "ghcr.io",
 				EnforceNamespace: "myorg",
 			})
-			if accepted := err == nil; accepted != tc.wantAccepted {
-				t.Errorf("accepted = %v, want %v (err = %v); if an empty repository is now refused outright, update docs/open-questions.md", accepted, tc.wantAccepted, err)
+			if !errors.Is(err, errs.ErrInvalidConfig) {
+				t.Errorf("error = %v, want ErrInvalidConfig", err)
+			}
+		})
+	}
+}
+
+func TestValidateNamespace_RegistryCaseDoesNotSkipEnforcement(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		registry  string
+		enforceOn []string
+	}{
+		{name: "lowercase default", registry: "ghcr.io"},
+		{name: "uppercase registry", registry: "GHCR.IO"},
+		{name: "uppercase policy", registry: "ghcr.io", enforceOn: []string{"GHCR.IO"}},
+		{name: "both uppercase", registry: "GHCR.IO", enforceOn: []string{"GHCR.IO"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			in := container.ValidateNamespaceInput{
+				Registry: tc.registry, EnforceOnRegistries: tc.enforceOn,
+				Repository: "owner/app", EnforceNamespace: "owner",
+				ImageName: "ghcr.io/owner/app",
+			}
+			if err := container.ValidateNamespace(in); err != nil {
+				t.Fatalf("valid namespace rejected: %v", err)
+			}
+
+			in.ImageName = "ghcr.io/other/app"
+			if err := container.ValidateNamespace(in); !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("foreign namespace: err = %v, want ErrValidation", err)
 			}
 		})
 	}
@@ -248,26 +260,142 @@ func TestNamespaceViolation_ErrorMessage(t *testing.T) {
 	}
 
 	msg := v.Error()
-	if !contains(msg, "outside the allowed namespace") {
+	if !strings.Contains(msg, "outside the allowed namespace") {
 		t.Errorf("error message missing key phrase: %q", msg)
 	}
 
-	if !contains(msg, "ghcr.io/myorg/myrepo") {
+	if !strings.Contains(msg, "ghcr.io/myorg/myrepo") {
 		t.Errorf("error message missing expected prefix: %q", msg)
 	}
 }
 
-// tiny helper used by Error() check above to avoid a strings import in the test
-// (purely cosmetic — could use strings.Contains too).
-func contains(haystack, needle string) bool {
-	return len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0
-}
-func indexOf(haystack, needle string) int {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return i
-		}
+// TestValidateNamespace_OwnerCaseIsIgnored pins that a mixed-case owner (the
+// forge's github.repository_owner keeps "MyOrg") matches the lowercased image
+// name ResolveImageName derives, instead of reading as a violation, and that
+// the violation message names the lowercased prefix the image must carry.
+func TestValidateNamespace_OwnerCaseIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	in := container.ValidateNamespaceInput{
+		ImageName:        "ghcr.io/myorg/myrepo",
+		Repository:       "MyOrg/MyRepo",
+		Registry:         "ghcr.io",
+		EnforceNamespace: "MyOrg",
+	}
+	if err := container.ValidateNamespace(in); err != nil {
+		t.Fatalf("ValidateNamespace() = %v, want nil for a mixed-case owner against the lowercased image", err)
 	}
 
-	return -1
+	in.ImageName = "ghcr.io/evil/myrepo"
+
+	var violation *container.NamespaceViolationError
+	if err := container.ValidateNamespace(in); !errors.As(err, &violation) {
+		t.Fatalf("ValidateNamespace() = %v, want a namespace violation for a foreign owner", err)
+	}
+
+	if violation.ExpectedPrefix != "ghcr.io/myorg/myrepo" {
+		t.Errorf("ExpectedPrefix = %q, want the lowercased prefix the image must actually carry", violation.ExpectedPrefix)
+	}
+}
+
+// TestValidateNamespace_TreatsDotsInTheRepositoryLiterally pins the quoting.
+// A repository name may contain a dot, and in an unquoted pattern that dot
+// matches any character -- so "my.repo" would admit a sibling package spelled
+// "myXrepo", which anyone in the owner namespace can create.
+func TestValidateNamespace_TreatsDotsInTheRepositoryLiterally(t *testing.T) {
+	t.Parallel()
+
+	in := container.ValidateNamespaceInput{
+		Registry: "ghcr.io", Repository: "myorg/my.repo", EnforceNamespace: "myorg",
+	}
+
+	in.ImageName = "ghcr.io/myorg/my.repo"
+	if err := container.ValidateNamespace(in); err != nil {
+		t.Fatalf("the literal repository was refused: %v", err)
+	}
+
+	in.ImageName = "ghcr.io/myorg/myXrepo"
+	if err := container.ValidateNamespace(in); !errors.Is(err, errs.ErrValidation) {
+		t.Errorf("a sibling matching the dot as a wildcard was accepted: err = %v", err)
+	}
+}
+
+// TestValidateNamespace_NamesWhichInputIsMissing distinguishes the two
+// fail-closed configuration errors, which used to share one message.
+func TestValidateNamespace_NamesWhichInputIsMissing(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		in   container.ValidateNamespaceInput
+		want string
+	}{
+		"no enforced owner": {
+			in:   container.ValidateNamespaceInput{Registry: "ghcr.io", Repository: "myorg/app", ImageName: "ghcr.io/myorg/app"},
+			want: "enforced namespace (owner)",
+		},
+		"no repository": {
+			in:   container.ValidateNamespaceInput{Registry: "ghcr.io", EnforceNamespace: "myorg", ImageName: "ghcr.io/myorg/app"},
+			want: "repository to check",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := container.ValidateNamespace(tc.in)
+			if !errors.Is(err, errs.ErrInvalidConfig) || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want ErrInvalidConfig naming %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestValidateNamespace_EnforcesEveryConfiguredRegistryAndOnlyThose covers a
+// policy list with more than one entry. Every existing case used the default
+// or a single registry, so a check that consulted only the first entry passed.
+// Registries outside the list are skipped by design -- they run their own
+// policy -- and that skip is pinned too, so it stays deliberate.
+func TestValidateNamespace_EnforcesEveryConfiguredRegistryAndOnlyThose(t *testing.T) {
+	t.Parallel()
+
+	policy := []string{"ghcr.io", "registry.example"}
+
+	for name, tc := range map[string]struct {
+		registry, image string
+		wantViolation   bool
+	}{
+		"first registry, foreign owner":  {registry: "ghcr.io", image: "ghcr.io/other/app", wantViolation: true},
+		"second registry, foreign owner": {registry: "registry.example", image: "registry.example/other/app", wantViolation: true},
+		"second registry, correct owner": {registry: "registry.example", image: "registry.example/myorg/app"},
+		"unlisted registry is skipped":   {registry: "quay.io", image: "quay.io/other/app"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := container.ValidateNamespace(container.ValidateNamespaceInput{
+				ImageName: tc.image, Repository: "myorg/app", Registry: tc.registry,
+				EnforceNamespace: "myorg", EnforceOnRegistries: policy,
+			})
+
+			if !tc.wantViolation {
+				if err != nil {
+					t.Errorf("err = %v, want nil", err)
+				}
+
+				return
+			}
+
+			// The whole violation, not a substring of its message: the
+			// offending image and the prefix it should have carried are the
+			// two fields an operator acts on.
+			var violation *container.NamespaceViolationError
+			if !errors.As(err, &violation) {
+				t.Fatalf("err = %v, want *NamespaceViolationError", err)
+			}
+
+			want := container.NamespaceViolationError{ImageName: tc.image, ExpectedPrefix: tc.registry + "/myorg/app"}
+			if *violation != want {
+				t.Errorf("violation = %+v, want %+v", *violation, want)
+			}
+		})
+	}
 }

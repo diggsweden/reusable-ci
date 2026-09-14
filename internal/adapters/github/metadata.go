@@ -26,6 +26,10 @@ func (p *Provider) FetchRepoMetadata(ctx context.Context, repo string) (*provide
 		return &provider.RepoMetadata{}, nil
 	}
 
+	if _, _, err := splitRepo(repo); err != nil {
+		return nil, err
+	}
+
 	get := p.envFunc()
 
 	apiBase := p.APIBaseOverride

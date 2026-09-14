@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/urfave/cli/v3"
 
@@ -32,6 +35,16 @@ import (
 //nolint:gosec // G101 false positive: the substring "key material" is operator-facing warning text, not a credential literal.
 const debugSwapWarning = "swap policy bypassed via --debug-allow-swap — decrypted key material may be paged to disk. DO NOT USE FOR PRODUCTION RELEASES; see docs/verification.md#swap-policy."
 
+// undeterminedSwapNotice is emitted when swap state cannot be read, so the
+// skip is in the log rather than inferred from its absence. Deliberately a
+// Notice, not a Warning: on a restricted container or a non-Linux runner the
+// indeterminacy is structural and there is nothing for the operator to fix.
+const undeterminedSwapNotice = "swap state could not be determined (/proc/swaps unreadable) — the swap policy did not run; signing proceeded with only the process hardening (RLIMIT_CORE, PR_SET_DUMPABLE), which does not keep memory out of swap. See docs/verification.md#swap-policy."
+
+// A Notice like the undetermined case: the black-box suite sets the override on
+// purpose, but the pass is not the kernel's answer and the log has to say so.
+const overriddenSwapNotice = "swap state was read from $REUSABLE_CI_PROC_SWAPS, not /proc/swaps — no active swap area was reported there, so the swap policy passed on an injected answer. See docs/verification.md#swap-policy."
+
 // debugAllowSwapFlag is the operator's opt-out from the swap-refusal
 // policy. Flag-only, so the override must reappear in argv each
 // invocation rather than being set once in the environment.
@@ -42,17 +55,31 @@ func debugAllowSwapFlag() cli.Flag {
 	}
 }
 
-// requireNoSwapWithWarning wraps the policy gate and, when the
-// --debug-allow-swap override is active, emits a Warning annotation so
-// the override lands in the CI log.
+// requireNoSwapWithWarning wraps the policy gate and narrates the outcome, so
+// every way of proceeding past the swap policy is visible in the CI log except
+// the one that needs no explanation.
+//
+// Both bypasses are surfaced, at the severity that fits how they arose. The
+// --debug-allow-swap waiver is a Warning: the operator chose it and it is not
+// for production. An unreadable /proc/swaps is a Notice: it is not a
+// misconfiguration and there may be nothing to fix, but the policy did not run
+// and the operator did not ask for that — previously it passed in complete
+// silence, which is the wrong way round, since the person least likely to know
+// the check was skipped is the one who never chose to skip it.
 func requireNoSwapWithWarning(cmd *cli.Command) error {
-	allow := cmd.Bool("debug-allow-swap")
-	if err := safeexec.RequireNoSwap(allow); err != nil {
+	state, err := safeexec.RequireNoSwap(cmd.Bool("debug-allow-swap"))
+	if err != nil {
 		return err
 	}
 
-	if allow {
+	switch state {
+	case safeexec.SwapBypassed:
 		deps.Annotator(cmd).Warningf("%s", debugSwapWarning)
+	case safeexec.SwapUndetermined:
+		deps.Annotator(cmd).Noticef("%s", undeterminedSwapNotice)
+	case safeexec.SwapOverridden:
+		deps.Annotator(cmd).Noticef("%s", overriddenSwapNotice)
+	case safeexec.SwapAbsent:
 	}
 
 	return nil
@@ -98,6 +125,11 @@ func signMethodFlags(planScope string) []cli.Flag {
 			Name:    flagOIDCIssuer,
 			Sources: signSources(planScope, flagOIDCIssuer, "SIGN_OIDC_ISSUER"),
 			Usage:   "OIDC issuer URL for --method=sigstore (default: auto-detected — GitHub Actions / GitLab CI / $CI_SERVER_URL). Forbidden for --method=gpg/kms.",
+		},
+		&cli.StringFlag{
+			Name:    "source-date-epoch",
+			Sources: signSources(planScope, "source-date-epoch", "SOURCE_DATE_EPOCH"),
+			Usage:   "Unix timestamp used for deterministic OpenPGP signatures; requires a v4 RSA or EdDSA key",
 		},
 	}
 
@@ -185,12 +217,30 @@ func buildGPGSigner(cmd *cli.Command, method domainrelease.SignMethod) (apprelea
 		return nil, "", err
 	}
 
-	signer, err := openpgp.NewSignerFromArmor([]byte(privateKey), passphrase)
+	createdAt, err := signingCreationTime(cmd.String("source-date-epoch"))
+	if err != nil {
+		return nil, "", err
+	}
+
+	signer, err := openpgp.NewSignerFromArmorAt([]byte(privateKey), passphrase, createdAt)
 	if err != nil {
 		return nil, "", err
 	}
 
 	return signer, method, nil
+}
+
+func signingCreationTime(raw string) (time.Time, error) {
+	if strings.TrimSpace(raw) == "" {
+		return time.Time{}, nil
+	}
+
+	epoch, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || epoch < 0 {
+		return time.Time{}, fmt.Errorf("source-date-epoch must be non-negative Unix seconds (got %q): %w", raw, errs.ErrUsage)
+	}
+
+	return time.Unix(epoch, 0).UTC(), nil
 }
 
 // buildSigstoreSigner constructs a cosign-keyless signer. An empty
@@ -218,12 +268,7 @@ func buildSigstoreSigner(method domainrelease.SignMethod, oidcIssuer string, end
 
 // buildKMSSigner constructs a cosign-KMS signer against keyRef.
 func buildKMSSigner(method domainrelease.SignMethod, keyRef string, errOut io.Writer) (apprelease.Signer, domainrelease.SignMethod, error) {
-	adapter := cosign.New()
-	if allow := provenanceSignAllow(keyRef); allow != nil {
-		adapter = cosign.NewIsolated(allow...)
-	}
-
-	signer, err := apprelease.NewCosignSigner(adapter, apprelease.CosignSignerInput{
+	signer, err := apprelease.NewCosignSigner(cosign.ForKeyRef(keyRef), apprelease.CosignSignerInput{
 		Method: method,
 		KeyRef: keyRef,
 	}, errOut)

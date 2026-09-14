@@ -4,16 +4,21 @@
 package publish
 
 import (
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
 // ValidateGooglePlayServiceAccount reports whether body parses as a
-// Google-issued service-account JSON key. Strict enough to catch a wrong
+// service-account JSON key with a parseable RSA private key. This does not
+// establish that Google issued or still accepts the credential. It catches a wrong
 // secret value (env var typo, copy-pasted GitHub token, etc.) without
 // coupling to Google's evolving non-essential fields.
 //
@@ -21,7 +26,7 @@ import (
 //   - "type": "service_account"
 //   - "client_email": non-empty
 //   - "private_key": non-empty
-func ValidateGooglePlayServiceAccount(body []byte) error {
+func ValidateGooglePlayServiceAccount(body []byte) error { //nolint:cyclop // JSON fields, PEM framing, key parsing and RSA validity are separate credential checks.
 	if len(body) == 0 {
 		return fmt.Errorf("service account JSON is empty"+": %w", errs.ErrUsage)
 	}
@@ -32,11 +37,15 @@ func ValidateGooglePlayServiceAccount(body []byte) error {
 		PrivateKey  string `json:"private_key"`
 	}
 	if err := json.Unmarshal(body, &key); err != nil {
-		return fmt.Errorf("parse service account JSON: %w", err)
+		// The service account file is an operator-supplied secret. Malformed
+		// content is EX_DATAERR (65) — the same class as the sibling
+		// missing-field checks below — not the unclassified EX_SOFTWARE (70)
+		// that tells them to file a bug against reusable-ci.
+		return fmt.Errorf("parse service account JSON: expected service-account object: %w", errs.ErrMalformedInput)
 	}
 
 	if key.Type != "service_account" {
-		return fmt.Errorf("service account JSON has type %q, want \"service_account\": %w", key.Type, errs.ErrValidation)
+		return fmt.Errorf("service account JSON type: want \"service_account\": %w", errs.ErrValidation)
 	}
 
 	if strings.TrimSpace(key.ClientEmail) == "" {
@@ -45,6 +54,21 @@ func ValidateGooglePlayServiceAccount(body []byte) error {
 
 	if strings.TrimSpace(key.PrivateKey) == "" {
 		return fmt.Errorf("service account JSON is missing private_key"+": %w", errs.ErrMalformedInput)
+	}
+
+	block, rest := pem.Decode([]byte(key.PrivateKey))
+	if block == nil || block.Type != "PRIVATE KEY" || len(block.Headers) != 0 || strings.TrimSpace(string(rest)) != "" {
+		return fmt.Errorf("service account private_key must be PKCS8 PEM: %w", errs.ErrMalformedInput)
+	}
+
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("service account private_key must contain a valid private key: %w", errs.ErrMalformedInput)
+	}
+
+	keyRSA, ok := parsed.(*rsa.PrivateKey)
+	if !ok || keyRSA.Validate() != nil {
+		return fmt.Errorf("service account private_key must contain a valid RSA private key: %w", errs.ErrMalformedInput)
 	}
 
 	return nil
@@ -75,13 +99,13 @@ func RenderGooglePlayUploadSummary(in GooglePlayUploadInput, now time.Time) stri
 	_, _ = fmt.Fprintf(&b, "### Upload Details\n")
 	_, _ = fmt.Fprintf(&b, "| Property | Value |\n")
 	_, _ = fmt.Fprintf(&b, "|----------|-------|\n")
-	_, _ = fmt.Fprintf(&b, "| **AAB File** | `%s` |\n", filepath.Base(in.AABFile))
-	_, _ = fmt.Fprintf(&b, "| **Package** | `%s` |\n", in.PackageName)
-	_, _ = fmt.Fprintf(&b, "| **Track** | %s |\n", in.Track)
-	_, _ = fmt.Fprintf(&b, "| **Status** | %s |\n", in.Status)
+	_, _ = fmt.Fprintf(&b, "| **AAB File** | %s |\n", summary.InlineCode(filepath.Base(in.AABFile)))
+	_, _ = fmt.Fprintf(&b, "| **Package** | %s |\n", summary.InlineCode(in.PackageName))
+	_, _ = fmt.Fprintf(&b, "| **Track** | %s |\n", summary.LiteralText(in.Track))
+	_, _ = fmt.Fprintf(&b, "| **Status** | %s |\n", summary.LiteralText(in.Status))
 
 	if in.ReleaseName != "" {
-		_, _ = fmt.Fprintf(&b, "| **Release Name** | %s |\n", in.ReleaseName)
+		_, _ = fmt.Fprintf(&b, "| **Release Name** | %s |\n", summary.LiteralText(in.ReleaseName))
 	}
 
 	if in.UserFractionSet {
@@ -101,7 +125,7 @@ func RenderGooglePlayUploadSummary(in GooglePlayUploadInput, now time.Time) stri
 	case "internal":
 		_, _ = fmt.Fprintf(&b, "2. Build will be available to internal testers within minutes\n")
 	case "alpha", "beta":
-		_, _ = fmt.Fprintf(&b, "2. Build will be available to %s testers after review\n", in.Track)
+		_, _ = fmt.Fprintf(&b, "2. Build will be available to %s testers after review\n", summary.LiteralText(in.Track))
 	case "production":
 		if percentage != "" {
 			_, _ = fmt.Fprintf(&b, "2. Staged rollout to %s of users will begin after review\n", percentage)

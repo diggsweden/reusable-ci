@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
+	domainsummary "github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 // MavenCentralPublishInput drives MavenCentralPublish.
@@ -29,7 +30,7 @@ func MavenCentralPublish(ctx context.Context, sink ci.SummarySink, in MavenCentr
 	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 
 	_, _ = fmt.Fprintf(&b, "## Published to Maven Central 🚀\n\n")
-	_, _ = fmt.Fprintf(&b, "- **Version:** %s\n", in.Version)
+	_, _ = fmt.Fprintf(&b, "- **Version:** %s\n", domainsummary.LiteralText(in.Version))
 
 	if in.IsSnapshot {
 		_, _ = fmt.Fprintf(&b, "- **Type:** SNAPSHOT\n")
@@ -70,7 +71,7 @@ func ForgePackagesPublish(ctx context.Context, sink ci.SummarySink, in ForgePack
 		now = time.Now()
 	}
 
-	registry := in.RegistryName
+	registry := domainsummary.LiteralText(in.RegistryName)
 	if registry == "" {
 		registry = "the forge package registry"
 	}
@@ -78,9 +79,9 @@ func ForgePackagesPublish(ctx context.Context, sink ci.SummarySink, in ForgePack
 	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 
 	_, _ = fmt.Fprintf(&b, "## Published to %s 📦\n\n", registry)
-	_, _ = fmt.Fprintf(&b, "- **Package Type:** %s\n", in.PackageType)
+	_, _ = fmt.Fprintf(&b, "- **Package Type:** %s\n", domainsummary.LiteralText(in.PackageType))
 	_, _ = fmt.Fprintf(&b, "- **Registry:** %s\n", registry)
-	_, _ = fmt.Fprintf(&b, "- **Repository:** %s\n\n", in.Repository)
+	_, _ = fmt.Fprintf(&b, "- **Repository:** %s\n\n", domainsummary.LiteralText(in.Repository))
 	_, _ = fmt.Fprintf(&b, "*Published at %s*\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
 
 	return sink.Append(ctx, b.String())

@@ -6,12 +6,8 @@ version: "2"
 
 run:
   timeout: 5m
-  # Without this the entire //go:build live tier — every live conformance
-  # scenario — is invisible to the linter, because golangci-lint only analyses
-  # files matching the default build constraints. That tier is the one driving
-  # real forges and real registries, so it is the last place that should be
-  # unchecked; it went unlinted until a manual `--build-tags live` run turned up
-  # findings the gate had never seen.
+  # Include the live conformance tier in static analysis; default build
+  # constraints otherwise exclude every //go:build live file.
   build-tags:
     - live
 
@@ -43,8 +39,18 @@ linters:
           - dupl # parallel happy/sad-path blocks mirror each other
           - goconst # repeated fixture strings, often one-off
           - varnamelen # short locals / loop vars / mock receivers
-          - paralleltest # many tests mutate env / stdin
           - ireturn # mocks return interfaces
+      # paralleltest, scoped rather than blanket. A test that mutates process
+      # state cannot be parallel: t.Setenv and t.Chdir panic under it, and a
+      # swapped os.Stdin or working directory is shared by every goroutine.
+      # This is the list of packages that do -- directly, or through a testutil
+      # helper that does it on their behalf (ghaenv, glabenv, gpgkey,
+      # isolatedenv, isolatedgit, mockbinary, testenv, testfs).
+      # Regenerate this list from the tree rather than appending to it by hand:
+      # a helper that starts calling t.Setenv adds its callers to this set.
+      - path: "^(cmd/reusable-ci/|scripts/bootstrap/|internal/adapters/apt/|internal/adapters/buildah/|internal/adapters/cargo/|internal/adapters/changelog/|internal/adapters/cosign/|internal/adapters/ghaoutput/|internal/adapters/git/|internal/adapters/gitlaboutput/|internal/adapters/gotool/|internal/adapters/gpg/|internal/adapters/gradle/|internal/adapters/httpretry/|internal/adapters/manifest/|internal/adapters/maven/|internal/adapters/mise/|internal/adapters/npm/|internal/adapters/opengrep/|internal/adapters/openpgp/|internal/adapters/osfs/|internal/adapters/platform/|internal/adapters/skopeo/|internal/adapters/stepsummary/|internal/adapters/swiftformat/|internal/adapters/swiftlint/|internal/adapters/syft/|internal/adapters/trivy/|internal/adapters/xcode/|internal/app/build/|internal/app/config/|internal/app/container/|internal/app/platform/|internal/app/publish/|internal/app/release/|internal/app/sbom/|internal/app/security/|internal/app/summary/|internal/app/toolchain/|internal/app/validate/|internal/app/version/|internal/archive/|internal/cli/|internal/cli/cienv/|internal/cli/clitoken/|internal/cli/commands/build/|internal/cli/commands/container/|internal/cli/commands/plan/|internal/cli/commands/release/|internal/cli/commands/report/|internal/cli/commands/sbom/|internal/cli/commands/validate/|internal/cli/commands/version/|internal/cli/deps/|internal/cli/planfile/|internal/cli/secret/|internal/cliio/|internal/livetest/|internal/safeexec/|internal/testutil/ghaenv/|internal/testutil/glabenv/|internal/testutil/golden/|internal/testutil/gpgkey/|internal/testutil/isolatedenv/|internal/testutil/isolatedgit/|internal/testutil/mockbinary/|internal/testutil/testenv/|internal/testutil/testfs/|internal/testutil/toolrecorder/)"
+        linters:
+          - paralleltest
       # redact_test.go's whole point is to assert that PEM markers
       # get redacted from subprocess output. The literal PEM blocks
       # in the fixtures are the test contract.
@@ -130,6 +136,7 @@ linters:
     - noctx
     - nonamedreturns
     - nosprintfhostport
+    - paralleltest
     - perfsprint
     - prealloc
     - predeclared

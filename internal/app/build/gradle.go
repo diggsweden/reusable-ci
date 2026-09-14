@@ -5,6 +5,7 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // GradleOps is the slice of gradle-adapter methods the build use cases
@@ -22,6 +24,16 @@ import (
 type GradleOps interface {
 	RunInherit(ctx context.Context, w, stderr io.Writer, args ...string) error
 	RunInDirInherit(ctx context.Context, dir string, w, stderr io.Writer, args ...string) error
+}
+
+// Release orchestration binds cwd-based Gradle steps to its selected project.
+type projectGradle struct {
+	GradleOps
+	dir string
+}
+
+func (g projectGradle) RunInherit(ctx context.Context, out, stderr io.Writer, args ...string) error {
+	return g.RunInDirInherit(ctx, g.dir, out, stderr, args...)
 }
 
 // GradleSBOMInput drives GradleSBOM.
@@ -112,19 +124,17 @@ func GradleApplication(ctx context.Context, ops GradleOps, w, stderr io.Writer, 
 // script and runs `cyclonedxBom` to produce build/reports/bom.json.
 // This is the Gradle build-SBOM implementation behind `reusable-ci build gradle sbom`.
 //
-// The init script is written to a tempfile that is deleted before
-// return regardless of success.
+// Init-script cleanup is attempted before return regardless of success.
+// Removal errors are returned alongside any native Gradle failure.
 //
 //nolint:cyclop // executes 4 gradle phases each gated on detected config.
-func GradleSBOM(ctx context.Context, ops GradleOps, w, stderr io.Writer, in GradleSBOMInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func GradleSBOM(ctx context.Context, ops GradleOps, w, stderr io.Writer, in GradleSBOMInput) (err error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.CycloneDXVersion == "" {
 		return fmt.Errorf("cyclonedx-gradle version is required: pass --cyclonedx-version <ver> or set $CYCLONEDX_GRADLE_VERSION: %w", errs.ErrUsage)
 	}
 
 	wd := in.WorkingDir
 	if wd == "" {
-		var err error
-
 		wd, err = os.Getwd()
 		if err != nil {
 			return fmt.Errorf("getwd: %w", err)
@@ -142,22 +152,29 @@ func GradleSBOM(ctx context.Context, ops GradleOps, w, stderr io.Writer, in Grad
 		return fmt.Errorf("gradlew not executable in %s: %w", wd, errs.ErrValidation)
 	}
 
-	f, err := os.CreateTemp("", "*.init.gradle.kts") //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	tempDir, err := gradleSBOMTempDir()
+	if err != nil {
+		return fmt.Errorf("resolve Gradle SBOM scratch: %w", err)
+	}
+
+	f, err := os.CreateTemp(tempDir, "*.init.gradle.kts") //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if err != nil {
 		return fmt.Errorf("create init script tempfile: %w", err)
 	}
 
 	initPath := f.Name()
 
-	defer func() { _ = os.Remove(initPath) }()
+	defer func() {
+		if cleanupErr := os.Remove(initPath); cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("remove Gradle SBOM init script: %w", cleanupErr))
+		}
+	}()
 
-	if _, err := io.WriteString(f, build.RenderGradleInitScript(in.CycloneDXVersion)); err != nil {
-		_ = f.Close()
-
-		return fmt.Errorf("write init script: %w", err)
+	if _, err = io.WriteString(f, build.RenderGradleInitScript(in.CycloneDXVersion)); err != nil {
+		return errors.Join(fmt.Errorf("write init script: %w", err), f.Close())
 	}
 
-	if err := f.Close(); err != nil {
+	if err = f.Close(); err != nil {
 		return fmt.Errorf("close init script: %w", err)
 	}
 
@@ -167,15 +184,42 @@ func GradleSBOM(ctx context.Context, ops GradleOps, w, stderr io.Writer, in Grad
 	return ops.RunInDirInherit(ctx, wd, w, stderr, "--init-script", initPath, "cyclonedxBom")
 }
 
-func gradleProperty(body, key string) string {
-	prefix := key + "="
+// SBOM scratch follows the OS temp selection, independently of signing TempDir.
+// Canonicalize trusted OS aliases for both early preflight and actual creation.
+func gradleSBOMTempDir() (string, error) {
+	dir, err := mobileTempRoot()
+	if err != nil {
+		return "", err
+	}
 
+	root, err := pathsafe.OpenRoot(dir)
+	if err != nil {
+		return "", err
+	}
+
+	return root.Name(), errors.Join(checkBuildWritableRoot(root), root.Close())
+}
+
+func gradleProperty(body, key string) string {
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, prefix) {
-			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		if len(line) <= len(key) || !strings.HasPrefix(line, key) || !gradlePropertySeparator(line[len(key)]) {
+			continue
 		}
+
+		rest := strings.TrimPrefix(line, key)
+		rest = strings.TrimLeft(rest, " \t\f")
+
+		if strings.HasPrefix(rest, "=") || strings.HasPrefix(rest, ":") {
+			rest = rest[1:]
+		}
+
+		return strings.TrimSpace(rest)
 	}
 
 	return ""
+}
+
+func gradlePropertySeparator(value byte) bool {
+	return value == '=' || value == ':' || value == ' ' || value == '\t' || value == '\f'
 }

@@ -24,10 +24,7 @@ package conformance_test
 
 import (
 	"encoding/json"
-	"maps"
 	"slices"
-	"sort"
-	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -103,53 +100,4 @@ func TestJSON_DoctorReport_HasTheSameShapeOnEveryForge(t *testing.T) {
 				forge, reference, diff)
 		}
 	}
-}
-
-// jsonShape flattens a decoded document to its sorted set of key paths, so two
-// reports are compared on structure alone. Array elements collapse to a single
-// "[]" step: a consumer cares that every element has the same fields, not how
-// many a particular run produced.
-func jsonShape(value any, prefix string) []string {
-	var paths []string
-
-	switch typed := value.(type) {
-	case map[string]any:
-		for _, key := range slices.Sorted(maps.Keys(typed)) {
-			path := key
-			if prefix != "" {
-				path = prefix + "." + key
-			}
-
-			paths = append(paths, path)
-			paths = append(paths, jsonShape(typed[key], path)...)
-		}
-	case []any:
-		for _, element := range typed {
-			paths = append(paths, jsonShape(element, prefix+"[]")...)
-		}
-	}
-
-	sort.Strings(paths)
-
-	return slices.Compact(paths)
-}
-
-// shapeDiff reports the fields present on one forge and not the other, in both
-// directions, or "" when the shapes agree.
-func shapeDiff(reference, other []string) string {
-	var lines []string
-
-	for _, path := range reference {
-		if !slices.Contains(other, path) {
-			lines = append(lines, "  missing: "+path)
-		}
-	}
-
-	for _, path := range other {
-		if !slices.Contains(reference, path) {
-			lines = append(lines, "  extra:   "+path)
-		}
-	}
-
-	return strings.Join(lines, "\n")
 }

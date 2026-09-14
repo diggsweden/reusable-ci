@@ -5,6 +5,7 @@ package platform
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -15,12 +16,21 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/clitoken"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 func checkoutCmd() *cli.Command {
+	return checkoutCommand(deps.FromCmd, func(workspace string) appplatform.CheckoutGit {
+		return &git.Repo{Dir: workspace}
+	})
+}
+
+// Keep the command action testable without constructing providers or running Git.
+func checkoutCommand(withDeps func(context.Context, *cli.Command, func(*deps.Deps) error) error, newGit func(string) appplatform.CheckoutGit) *cli.Command {
 	return &cli.Command{
-		Name:  "checkout",
+		Name:  commandCheckout,
 		Usage: "exact, credential-free, sha256-aware checkout of a repository into the workspace",
 		Description: "Git-based checkout that works in minimal containers and for sha256 repositories. " +
 			"Resolves the object format from the forge, " +
@@ -32,48 +42,52 @@ func checkoutCmd() *cli.Command {
 			"   # Shallow checkout into a subdirectory\n" +
 			"   reusable-ci platform checkout --repository org/app --ref main --depth 1 --path app",
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: "repository", Sources: cienv.Repository(), Usage: "owner/name to check out"},
-			&cli.StringFlag{Name: "server-url", Sources: cienv.ServerURL(), Usage: "forge base URL (e.g. https://forgejo.example.com)"},
-			&cli.StringFlag{Name: "ref", Sources: cienv.CheckoutRef(), Usage: "commit SHA, refs/tags/…, refs/heads/…, or a bare tag/branch name to check out. Set via $CHECKOUT_REF; defaults to the triggering commit."},
+			&cli.StringFlag{Name: flagRepository, Sources: cienv.Repository(), Usage: "owner/name to check out"},
+			&cli.StringFlag{Name: flagServerURL, Sources: cienv.ServerURL(), Usage: "forge base URL (e.g. https://forgejo.example.com)"},
+			&cli.StringFlag{Name: flagRef, Sources: cienv.CheckoutRef(), Usage: "commit SHA, refs/tags/…, refs/heads/…, or a bare tag/branch name to check out. Set via $CHECKOUT_REF; defaults to the triggering commit."},
 			&cli.StringFlag{Name: "workspace", Sources: cienv.Workspace(), Usage: "target directory (default: current directory)"},
 			&cli.StringFlag{Name: "token", Usage: "clone token; omit to use the token the runner injected ($CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it. Empty means an anonymous checkout."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
 			&cli.StringFlag{Name: "object-format", Sources: cli.EnvVars("CHECKOUT_OBJECT_FORMAT"), Usage: "override the forge-reported object format (sha1|sha256); skips the metadata lookup"},
-			&cli.StringFlag{Name: "fetch-base", Sources: cli.EnvVars("CHECKOUT_FETCH_BASE"), Usage: "extra branch to also fetch (diff/commit-range checks)"},
+			&cli.StringFlag{Name: flagFetchBase, Sources: cli.EnvVars("CHECKOUT_FETCH_BASE"), Usage: "extra branch to also fetch (diff/commit-range checks)"},
 			&cli.BoolFlag{Name: "fetch-tags", Sources: cli.EnvVars("CHECKOUT_FETCH_TAGS"), Usage: "also fetch all tags (the JS actions/checkout fetch-tags:true; needed for git-cliff/changelog)"},
 			&cli.BoolFlag{Name: "fetch-all-refs", Sources: cli.EnvVars("CHECKOUT_FETCH_ALL_REFS"), Usage: "fetch every branch into refs/remotes/origin/* plus all tags (the JS actions/checkout fetch-depth:0); needed by builds that read git topology, e.g. `git rev-list --count origin/main` or `git describe`"},                                                  //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
 			&cli.IntFlag{Name: "depth", Sources: cli.EnvVars("CHECKOUT_FETCH_DEPTH"), Usage: "shallow history depth for the checked-out ref (git --depth); 0 = full history (the JS actions/checkout fetch-depth, where 0 means all). Use 1 to speed up build/scan jobs that only need the tree. Orthogonal to --fetch-all-refs, which always brings full topology."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
-			&cli.StringSliceFlag{Name: "sparse", Sources: cli.EnvVars("CHECKOUT_SPARSE"), Usage: "cone-mode sparse-checkout dir(s), e.g. scripts/bootstrap; restricts the working tree to these subtrees (repeatable / comma-separated)"},
-			&cli.StringFlag{Name: "path", Sources: cli.EnvVars("CHECKOUT_PATH"), Usage: "subdirectory to check out into, relative to $GITHUB_WORKSPACE (the JS actions/checkout path:); alternative to --workspace"},
-			&cli.StringFlag{Name: "output-key", Value: "checkout-sha", Sources: cli.EnvVars("OUTPUT_KEY"), Usage: "key written to the output sink for the resolved SHA"},
+			&cli.StringSliceFlag{Name: flagSparse, Sources: cli.EnvVars("CHECKOUT_SPARSE"), Usage: "cone-mode sparse-checkout dir(s), e.g. scripts/bootstrap; restricts the working tree to these subtrees (repeatable / comma-separated)"},
+			&cli.StringFlag{Name: flagPath, Sources: cli.EnvVars("CHECKOUT_PATH"), Usage: "subdirectory to check out into, relative to $GITHUB_WORKSPACE (the JS actions/checkout path:); alternative to --workspace"},
+			&cli.StringFlag{Name: flagOutputKey, Value: "checkout-sha", Sources: cli.EnvVars("OUTPUT_KEY"), Usage: "key written to the output sink for the resolved SHA"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return deps.FromCmd(ctx, cmd, func(dep *deps.Deps) error {
-				workspace, err := resolveWorkspace(cmd.String("workspace"), cmd.String("path"))
-				if err != nil {
-					return err
-				}
+			workspace, err := resolveWorkspace(cmd.String("workspace"), cmd.String(flagPath))
+			if err != nil {
+				return err
+			}
 
+			in := appplatform.CheckoutInput{
+				Repository:   cmd.String(flagRepository),
+				ServerURL:    cmd.String(flagServerURL),
+				Ref:          cmd.String(flagRef),
+				Workspace:    workspace,
+				ObjectFormat: cmd.String("object-format"),
+				FetchBase:    cmd.String(flagFetchBase),
+				FetchTags:    cmd.Bool("fetch-tags"),
+				FetchAllRefs: cmd.Bool("fetch-all-refs"),
+				Depth:        cmd.Int("depth"),
+				Sparse:       cmd.StringSlice(flagSparse),
+				OutputKey:    cmd.String(flagOutputKey),
+			}
+			if err := appplatform.PreflightCheckout(in); err != nil {
+				return err
+			}
+
+			return withDeps(ctx, cmd, func(dep *deps.Deps) error {
 				format, err := resolveObjectFormat(ctx, dep, cmd)
 				if err != nil {
 					return err
 				}
 
-				repo := &git.Repo{Dir: workspace}
-
-				_, err = appplatform.Checkout(ctx, repo, dep.OutputSink, os.Stderr, appplatform.CheckoutInput{
-					Repository:   cmd.String("repository"),
-					ServerURL:    cmd.String("server-url"),
-					Ref:          cmd.String("ref"),
-					Workspace:    workspace,
-					Token:        clitoken.Resolve(cmd),
-					ObjectFormat: format,
-					FetchBase:    cmd.String("fetch-base"),
-					FetchTags:    cmd.Bool("fetch-tags"),
-					FetchAllRefs: cmd.Bool("fetch-all-refs"),
-					Depth:        cmd.Int("depth"),
-					Sparse:       cmd.StringSlice("sparse"),
-					OutputKey:    cmd.String("output-key"),
-				})
+				in.ObjectFormat = format
+				in.Token = clitoken.Resolve(cmd)
+				_, err = appplatform.Checkout(ctx, newGit, dep.OutputSink, os.Stderr, in)
 
 				return err
 			})
@@ -89,6 +103,10 @@ func checkoutCmd() *cli.Command {
 // --workspace, else the current directory.
 func resolveWorkspace(workspace, path string) (string, error) {
 	if path != "" {
+		if !pathsafe.Relative(path) {
+			return "", fmt.Errorf("checkout path must stay inside the runner workspace: %w", errs.ErrUsage)
+		}
+
 		base := runcontext.Workspace().Resolve(os.Getenv)
 		if base == "" {
 			cwd, err := os.Getwd()
@@ -118,7 +136,7 @@ func resolveObjectFormat(ctx context.Context, dep *deps.Deps, cmd *cli.Command) 
 		return override, nil
 	}
 
-	repo := cmd.String("repository")
+	repo := cmd.String(flagRepository)
 	if repo == "" {
 		return "", nil
 	}

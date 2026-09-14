@@ -5,7 +5,6 @@ package summary
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -19,7 +18,6 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/git"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
-	"github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 	domainsummary "github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 	"github.com/diggsweden/reusable-ci/v3/internal/listval"
@@ -100,13 +98,17 @@ func enrichPrerequisitesFromConfigPlan(in *PrerequisitesSummaryInput) error {
 		return nil
 	}
 
-	var plan pipeline.ConfigPlan
-	if err := json.Unmarshal([]byte(in.ConfigPlanJSON), &plan); err != nil {
-		return fmt.Errorf("parse config-plan-json: %w: %w", err, errs.ErrInvalidConfig)
+	plan, err := pipeline.DecodeConfigPlan(in.ConfigPlanJSON)
+	if err != nil {
+		return err
 	}
 
 	if plan.Version != pipeline.ConfigPlanVersion {
 		return fmt.Errorf("config-plan-json has unsupported version %d: %w", plan.Version, errs.ErrInvalidConfig)
+	}
+
+	if err := pipeline.ValidateConfigPlan(plan); err != nil {
+		return err
 	}
 
 	projectTypes := map[string]bool{}
@@ -163,7 +165,7 @@ func sortedCSV(values map[string]bool) string {
 func writeTagInfo(ctx context.Context, b *strings.Builder, gitr gitInfoOps, in PrerequisitesSummaryInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	_, _ = fmt.Fprintf(b, "# 📋 Release Prerequisites Validation Report\n\n")
 	_, _ = fmt.Fprintf(b, "## 🏷️ Release Tag\n")
-	_, _ = fmt.Fprintf(b, "- **Tag:** `%s`\n", in.TagName)
+	_, _ = fmt.Fprintf(b, "- **Tag:** %s\n", domainsummary.InlineCode(in.TagName))
 	_, _ = fmt.Fprintf(b, "- **Type:** %s\n", in.RefType)
 
 	if in.RefType != provider.RefTypeTag || gitr == nil {
@@ -198,9 +200,11 @@ func writeTagInfo(ctx context.Context, b *strings.Builder, gitr gitInfoOps, in P
 	// faster than the deleted `git tag -v` subprocess, and the summary
 	// only needs "is a signature there?" not "does it verify against
 	// some keyring."
-	sig := "Not signed"
+	sig := "Unavailable"
 
 	if body, err := gitr.CatFileTag(ctx, in.TagName); err == nil {
+		sig = "Not signed"
+
 		switch {
 		case strings.Contains(body, "BEGIN PGP SIGNATURE"):
 			sig = "GPG signed"
@@ -209,10 +213,12 @@ func writeTagInfo(ctx context.Context, b *strings.Builder, gitr gitInfoOps, in P
 		}
 	}
 
-	_, _ = fmt.Fprintf(b, "- **Tagger:** %s\n", tagger)
-	_, _ = fmt.Fprintf(b, "- **Tag Date:** %s\n", date)
+	// Tag and commit metadata is written by whoever created the tag or commit,
+	// so it is rendered as literal text rather than Markdown.
+	_, _ = fmt.Fprintf(b, "- **Tagger:** %s\n", domainsummary.LiteralText(tagger))
+	_, _ = fmt.Fprintf(b, "- **Tag Date:** %s\n", domainsummary.LiteralText(date))
 	_, _ = fmt.Fprintf(b, "- **Tag Signature:** %s\n", sig)
-	_, _ = fmt.Fprintf(b, "- **Tag Message:** %s\n", msg)
+	_, _ = fmt.Fprintf(b, "- **Tag Message:** %s\n", domainsummary.LiteralText(msg))
 
 	return nil
 }
@@ -240,11 +246,11 @@ func writeCommitInfo(ctx context.Context, b *strings.Builder, gitr gitInfoOps, i
 	}
 
 	_, _ = fmt.Fprintf(b, "\n## 📦 Tagged Commit\n")
-	_, _ = fmt.Fprintf(b, "- **SHA:** `%s`\n", in.CommitSHA)
-	_, _ = fmt.Fprintf(b, "- **Author:** %s\n", info.Author)
-	_, _ = fmt.Fprintf(b, "- **Date:** %s\n", info.Date)
+	_, _ = fmt.Fprintf(b, "- **SHA:** %s\n", domainsummary.InlineCode(in.CommitSHA))
+	_, _ = fmt.Fprintf(b, "- **Author:** %s\n", domainsummary.LiteralText(info.Author))
+	_, _ = fmt.Fprintf(b, "- **Date:** %s\n", domainsummary.LiteralText(info.Date))
 	_, _ = fmt.Fprintf(b, "- **Signature:** %s\n", sig)
-	_, _ = fmt.Fprintf(b, "- **Message:** %s\n", info.Message)
+	_, _ = fmt.Fprintf(b, "- **Message:** %s\n", domainsummary.LiteralText(info.Message))
 
 	return nil
 }
@@ -316,11 +322,11 @@ func writeJobStatus(b *strings.Builder, in PrerequisitesSummaryInput) { //nolint
 	_, _ = fmt.Fprintf(b, "\n")
 
 	if in.JobStatus == domainsummary.ResultSuccess {
-		_, _ = fmt.Fprintf(b, "### ✓ All required prerequisites are configured!\n")
-		_, _ = fmt.Fprintf(b, "Ready to proceed with release 🚀\n")
+		_, _ = fmt.Fprintf(b, "### ✓ All selected prerequisite checks passed!\n")
+		_, _ = fmt.Fprintf(b, "Release preflight completed.\n")
 	} else {
 		_, _ = fmt.Fprintf(b, "### ✗ Prerequisites validation failed\n")
-		_, _ = fmt.Fprintf(b, "Please configure the missing secrets before attempting release\n")
+		_, _ = fmt.Fprintf(b, "Review the failed checks before attempting release.\n")
 	}
 }
 
@@ -334,17 +340,19 @@ func writeValidationResults(b *strings.Builder, in PrerequisitesSummaryInput) { 
 	}
 
 	if in.RefType == provider.RefTypeTag {
-		if _, err := validate.ParseTagFormat(in.TagName); err == nil {
+		tag, err := validate.ParseTagFormat(in.TagName)
+		if err == nil {
 			row("Semantic Version", "✓ Pass", fmt.Sprintf("`%s` follows vX.Y.Z", in.TagName))
 		} else {
 			row("Semantic Version", "✗ Fail", "Invalid format")
 		}
 
-		row("Tag Type", "✓ Pass", "Annotated (not lightweight)")
-		row("Tag Signature", "✓ Pass", "GPG/SSH signed")
+		row("Tag Type", "Unconfirmed", "Object type is not verified by this summary")
+		row("Tag Signature", "Unconfirmed", "Signature presence is not verification; see the prerequisite job result")
 
-		if release.IsPrereleaseTag(in.TagName) {
-			row("Release Type", "🚧 Pre-release", fmt.Sprintf("`%s` version", prereleaseIdentifier(in.TagName)))
+		if tag != nil && tag.Prerelease != "" {
+			identifier, _, _ := strings.Cut(tag.Prerelease, ".")
+			row("Release Type", "🚧 Pre-release", fmt.Sprintf("`%s` version", identifier))
 		} else {
 			row("Release Type", "🎯 Stable", "Production release")
 		}
@@ -377,7 +385,7 @@ func emitPublishRows(in PrerequisitesSummaryInput, row func(name, status, detail
 	targets := parsePublishTargets(in.PublishTo)
 
 	if slices.Contains(targets, config.PublishMavenCentral) {
-		if in.HasMavenCentralUsername {
+		if in.HasMavenCentralUsername && in.HasMavenCentralPassword {
 			row("Maven Central", "✓ Pass", "Credentials configured")
 		} else {
 			row("Maven Central", "✗ Fail", "Missing credentials")
@@ -399,25 +407,6 @@ func emitPublishRows(in PrerequisitesSummaryInput, row func(name, status, detail
 		// so the summary is truthful on every forge, not just GitHub.
 		row("Forge Packages", "✓ Pass", "Using forge token")
 	}
-}
-
-// prereleaseIdentifier extracts the canonical pre-release identifier
-// from a tag (e.g. "v1.0.0-rc.1" → "rc"). Used only for the "🚧
-// Pre-release" details column.
-func prereleaseIdentifier(tag string) string {
-	idx := strings.IndexByte(tag, '-')
-	if idx == -1 {
-		return ""
-	}
-
-	rest := tag[idx+1:]
-	for i := range len(rest) {
-		if rest[i] == '.' {
-			return rest[:i]
-		}
-	}
-
-	return rest
 }
 
 // parsePublishTargets splits the PublishTo CSV and returns a sorted

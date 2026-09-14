@@ -4,10 +4,12 @@
 package pipeline_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
@@ -102,7 +104,7 @@ func TestNewSnapshotReleasePlan_UsesFallbackProjectTypeAndBuildsStagePlans(t *te
 func TestNewSnapshotReleasePlan_ComputesExplicitBinaryTransfers(t *testing.T) {
 	t.Parallel()
 
-	configPlan := pipeline.NewConfigPlan(&config.Config{
+	configPlan := executionConfigPlan(t, &config.Config{
 		Artifacts: []config.Artifact{{Name: "go-service", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeContainerFirst}}},
 		Containers: []config.Container{{
 			Name:      "api",
@@ -124,12 +126,19 @@ func TestNewSnapshotReleasePlan_ComputesExplicitBinaryTransfers(t *testing.T) {
 	if !hasTransfer(plan.ArtifactTransfers.Items, "extracted_binaries", "api-binaries-arm64") {
 		t.Errorf("missing dev extracted binary transfer: %+v", plan.ArtifactTransfers.Items)
 	}
+
+	// analyzed-artifact asks for an SBOM layer without asking for the build
+	// layer: the dev SBOM target runs, the container-first build SBOM target
+	// does not. One flag for both ran a build SBOM nobody requested.
+	if !plan.Stages.Publish.Targets.SBOM.Runs || plan.Stages.Publish.Targets.GoContainerFirst.Runs {
+		t.Errorf("publish targets = %+v, want the dev SBOM target and not the build SBOM target", plan.Stages.Publish.Targets)
+	}
 }
 
 func TestNewSnapshotReleasePlan_ProjectTypeOverrideWins(t *testing.T) {
 	t.Parallel()
 
-	configPlan := pipeline.NewConfigPlan(&config.Config{Artifacts: []config.Artifact{{Name: "api", ProjectType: projecttype.NPM}}})
+	configPlan := executionConfigPlan(t, &config.Config{Artifacts: []config.Artifact{{Name: "api", ProjectType: projecttype.NPM}}})
 
 	plan, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan:  configPlan,
@@ -150,22 +159,30 @@ func TestNewSnapshotReleasePlan_RejectsUnsupportedConfigPlanVersion(t *testing.T
 	_, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan: pipeline.ConfigPlan{Version: pipeline.ConfigPlanVersion + 1},
 	})
-	if err == nil || !strings.Contains(err.Error(), "unsupported config-plan version") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
+	}
+
+	if !strings.Contains(err.Error(), "unsupported config-plan version") {
+		t.Errorf("err = %v, want it to explain why", err)
 	}
 }
 
 func TestNewSnapshotReleasePlan_RejectsInvalidSBOMInput(t *testing.T) {
 	t.Parallel()
 
-	configPlan := pipeline.NewConfigPlan(&config.Config{Artifacts: []config.Artifact{{Name: "api", ProjectType: projecttype.NPM}}})
+	configPlan := executionConfigPlan(t, &config.Config{Artifacts: []config.Artifact{{Name: "api", ProjectType: projecttype.NPM}}})
 
 	_, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan: configPlan,
 		SBOMs:      "bogus",
 	})
-	if err == nil || !strings.Contains(err.Error(), "sboms: unknown token") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+
+	if !strings.Contains(err.Error(), "sboms: unknown token") {
+		t.Errorf("err = %v, want it to explain why", err)
 	}
 }
 
@@ -173,31 +190,39 @@ func TestNewSnapshotReleasePlan_EmptyProjectTypeErrors(t *testing.T) {
 	t.Parallel()
 
 	_, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
-		ConfigPlan: pipeline.ConfigPlan{Version: pipeline.ConfigPlanVersion},
+		ConfigPlan: pipeline.NewConfigPlan(&config.Config{}),
 	})
-	if err == nil || !strings.Contains(err.Error(), "project-type is empty") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
+	}
+
+	if !strings.Contains(err.Error(), "project-type is empty") {
+		t.Errorf("err = %v, want it to explain why", err)
 	}
 }
 
 func TestNewSnapshotReleasePlan_RejectsUnknownProjectType(t *testing.T) {
 	t.Parallel()
 
-	configPlan := pipeline.NewConfigPlan(&config.Config{Artifacts: []config.Artifact{{Name: "api", ProjectType: projecttype.NPM}}})
+	configPlan := executionConfigPlan(t, &config.Config{Artifacts: []config.Artifact{{Name: "api", ProjectType: projecttype.NPM}}})
 
 	_, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
 		ConfigPlan:  configPlan,
 		ProjectType: "rust",
 	})
-	if err == nil || !strings.Contains(err.Error(), "unknown project-type") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
+	}
+
+	if !strings.Contains(err.Error(), "unknown project-type") {
+		t.Errorf("err = %v, want it to explain why", err)
 	}
 }
 
 func TestNewSnapshotReleasePlan_RejectsMultipleNPMDevPublishTargets(t *testing.T) {
 	t.Parallel()
 
-	configPlan := pipeline.NewConfigPlan(&config.Config{Artifacts: []config.Artifact{
+	configPlan := executionConfigPlan(t, &config.Config{Artifacts: []config.Artifact{
 		{Name: "api", ProjectType: projecttype.NPM},
 		{Name: "web", ProjectType: projecttype.NPM}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}})
@@ -207,15 +232,19 @@ func TestNewSnapshotReleasePlan_RejectsMultipleNPMDevPublishTargets(t *testing.T
 		ProjectType: projecttype.NPM,
 		PublishNPM:  true,
 	})
-	if err == nil || !strings.Contains(err.Error(), "dev publish target npm supports exactly one artifact") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
+	}
+
+	if !strings.Contains(err.Error(), "dev publish target npm supports exactly one artifact") {
+		t.Errorf("err = %v, want it to explain why", err)
 	}
 }
 
 func TestNewSnapshotReleasePlan_RejectsMultipleCargoDevSBOMTargets(t *testing.T) {
 	t.Parallel()
 
-	configPlan := pipeline.NewConfigPlan(&config.Config{Artifacts: []config.Artifact{
+	configPlan := executionConfigPlan(t, &config.Config{Artifacts: []config.Artifact{
 		{Name: "worker", ProjectType: projecttype.Cargo, Cargo: &config.CargoConfig{BuildMode: config.CargoBuildModeContainerFirst}},
 		{Name: "cli", ProjectType: projecttype.Cargo, Cargo: &config.CargoConfig{BuildMode: config.CargoBuildModeContainerFirst}},
 	}})
@@ -225,15 +254,19 @@ func TestNewSnapshotReleasePlan_RejectsMultipleCargoDevSBOMTargets(t *testing.T)
 		ProjectType: projecttype.Cargo,
 		SBOMs:       "build",
 	})
-	if err == nil || !strings.Contains(err.Error(), "dev publish target cargo supports exactly one artifact") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
+	}
+
+	if !strings.Contains(err.Error(), "dev publish target cargo supports exactly one artifact") {
+		t.Errorf("err = %v, want it to explain why", err)
 	}
 }
 
 func TestNewSnapshotReleasePlan_RejectsAmbiguousGoDevSBOMArtifactName(t *testing.T) {
 	t.Parallel()
 
-	configPlan := pipeline.NewConfigPlan(&config.Config{Artifacts: []config.Artifact{
+	configPlan := executionConfigPlan(t, &config.Config{Artifacts: []config.Artifact{
 		{Name: "go-cli", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeArtifactFirst}},
 		{Name: "go-service", ProjectType: projecttype.Go, Go: &config.GoConfig{BuildMode: config.GoBuildModeContainerFirst}},
 	}})
@@ -243,7 +276,11 @@ func TestNewSnapshotReleasePlan_RejectsAmbiguousGoDevSBOMArtifactName(t *testing
 		ProjectType: projecttype.Go,
 		SBOMs:       "analyzed-artifact",
 	})
-	if err == nil || !strings.Contains(err.Error(), "dev publish target go supports exactly one artifact") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
+	}
+
+	if !strings.Contains(err.Error(), "dev publish target go supports exactly one artifact") {
+		t.Errorf("err = %v, want it to explain why", err)
 	}
 }

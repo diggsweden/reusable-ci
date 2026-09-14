@@ -9,6 +9,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	adaptergit "github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
@@ -111,5 +112,64 @@ func TestAddPathspecs_ADashPrefixedPathIsAPathNotAFlag(t *testing.T) {
 
 	if staged {
 		t.Error("`-A` was interpreted as a git option and staged the working tree")
+	}
+
+	// The lenient half is the one commitpush feeds from the configured file
+	// pattern, and it swallows the exit status, so a flag read here would
+	// stage the tree with no error to notice.
+	adapter.AddPathspecs(ctx, []string{"-A"})
+
+	staged, err = adapter.HasStagedChanges(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if staged {
+		t.Error("the lenient add interpreted `-A` as a git option and staged the working tree")
+	}
+}
+
+// TestAddPathspecs_OneUnmatchedPathspecDoesNotVetoTheOthers pins the
+// property the lenient half exists for. git add is all-or-nothing across
+// its arguments: one pathspec that matches nothing makes it exit 128 having
+// staged NOTHING. The bump file patterns deliberately list files a project
+// may not have — both Gradle DSL spellings, package-lock.json — so a single
+// combined `git add` staged nothing for every Gradle project and the
+// version-bump commit was skipped as "No staged changes".
+func TestAddPathspecs_OneUnmatchedPathspecDoesNotVetoTheOthers(t *testing.T) {
+	repo := isolatedgit.NewRepo(t)
+	adapter := &adaptergit.Repo{Dir: repo.Dir}
+	ctx := context.Background()
+
+	for _, name := range []string{"CHANGELOG.md", "gradle.properties", "build.gradle.kts", "settings.gradle.kts"} {
+		if err := os.WriteFile(filepath.Join(repo.Dir, name), []byte(name+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The Gradle pattern verbatim: build.gradle and settings.gradle match
+	// nothing in a Kotlin DSL project.
+	adapter.AddPathspecs(ctx, []string{
+		"CHANGELOG.md", "gradle.properties", "build.gradle.kts", "settings.gradle.kts", "build.gradle", "settings.gradle",
+	})
+
+	staged, err := adapter.HasStagedChanges(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !staged {
+		t.Fatal("the four files that exist were not staged: an unmatched pathspec vetoed the whole add")
+	}
+
+	out, err := adapter.Run(ctx, "diff", "--cached", "--name-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"CHANGELOG.md", "gradle.properties", "build.gradle.kts", "settings.gradle.kts"} {
+		if !strings.Contains(out, name) {
+			t.Errorf("%s exists but is not staged; staged set:\n%s", name, out)
+		}
 	}
 }

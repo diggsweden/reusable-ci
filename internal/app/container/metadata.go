@@ -25,14 +25,17 @@ import (
 // non-empty, the use case skips the Provider.FetchRepoMetadata call.
 // EmitLabels gates whether labels are produced at all.
 type ComputeMetadataInput struct {
-	ImageName   string
-	TagRules    string
-	Flavor      string
-	EmitLabels  bool
-	Description string
-	License     string
+	ImageName      string
+	TagRules       string
+	Flavor         string
+	EmitLabels     bool
+	Description    string
+	License        string
+	SourceRefName  string
+	SourceRefType  provider.RefType
+	SourceRevision string
 	// Now is the timestamp baked into org.opencontainers.image.created.
-	// Tests pass a fixed time; the CLI passes time.Now.
+	// Tests pass a fixed time; the CLI derives it from SOURCE_DATE_EPOCH or HEAD.
 	Now time.Time
 }
 
@@ -70,6 +73,10 @@ func ComputeMetadata(
 		return nil, fmt.Errorf("image name is required: pass --image-name <ref> or set $IMAGE_NAME: %w", errs.ErrUsage)
 	}
 
+	if !container.ValidRepositoryName(in.ImageName) {
+		return nil, fmt.Errorf("image name must be a canonical tag-free repository: %w", errs.ErrValidation)
+	}
+
 	if err := container.ValidateFlavor(in.Flavor); err != nil {
 		return nil, err
 	}
@@ -79,9 +86,33 @@ func ComputeMetadata(
 		return nil, err
 	}
 
+	if sourceErr := validateSourceIdentity(in); sourceErr != nil {
+		return nil, sourceErr
+	}
+
 	evt, err := prov.ResolveContext(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("resolve event context: %w", err)
+	}
+
+	event := *evt
+	evt = &event
+
+	if in.SourceRefName != "" {
+		evt.RefName = in.SourceRefName
+	}
+
+	if in.SourceRefType != "" {
+		evt.RefType = in.SourceRefType
+	}
+
+	if in.SourceRevision != "" {
+		evt.SHA = in.SourceRevision
+
+		evt.ShortSHA = in.SourceRevision
+		if len(evt.ShortSHA) > 7 {
+			evt.ShortSHA = evt.ShortSHA[:7]
+		}
 	}
 
 	mctx := container.FromEventContext(evt)
@@ -137,6 +168,10 @@ func ComputeMetadata(
 	// the ref is clean — an unusual tag degrades to "no promotion", never a
 	// failed manifest push.
 	refClean := mctx.RefType == provider.RefTypeTag && container.IsCleanRefTag(mctx.RefName)
+	if err := sink.Set(ctx, "source-ref-name", mctx.RefName); err != nil {
+		return nil, fmt.Errorf("set source-ref-name: %w", err)
+	}
+
 	if err := sink.Set(ctx, "ref-clean", strconv.FormatBool(refClean)); err != nil {
 		return nil, fmt.Errorf("set ref-clean: %w", err)
 	}
@@ -157,6 +192,27 @@ func ComputeMetadata(
 	return &ComputeMetadataOutput{
 		Tags: tags, Labels: labels, Primary: primary, JSON: jsonOut,
 	}, nil
+}
+
+// validateSourceIdentity checks the explicit release identity before the
+// provider is asked for anything, so a malformed override refuses with no
+// effect at all.
+func validateSourceIdentity(in ComputeMetadataInput) error {
+	if strings.ContainsAny(in.SourceRefName, "\r\n") {
+		return fmt.Errorf("source ref name must be a scalar: %w", errs.ErrUsage)
+	}
+
+	switch in.SourceRefType {
+	case "", provider.RefTypeBranch, provider.RefTypeTag, provider.RefTypePR, provider.RefTypeOther:
+	default:
+		return fmt.Errorf("invalid source ref type %q: %w", in.SourceRefType, errs.ErrUsage)
+	}
+
+	if strings.ContainsAny(in.SourceRevision, "\r\n") {
+		return fmt.Errorf("source revision must be a scalar: %w", errs.ErrUsage)
+	}
+
+	return nil
 }
 
 // resolveOCIFields fills the description / license OCI fields, taking

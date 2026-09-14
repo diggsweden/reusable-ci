@@ -21,15 +21,18 @@
 package planfile
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strconv"
 	"sync"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/urfave/cli/v3"
 )
 
@@ -94,8 +97,8 @@ func (s source) Lookup() (string, bool) {
 		slog.Info("using plan file", "path", path, "sha256", hex.EncodeToString(sum[:]))
 	}
 
-	var plan map[string]map[string]any
-	if err := json.Unmarshal(raw, &plan); err != nil {
+	plan, err := Decode(raw)
+	if err != nil {
 		warnOnce(path, "plan file is not a {scope: {flag: value}} JSON object", err)
 
 		return "", false
@@ -117,6 +120,31 @@ func (s source) Lookup() (string, bool) {
 	}
 
 	return str, true
+}
+
+// Decode is shared by plan lookup and merging so scalar numbers retain their
+// JSON spelling and neither path accepts null/nonobject plan containers.
+func Decode(raw []byte) (map[string]map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+
+	var plan map[string]map[string]any
+	if err := decoder.Decode(&plan); err != nil || plan == nil {
+		return nil, fmt.Errorf("plan must be a {scope: {flag: value}} JSON object: %w", errs.ErrMalformedInput)
+	}
+
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, fmt.Errorf("plan must contain exactly one JSON object: %w", errs.ErrMalformedInput)
+	}
+
+	for _, scope := range plan {
+		if scope == nil {
+			return nil, fmt.Errorf("plan scope must be a JSON object: %w", errs.ErrMalformedInput)
+		}
+	}
+
+	return plan, nil
 }
 
 func (s source) String() string {
@@ -142,8 +170,8 @@ func stringify(value any) (string, bool) {
 		return typed, true
 	case bool:
 		return strconv.FormatBool(typed), true
-	case float64:
-		return strconv.FormatFloat(typed, 'f', -1, 64), true
+	case json.Number:
+		return typed.String(), true
 	default:
 		return "", false
 	}

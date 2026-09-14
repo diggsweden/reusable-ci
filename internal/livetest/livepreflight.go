@@ -7,11 +7,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -61,7 +63,7 @@ func PrepareLiveInputs(outputDir string, now time.Time) (LivePreflightSummary, e
 
 	cleanupCommand, cleanupContractFile := lab.cleanupPair()
 
-	commandBinding, contractBinding, err := bindCleanupFiles(cleanupCommand, cleanupContractFile)
+	commandBinding, contractBinding, err := bindCleanupFiles(cleanupCommand, lab.cleanupCommandSHA256(), cleanupContractFile)
 	if err != nil {
 		return LivePreflightSummary{}, err
 	}
@@ -113,6 +115,10 @@ func PrepareLiveInputs(outputDir string, now time.Time) (LivePreflightSummary, e
 		return LivePreflightSummary{}, fmt.Errorf("no contract endpoint has an explicit RC_LIVE_<FORGE>_OWNER (gitlab or forgejo): %w", errs.ErrValidation)
 	}
 
+	if profileErr := validateLiveProfile(lab, selected); profileErr != nil {
+		return LivePreflightSummary{}, profileErr
+	}
+
 	caBody, err := readContractCA(lab)
 	if err != nil {
 		return LivePreflightSummary{}, err
@@ -123,6 +129,83 @@ func PrepareLiveInputs(outputDir string, now time.Time) (LivePreflightSummary, e
 	}
 
 	return LivePreflightSummary{Selected: selected, Generation: lab.Generation.ID}, nil
+}
+
+func validateLiveProfile(lab labContract, selected int) error { //nolint:cyclop // Full evidence intentionally validates each required capability explicitly.
+	profile := os.Getenv(liveProfileEnv)
+	switch profile {
+	case "", "focused":
+		return nil
+	case "full":
+	default:
+		return fmt.Errorf("%s must be full or focused, got %q: %w", liveProfileEnv, profile, errs.ErrValidation)
+	}
+
+	if selected != 2 {
+		return fmt.Errorf("full live profile requires both gitlab and forgejo, selected %d: %w", selected, errs.ErrValidation)
+	}
+
+	expectedRoad := os.Getenv(liveExpectedRoadEnv)
+	if expectedRoad != "compose" && expectedRoad != "k3s" {
+		return fmt.Errorf("%s must be compose or k3s, got %q: %w", liveExpectedRoadEnv, expectedRoad, errs.ErrValidation)
+	}
+
+	road := ""
+
+	for _, forge := range []provider.ForgeAPI{provider.ForgeGitLab, provider.ForgeForgejo} {
+		if !RunnerAvailable(forge) {
+			return fmt.Errorf("full live profile requires %s in %s: %w", forge, labRunnerForgesEnv, errs.ErrValidation)
+		}
+
+		endpoint, err := selectedEndpointFor(lab, forge)
+		if err != nil {
+			return err
+		}
+
+		if !endpoint.hasCapability("workflow-runs") {
+			return fmt.Errorf("full live profile endpoint %q lacks required capability workflow-runs: %w", endpoint.Name, errs.ErrValidation)
+		}
+
+		if _, _, ok := lab.fulcioFor(endpoint.Name); !ok {
+			return fmt.Errorf("full live profile endpoint %q has no Fulcio issuer mapping: %w", endpoint.Name, errs.ErrValidation)
+		}
+
+		endpointRoad, err := liveEndpointRoad(endpoint)
+		if err != nil {
+			return err
+		}
+
+		if road != "" && endpointRoad != road {
+			return fmt.Errorf("full live profile endpoints span roads %s and %s: %w", road, endpointRoad, errs.ErrValidation)
+		}
+
+		road = endpointRoad
+	}
+
+	if expectedRoad != "" && road != expectedRoad {
+		return fmt.Errorf("full live profile expected %s road, contract selects %s: %w", expectedRoad, road, errs.ErrValidation)
+	}
+
+	return nil
+}
+
+func liveEndpointRoad(endpoint labEndpoint) (string, error) {
+	parsed, err := parseHTTPSURL(endpoint.Name+" web_base_url", endpoint.WebBaseURL, false)
+	if err != nil {
+		return "", err
+	}
+
+	labels := strings.Split(parsed.hostname, ".")
+	if len(labels) < 3 || labels[len(labels)-1] != "forgelab" {
+		return "", fmt.Errorf("full live profile endpoint %q is not on a recognized Forge Lab road: %w", endpoint.Name, errs.ErrValidation)
+	}
+
+	road := labels[len(labels)-2]
+	if road != "compose" && road != "k3s" {
+		return "", fmt.Errorf("full live profile endpoint %q has unknown road %q: %w", endpoint.Name, road, errs.ErrValidation)
+	}
+
+	return road, nil
 }
 
 func targetFromContract(lab labContract, endpoint labEndpoint, forge provider.ForgeAPI, owner string) (Target, error) {
@@ -176,7 +259,7 @@ func targetFromContract(lab labContract, endpoint labEndpoint, forge provider.Fo
 	return target, nil
 }
 
-func bindCleanupFiles(command, contractFile string) (cleanupFileBinding, cleanupFileBinding, error) {
+func bindCleanupFiles(command string, commandSHA256 *string, contractFile string) (cleanupFileBinding, cleanupFileBinding, error) {
 	if err := validateAbsoluteDataPath("credential_cleanup.command", command); err != nil {
 		return cleanupFileBinding{}, cleanupFileBinding{}, err
 	}
@@ -188,6 +271,14 @@ func bindCleanupFiles(command, contractFile string) (cleanupFileBinding, cleanup
 	commandBinding, err := bindOwnedFile(command, true)
 	if err != nil {
 		return cleanupFileBinding{}, cleanupFileBinding{}, fmt.Errorf("credential cleanup command: %w", err)
+	}
+
+	if commandSHA256 != nil {
+		actual := fmt.Sprintf("%x", sha256.Sum256(commandBinding.Body))
+		if actual != *commandSHA256 {
+			return cleanupFileBinding{}, cleanupFileBinding{}, fmt.Errorf(
+				"credential cleanup command does not match command_sha256: %w", errs.ErrValidation)
+		}
 	}
 
 	contractBinding, err := bindOwnedFile(contractFile, false)
@@ -208,13 +299,38 @@ func VerifyCleanupBindings(command, commandFacts, contractFile, contractFileFact
 	return verifyCleanupBinding("cleanup contract_file", contractFile, contractFileFacts, false)
 }
 
-// RunFrozenCleanup descriptor-pins the frozen launcher, immediately revalidates
-// the producer-bound recovery path, and executes exactly that launcher/path pair.
-func RunFrozenCleanup(command, commandFacts, contractFile, contractFileFacts string) error {
+// FrozenCleanupTimeout bounds one frozen cleanup launch. The launcher deletes
+// lab resources and revokes the run's tokens over the network, which takes
+// minutes, not hours; a hung launcher must hand control back to the runner so
+// it can print the manual recovery pair instead of waiting forever.
+const FrozenCleanupTimeout = 15 * time.Minute
+
+// frozenCleanupGrace is how long a cancelled launcher has after SIGTERM before
+// it is killed and its output pipes are abandoned.
+const frozenCleanupGrace = 30 * time.Second
+
+// ErrFrozenCleanupFailed marks a cleanup that passed verification and was
+// launched but did not exit cleanly, including a launcher stopped by the
+// context. Every other RunFrozenCleanup error is a refusal before launch.
+var ErrFrozenCleanupFailed = errors.New("frozen cleanup launcher did not complete")
+
+// RunFrozenCleanup descriptor-pins the frozen launcher, revalidates the
+// producer-bound recovery file, and executes that launcher with the recovery
+// file's path as its only argument.
+//
+// The launcher runs from the pinned descriptor, so replacing its pathname after
+// the check changes nothing. The recovery file is passed by path, as the
+// producer's launcher expects, so its check is immediately before launch but
+// not atomic with the launcher's own open. The launcher inherits this process's
+// environment unchanged: it resolves its own tools and reads its credentials
+// from the recovery file, and nothing is added. ctx bounds the launch; on
+// cancellation the launcher gets SIGTERM, then SIGKILL after a grace period.
+func RunFrozenCleanup(ctx context.Context, command, commandFacts, contractFile, contractFileFacts string) error {
 	commandFile, commandBinding, err := openOwnedFileBinding(command, true)
 	if err != nil {
 		return fmt.Errorf("validated frozen cleanup command changed during the live run: %w", err)
 	}
+
 	defer func() { _ = commandFile.Close() }()
 
 	if commandBinding.Path != command || commandBinding.Facts != commandFacts {
@@ -228,13 +344,24 @@ func RunFrozenCleanup(command, commandFacts, contractFile, contractFileFacts str
 	// ExtraFiles keeps descriptor 3 open across exec. Executing through procfs
 	// removes the pathname race for the launcher while preserving Forge Lab's
 	// exact original contract_file argument.
-	commandProcess := exec.CommandContext(context.Background(), "/proc/self/fd/3", contractFile) //nolint:gosec // Descriptor 3 is the preflight-bound frozen launcher.
+	commandProcess := exec.CommandContext(ctx, "/proc/self/fd/3", contractFile) //nolint:gosec // Descriptor 3 is the preflight-bound frozen launcher.
 	commandProcess.ExtraFiles = []*os.File{commandFile}
+	commandProcess.Env = os.Environ()
 	commandProcess.Stdin = os.Stdin
 	commandProcess.Stdout = os.Stdout
 	commandProcess.Stderr = os.Stderr
+	commandProcess.Cancel = func() error { return commandProcess.Process.Signal(syscall.SIGTERM) }
+	commandProcess.WaitDelay = frozenCleanupGrace
 
-	return commandProcess.Run()
+	if err := commandProcess.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("%w: %w: %w", ErrFrozenCleanupFailed, ctxErr, err)
+		}
+
+		return fmt.Errorf("%w: %w", ErrFrozenCleanupFailed, err)
+	}
+
+	return nil
 }
 
 func verifyCleanupBinding(label, path, expectedFacts string, executable bool) error {
@@ -506,6 +633,7 @@ func writeLiveSnapshot(
 	}
 
 	complete := false
+
 	defer func() {
 		if !complete {
 			_ = os.RemoveAll(outputDir)

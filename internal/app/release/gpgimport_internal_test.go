@@ -8,9 +8,28 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 var errPreset = errors.New("agent refused")
+
+func TestPresetPassphraseInAgent_RejectsNoParsedKeygrips(t *testing.T) {
+	t.Parallel()
+
+	for _, text := range []string{"", " \n", "sec:u:255:22:ABC:::::::::\n", "grp:::::::::\n"} {
+		agent := &fakeGPGAgent{gripsText: text}
+
+		err := presetPassphraseInAgent(t.Context(), agent, "ABC", "fixture")
+		if !errors.Is(err, errs.ErrMalformedInput) {
+			t.Errorf("err=%v, want ErrMalformedInput", err)
+		}
+
+		if len(agent.preset) != 0 {
+			t.Error("preset called without a keygrip")
+		}
+	}
+}
 
 type fakeGPGAgent struct {
 	gripsText  string

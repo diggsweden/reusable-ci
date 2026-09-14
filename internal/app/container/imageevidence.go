@@ -12,8 +12,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 const defaultImageEvidenceTrivyTimeout = "30m"
@@ -83,6 +86,10 @@ type imageEvidenceDeps struct {
 // ImageEvidence scans an OCI layout with Trivy and optionally writes a CycloneDX SBOM with Syft.
 func ImageEvidence(ctx context.Context, buildah ImageEvidenceBuildah, skopeo ImageEvidenceSkopeo, trivy ImageEvidenceTrivy, syft ImageEvidenceSyft, out, stderr io.Writer, in ImageEvidenceInput) error {
 	if err := normalizeImageEvidenceRegistryDigestRef(&in); err != nil {
+		return err
+	}
+
+	if err := validateImageEvidenceOutputPaths([]string{in.TrivyOutput, in.SBOMOutput}); err != nil {
 		return err
 	}
 
@@ -268,6 +275,33 @@ func validateMultiArchImageEvidenceTemplates(in ImageEvidenceInput, platforms []
 		}
 	}
 
+	paths := make([]string, 0, 2*len(platforms))
+	for _, platform := range platforms {
+		paths = append(paths, renderImageEvidenceTemplate(in.TrivyOutputTemplate, platform), renderImageEvidenceTemplate(in.SBOMOutputTemplate, platform))
+	}
+
+	return validateImageEvidenceOutputPaths(paths)
+}
+
+func validateImageEvidenceOutputPaths(paths []string) error {
+	seen := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return err
+		}
+
+		if seen[absolute] {
+			return fmt.Errorf("image evidence output paths collide: %w", errs.ErrUsage)
+		}
+
+		seen[absolute] = true
+	}
+
 	return nil
 }
 
@@ -291,6 +325,12 @@ func validateMultiArchImageEvidenceSource(in ImageEvidenceInput) error {
 
 func normalizeImageEvidenceRegistryDigestRef(in *ImageEvidenceInput) error {
 	if in.RegistryDigestRef == "" {
+		if in.RegistryRef != "" || in.Digest != "" {
+			if _, _, err := splitImageEvidenceRegistryDigestRef(in.RegistryRef + "@" + in.Digest); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	}
 
@@ -326,6 +366,10 @@ func splitImageEvidenceRegistryDigestRef(value string) (string, string, error) {
 
 	if !domaincontainer.ValidDigest(digest) {
 		return "", "", fmt.Errorf("registry digest ref has invalid digest %q: %w", digest, errs.ErrUsage)
+	}
+
+	if !domaincontainer.ValidRepositoryName(imageRef) && !domaincontainer.ValidTaggedRef(imageRef) {
+		return "", "", fmt.Errorf("registry ref must be a canonical OCI repository or tag: %w", errs.ErrUsage)
 	}
 
 	return imageRef, digest, nil
@@ -469,19 +513,65 @@ func makeImageEvidenceTempDir(in ImageEvidenceInput, pattern string) (string, er
 	return layout, nil
 }
 
-func scanImageEvidenceLayout(ctx context.Context, deps imageEvidenceDeps, layout, trivyOutput, sbomOutput, timeout string) error {
-	if err := runImageEvidenceTrivy(ctx, deps.trivy, deps.out, deps.stderr, layout, trivyOutput, timeout); err != nil {
+func scanImageEvidenceLayout(ctx context.Context, deps imageEvidenceDeps, layout, trivyOutput, sbomOutput, timeout string) error { //nolint:cyclop // staging, scanner status, JSON validation and publication have independent failure boundaries.
+	trivyStage, err := pathsafe.NewArtifactStaging(filepath.Dir(trivyOutput))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = trivyStage.Close() }()
+
+	trivyPath := filepath.Join(trivyStage.Root().Name(), filepath.Base(trivyOutput))
+
+	var sbomStage *pathsafe.ArtifactStaging
+
+	if sbomOutput != "" {
+		if deps.syft == nil {
+			return fmt.Errorf("SBOM output requires Syft: %w", errs.ErrUsage)
+		}
+
+		sbomStage, err = pathsafe.NewArtifactStaging(filepath.Dir(sbomOutput))
+		if err != nil {
+			return err
+		}
+
+		defer func() { _ = sbomStage.Close() }()
+	}
+
+	if err := runImageEvidenceTrivy(ctx, deps.trivy, deps.out, deps.stderr, layout, trivyPath, timeout); err != nil {
 		return err
 	}
 
-	if err := validateImageEvidenceTrivyOutput(trivyOutput); err != nil {
+	if err := validateImageEvidenceTrivyOutput(trivyPath); err != nil {
 		return err
 	}
 
 	if sbomOutput != "" {
-		if err := deps.syft.Generate(ctx, "oci-dir:"+layout, map[string]string{"cyclonedx-json": sbomOutput}, deps.stderr); err != nil {
+		sbomPath := filepath.Join(sbomStage.Root().Name(), filepath.Base(sbomOutput))
+		if err := deps.syft.Generate(ctx, "oci-dir:"+layout, map[string]string{"cyclonedx-json": sbomPath}, deps.stderr); err != nil {
 			return fmt.Errorf("syft oci-dir:%s: %w", layout, err)
 		}
+
+		body, err := readImageEvidenceReport(sbomPath)
+		if err != nil {
+			return err
+		}
+
+		var bom struct {
+			Format      string `json:"bomFormat"`
+			SpecVersion string `json:"specVersion"`
+			Version     int    `json:"version"`
+		}
+		if json.Unmarshal(body, &bom) != nil || bom.Format != "CycloneDX" || bom.SpecVersion == "" || bom.Version < 1 {
+			return fmt.Errorf("SBOM output must be a CycloneDX document with specVersion and positive version: %w", errs.ErrMalformedInput)
+		}
+	}
+
+	if err := trivyStage.Install(); err != nil {
+		return err
+	}
+
+	if sbomStage != nil {
+		return sbomStage.Install()
 	}
 
 	return nil
@@ -509,28 +599,25 @@ func runImageEvidenceTrivy(ctx context.Context, trivy ImageEvidenceTrivy, out, s
 }
 
 func validateImageEvidenceTrivyOutput(path string) error {
-	body, err := os.ReadFile(path) //nolint:gosec // caller-provided report path, same trust as CLI file flags.
+	body, err := readImageEvidenceReport(path)
 	if err != nil {
 		return fmt.Errorf("read trivy output %s: %w", path, err)
 	}
 
-	var report struct {
-		Results json.RawMessage `json:"Results"`
-	}
-	if err := json.Unmarshal(body, &report); err != nil {
-		return fmt.Errorf("parse trivy output %s: %w: %w", path, err, errs.ErrMalformedInput)
-	}
-
-	var results any
-	if len(report.Results) == 0 || json.Unmarshal(report.Results, &results) != nil {
-		return fmt.Errorf("trivy output %s must be an object with a Results array: %w", path, errs.ErrMalformedInput)
-	}
-
-	if _, ok := results.([]any); !ok {
-		return fmt.Errorf("trivy output %s must be an object with a Results array: %w", path, errs.ErrMalformedInput)
+	if _, err := security.ParseTrivyReport(body); err != nil {
+		return fmt.Errorf("parse trivy output %s: %w", path, err)
 	}
 
 	return nil
+}
+
+func readImageEvidenceReport(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("scanner did not create a regular report: %w", errs.ErrMalformedInput)
+	}
+
+	return cliio.ReadFile(path)
 }
 
 func requireImageEvidenceDir(path, label string) error {

@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 // AndroidArtifactNamesInput drives ResolveAndroidArtifactNames. Mirrors
@@ -81,60 +83,131 @@ func ResolveAndroidArtifactNames(in AndroidArtifactNamesInput) (AndroidArtifactN
 // ResolveAndroidBuildTasksInput drives ResolveAndroidBuildTasks.
 type ResolveAndroidBuildTasksInput struct {
 	Flavor      string
-	BuildTypes  string // "debug", "release", or "debug,release" — substring-matched
+	BuildTypes  string // exact comma/whitespace-separated "debug" and/or "release" values
 	IncludeAAB  bool
 	BuildModule string // empty → "app"
 }
 
+// AndroidBuildTypeSet is the exact parsed Android variant selection.
+type AndroidBuildTypeSet struct {
+	Debug   bool
+	Release bool
+}
+
 // ResolveAndroidBuildTasks computes the gradle task list. Pure mirror.
-func ResolveAndroidBuildTasks(in ResolveAndroidBuildTasksInput) string {
-	module := in.BuildModule
+func ResolveAndroidBuildTasks(in ResolveAndroidBuildTasksInput) (string, error) {
+	buildTypes, err := ParseAndroidBuildTypes(in.BuildTypes)
+	if err != nil {
+		return "", err
+	}
+
+	// The module is trimmed and defaulted, and a module containing whitespace
+	// is refused. The task list is a space-separated string that is later split
+	// into Gradle arguments, so an untrimmed "  " produced the task
+	// "  :bundleRelease", and "app extra" would have become two tasks.
+	module := strings.TrimSpace(in.BuildModule)
 	if module == "" {
 		module = "app"
+	}
+
+	if strings.ContainsFunc(module, unicode.IsSpace) {
+		return "", fmt.Errorf("build-module %q must be a single Gradle module name: %w", module, errs.ErrValidation)
 	}
 
 	flavorCap := capitalizeFirst(in.Flavor)
 
 	var parts []string
-	if strings.Contains(in.BuildTypes, "debug") {
+	if buildTypes.Debug {
 		parts = append(parts, "assemble"+flavorCap+"Debug")
 	}
 
-	if strings.Contains(in.BuildTypes, "release") {
+	if buildTypes.Release {
 		parts = append(parts, "assemble"+flavorCap+"Release")
 	}
 
-	if in.IncludeAAB && strings.Contains(in.BuildTypes, "release") {
+	if in.IncludeAAB && buildTypes.Release {
 		parts = append(parts, module+":bundle"+flavorCap+"Release")
 	}
 
-	return strings.Join(parts, " ")
+	return strings.Join(parts, " "), nil
 }
 
-// capitalizeFirst returns the input with the first ASCII letter
-// upper-cased and the rest lower-cased — same shape as the bash
-// awk substr trick.
+// ParseAndroidBuildTypes accepts only exact comma/whitespace-separated debug
+// and release tokens. Config validation and planning share this parser with
+// task resolution so substring lookalikes cannot enable a variant.
+func ParseAndroidBuildTypes(raw string) (AndroidBuildTypeSet, error) {
+	tokens := strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
+	if len(tokens) == 0 {
+		return AndroidBuildTypeSet{}, fmt.Errorf("build-types must contain debug and/or release: %w", errs.ErrValidation)
+	}
+
+	var parsed AndroidBuildTypeSet
+
+	for _, token := range tokens {
+		switch token {
+		case "debug":
+			parsed.Debug = true
+		case "release":
+			parsed.Release = true
+		default:
+			return AndroidBuildTypeSet{}, fmt.Errorf("unsupported Android build type %q (want debug and/or release): %w", token, errs.ErrValidation)
+		}
+	}
+
+	return parsed, nil
+}
+
+func hasAndroidBuildType(raw, want string) bool {
+	parsed, err := ParseAndroidBuildTypes(raw)
+	if err != nil {
+		return false
+	}
+
+	switch want {
+	case "debug":
+		return parsed.Debug
+	case "release":
+		return parsed.Release
+	default:
+		return false
+	}
+}
+
+// capitalizeFirst returns the input with its first ASCII byte upper-cased.
+// The remainder is preserved because Gradle product flavors may be camelCase.
 func capitalizeFirst(s string) string {
 	if s == "" {
 		return ""
 	}
 
-	return strings.ToUpper(s[:1]) + strings.ToLower(s[1:])
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // ParseGradleVersionFromProperties extracts versionName and versionCode
-// from a gradle.properties text body. Missing lines yield "unknown",
-// matching the bash fallback.
+// from literal key=value lines, allowing surrounding whitespace. Escapes,
+// continuation lines and alternative Java-properties separators are not parsed.
+// Missing lines yield "unknown", matching the bash fallback.
 func ParseGradleVersionFromProperties(body string) (string, string) {
 	versionName := "unknown" //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	versionCode := "unknown"
 
 	for _, line := range strings.Split(body, "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+
 		switch {
-		case strings.HasPrefix(line, "versionName="):
-			versionName = strings.TrimPrefix(line, "versionName=")
-		case strings.HasPrefix(line, "versionCode="):
-			versionCode = strings.TrimPrefix(line, "versionCode=")
+		case versionName == "unknown" && key == "versionName":
+			versionName = value
+		case versionCode == "unknown" && key == "versionCode":
+			versionCode = value
+		}
+
+		if versionName != "unknown" && versionCode != "unknown" {
+			break
 		}
 	}
 
@@ -167,16 +240,16 @@ func RenderAndroidSummary(in AndroidSummaryInput, now time.Time) string {
 	_, _ = fmt.Fprintf(&b, "### Configuration\n")
 	_, _ = fmt.Fprintf(&b, "| Setting | Value |\n")
 	_, _ = fmt.Fprintf(&b, "|---------|-------|\n")
-	_, _ = fmt.Fprintf(&b, "| **Java** | %s (%s) |\n", in.JavaVersion, in.JDKDist)
-	_, _ = fmt.Fprintf(&b, "| **Module** | %s |\n", in.BuildModule)
+	_, _ = fmt.Fprintf(&b, "| **Java** | %s (%s) |\n", summary.LiteralText(in.JavaVersion), summary.LiteralText(in.JDKDist))
+	_, _ = fmt.Fprintf(&b, "| **Module** | %s |\n", summary.LiteralText(in.BuildModule))
 
 	flavor := in.Flavor
 	if flavor == "" {
 		flavor = "default"
 	}
 
-	_, _ = fmt.Fprintf(&b, "| **Flavor** | %s |\n", flavor)
-	_, _ = fmt.Fprintf(&b, "| **Build Types** | %s |\n", in.BuildTypes)
+	_, _ = fmt.Fprintf(&b, "| **Flavor** | %s |\n", summary.LiteralText(flavor))
+	_, _ = fmt.Fprintf(&b, "| **Build Types** | %s |\n", summary.LiteralText(in.BuildTypes))
 	_, _ = fmt.Fprintf(&b, "| **Include AAB** | %s |\n", checkmark(in.IncludeAAB))
 	_, _ = fmt.Fprintf(&b, "| **Signing** | %s |\n", boolStatus(in.Signing))
 
@@ -187,21 +260,21 @@ func RenderAndroidSummary(in AndroidSummaryInput, now time.Time) string {
 	}
 
 	if in.Version != "" && in.Version != "unknown" {
-		_, _ = fmt.Fprintf(&b, "| **Version** | %s (%s) |\n", in.Version, in.VersionCode)
+		_, _ = fmt.Fprintf(&b, "| **Version** | %s (%s) |\n", summary.LiteralText(in.Version), summary.LiteralText(in.VersionCode))
 	}
 
 	_, _ = fmt.Fprintf(&b, "\n### Artifacts Generated\n")
 
-	if strings.Contains(in.BuildTypes, "debug") {
-		_, _ = fmt.Fprintf(&b, "✓ Debug APK: `%s`\n", in.DebugName)
+	if hasAndroidBuildType(in.BuildTypes, "debug") {
+		_, _ = fmt.Fprintf(&b, "✓ Debug APK: %s\n", summary.InlineCode(in.DebugName))
 	}
 
-	if strings.Contains(in.BuildTypes, "release") {
-		_, _ = fmt.Fprintf(&b, "✓ Release APK: `%s`\n", in.ReleaseName)
+	if hasAndroidBuildType(in.BuildTypes, "release") {
+		_, _ = fmt.Fprintf(&b, "✓ Release APK: %s\n", summary.InlineCode(in.ReleaseName))
 	}
 
-	if in.IncludeAAB && strings.Contains(in.BuildTypes, "release") {
-		_, _ = fmt.Fprintf(&b, "✓ Release AAB: `%s`\n", in.AABName)
+	if in.IncludeAAB && hasAndroidBuildType(in.BuildTypes, "release") {
+		_, _ = fmt.Fprintf(&b, "✓ Release AAB: %s\n", summary.InlineCode(in.AABName))
 	}
 
 	_, _ = fmt.Fprintf(&b, "\n*Build completed at %s*\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))

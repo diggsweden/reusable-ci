@@ -15,14 +15,14 @@ const (
 	refTypeBranch = "branch"
 )
 
-// TestClassifyRefType covers the GitHub half of a rule the three
+// TestClassifyRefType_ClassifiesRefsFromTheForgeEnvironment covers the GitHub half of a rule the three
 // providers share: GITHUB_REF_TYPE reports refTypeBranch during a
 // pull_request event, so the event-name override is the only thing that
 // keeps a PR off the trusted branch-push path.
 //
 // The forgejo adapter has the same override and the gitlab one its
 // CI_PIPELINE_SOURCE equivalent. This classifier had no direct test.
-func TestClassifyRefType(t *testing.T) {
+func TestClassifyRefType_ClassifiesRefsFromTheForgeEnvironment(t *testing.T) {
 	t.Parallel()
 
 	env := func(kv map[string]string) func(string) string {

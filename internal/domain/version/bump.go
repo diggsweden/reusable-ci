@@ -4,11 +4,14 @@
 package version
 
 import (
+	"encoding/json"
 	"fmt"
-	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // UpdatePropertyResult tags whether the line was rewritten in place
@@ -22,20 +25,21 @@ const (
 	UpdatePropertyAdded
 )
 
-// UpdateOrAddProperty rewrites the first line that starts with `key`
-// (case-sensitive, anchored) to `key<sep><value>`, or appends a new
-// line if no match. Mirrors `update_or_add_property` helper.
+// UpdateOrAddProperty rewrites the first exact property key (case-sensitive,
+// anchored, with optional whitespace before sep) to `key<sep><value>`, or
+// appends a new line if no match.
 //
 // Returns the new body, a result tag, and whether any change was made
 // (true unless the key already had exactly that value).
 func UpdateOrAddProperty(body, key, value, sep string) (string, UpdatePropertyResult) {
 	lines := strings.Split(body, "\n")
-	for i, line := range lines {
-		if strings.HasPrefix(line, key) {
-			// Match the bash's anchored `^${key}` — accept any tail after
-			// the key prefix. The bash overwrites the whole line with
-			// `${key}${sep}${value}`.
-			lines[i] = key + sep + value
+	for index, line := range lines {
+		// The key may be indented, and the separator may carry spaces the
+		// file did not: "versionCode = 41" is the same property as
+		// "versionCode=41". Rewriting keeps the indentation it found.
+		trimmed := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmed, key) && strings.HasPrefix(strings.TrimSpace(strings.TrimPrefix(trimmed, key)), strings.TrimSpace(sep)) {
+			lines[index] = line[:len(line)-len(trimmed)] + key + sep + value
 
 			return strings.Join(lines, "\n"), UpdatePropertyUpdated
 		}
@@ -60,7 +64,7 @@ type IncrementVersionCodeResult struct {
 	Added bool // true → "versionCode=1" appended
 }
 
-var versionCodeLine = regexp.MustCompile(`(?m)^versionCode=([^\s]*)`)
+var versionCodeLine = regexp.MustCompile(`(?m)^[ \t]*versionCode[ \t]*=[ \t]*([^\s]*)`)
 
 // IncrementVersionCode reads the first `versionCode=N` line from body,
 // rewrites it with N+1, and returns the new body. When no
@@ -87,15 +91,18 @@ func IncrementVersionCode(body string) IncrementVersionCodeResult {
 	return IncrementVersionCodeResult{Body: out, Old: cur, New: next}
 }
 
-var gradleJVMVersionLine = regexp.MustCompile(`(?m)^version=.*`)
+var gradleJVMVersionLine = regexp.MustCompile(`(?m)^[ \t]*version[ \t]*=.*`)
 
 // UpdateGradleJVMVersion rewrites the first `^version=` line to the
 // given version, or appends one if none exists. Mirrors the JVM gradle
 // branch of bump-version.sh — strictly anchored on `version=` (with
 // separator) so `versionName=` / `versionCode=` are not affected.
 func UpdateGradleJVMVersion(body, version string) (string, UpdatePropertyResult) {
+	// Properties interpret backslashes as escapes, including line continuation.
+	version = strings.ReplaceAll(version, `\`, `\\`)
+
 	if gradleJVMVersionLine.MatchString(body) {
-		return gradleJVMVersionLine.ReplaceAllString(body, "version="+version), UpdatePropertyUpdated
+		return gradleJVMVersionLine.ReplaceAllStringFunc(body, func(string) string { return "version=" + version }), UpdatePropertyUpdated
 	}
 
 	suffix := "version=" + version + "\n"
@@ -143,7 +150,19 @@ var cargoVersionLine = regexp.MustCompile(`(?m)^version[[:space:]]*=.*`)
 //
 // Returns the section that was rewritten (NotFound when neither header
 // is present) and the new body.
+//
+//nolint:cyclop // manifest section selection and exact replacement are one parser.
 func UpdateCargoVersion(body, version string) (string, CargoSection, error) {
+	if !utf8.ValidString(version) {
+		return body, CargoSectionNone, fmt.Errorf("cargo version must be valid UTF-8: %w", errs.ErrValidation)
+	}
+	// Keep the double-quoted layout using JSON's basic-string escapes. TOML
+	// additionally requires escaping DEL, which JSON permits as a literal byte.
+	encoded, err := json.Marshal(version)
+	if err != nil {
+		return body, CargoSectionNone, fmt.Errorf("encode cargo version: %w: %w", err, errs.ErrValidation)
+	}
+
 	var section CargoSection
 
 	switch {
@@ -187,8 +206,12 @@ func UpdateCargoVersion(body, version string) (string, CargoSection, error) {
 	sectionBody := rest[:endOffset]
 	tail := rest[endOffset:]
 
-	newSection := cargoVersionLine.ReplaceAllString(sectionBody,
-		fmt.Sprintf(`version = "%s"`, version))
+	location := cargoVersionLine.FindStringIndex(sectionBody)
+	if location == nil {
+		return body, section, fmt.Errorf("section %s has no version field: %w", header, errs.ErrValidation)
+	}
+
+	newSection := sectionBody[:location[0]] + "version = " + strings.ReplaceAll(string(encoded), "\x7f", `\u007f`) + sectionBody[location[1]:]
 
 	return body[:headerEnd] + newSection + tail, section, nil
 }

@@ -16,7 +16,7 @@ import (
 // methods) are the single source of those value sets; the rendered
 // schema at .reusable-ci/artifacts.schema.json is generated output —
 // run `just gen-artifacts-schema` after changing either side. The
-// byte-equality sync test in internal/cli gates drift.
+// byte-equality sync test in internal/syncguard gates drift.
 //
 //go:embed artifacts.schema.json.tmpl
 var artifactsSchemaTemplate string

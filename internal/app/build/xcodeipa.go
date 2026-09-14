@@ -5,13 +5,13 @@ package build
 
 import (
 	"context"
-	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
-	"os"
-	"strings"
+	"path/filepath"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // XcodeExportIPAInput drives XcodeExportIPA.
@@ -23,30 +23,45 @@ type XcodeExportIPAInput struct {
 // XcodeExportIPA decodes the export-options plist from base64 and
 // runs `xcodebuild -exportArchive` against build/app.xcarchive.
 func XcodeExportIPA(ctx context.Context, ops XcodeBuildOps, w, stderr io.Writer, in XcodeExportIPAInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	body, err := decodeXcodeExportOptions(in)
+	if err != nil {
+		return err
+	}
+
+	return exportXcodeIPA(ctx, ops, w, stderr, body)
+}
+
+func decodeXcodeExportOptions(in XcodeExportIPAInput) ([]byte, error) {
 	if in.ExportOptionsBase64 == "" {
 		varName := in.ExportOptionsVar
 		if varName == "" {
 			varName = "EXPORT_OPTIONS_BASE64"
 		}
 
-		return fmt.Errorf("export options not found in variable %s: %w", varName, errs.ErrMissingInput)
+		return nil, fmt.Errorf("export options not found in variable %s: %w", varName, errs.ErrMissingInput)
 	}
 
-	clean := strings.Map(func(r rune) rune { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		switch r {
-		case ' ', '\t', '\r', '\n':
-			return -1
-		}
-
-		return r
-	}, in.ExportOptionsBase64)
-
-	body, err := base64.StdEncoding.DecodeString(clean)
+	body, err := decodeMobileSecret(in.ExportOptionsBase64)
 	if err != nil {
-		return fmt.Errorf("decode export options: %w: %w", err, errs.ErrMalformedInput)
+		return nil, fmt.Errorf("decode export options: %w: %w", err, errs.ErrMalformedInput)
 	}
 
-	if writeErr := os.WriteFile("export-options.plist", body, 0o600); writeErr != nil {
+	return body, nil
+}
+
+func exportXcodeIPA(ctx context.Context, ops XcodeBuildOps, w, stderr io.Writer, body []byte) (err error) { //nolint:varnamelen // writer convention.
+	tempDir, err := mobileTempRoot()
+	if err != nil {
+		return err
+	}
+
+	stage, err := pathsafe.NewArtifactStaging(tempDir)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, stage.Close()) }()
+
+	if writeErr := stage.Root().WriteFile("export-options.plist", body, 0o600); writeErr != nil {
 		return fmt.Errorf("write export-options.plist: %w", writeErr)
 	}
 
@@ -54,7 +69,7 @@ func XcodeExportIPA(ctx context.Context, ops XcodeBuildOps, w, stderr io.Writer,
 		"-exportArchive",
 		"-archivePath", "build/app.xcarchive",
 		"-exportPath", "build/export",
-		"-exportOptionsPlist", "export-options.plist",
+		"-exportOptionsPlist", filepath.Join(stage.Root().Name(), "export-options.plist"),
 	)
 	if err != nil {
 		return fmt.Errorf("xcodebuild -exportArchive: %w", err)

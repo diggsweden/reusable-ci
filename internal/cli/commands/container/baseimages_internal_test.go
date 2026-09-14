@@ -5,9 +5,11 @@ package container
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
 func TestBaseImagesGroupExposesWorkflowCommands(t *testing.T) {
@@ -94,13 +96,13 @@ func TestRequireRegistrySurfaceMatches(t *testing.T) {
 	}
 }
 
-// TestReadBaseImagesFlavorsRequiresAPath pins the absence of a default.
+// TestReadBaseImagesFlavors_RequiresAPath pins the absence of a default.
 //
 // The flag used to default to one consumer's layout, which was wrong for every
 // other project and wrong silently: the failure named a path the reader had
 // never chosen. Requiring it makes the engine ask rather than guess, and the
 // consumer-facing shim keeps whatever convention it likes.
-func TestReadBaseImagesFlavorsRequiresAPath(t *testing.T) {
+func TestReadBaseImagesFlavors_RequiresAPath(t *testing.T) {
 	t.Parallel()
 
 	for _, path := range []string{"", "   "} {
@@ -112,5 +114,25 @@ func TestReadBaseImagesFlavorsRequiresAPath(t *testing.T) {
 		if !errors.Is(err, errs.ErrUsage) {
 			t.Errorf("error = %v, want errs.ErrUsage so the exit code reads as misuse", err)
 		}
+	}
+}
+
+// TestReadBaseImagesFlavors_TrimsEachLine pins that a flavors file with CRLF
+// endings or trailing spaces yields bare flavor names. The blank/comment check
+// already trimmed each line, but the raw line was what got appended, so its
+// "\r" or " " reached the flavor pattern and the verify verb refused a file
+// that listed nothing but valid flavors.
+func TestReadBaseImagesFlavors_TrimsEachLine(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile("flavors.txt", []byte("alpine \r\n# comment\r\n\r\ndebian\r\n"))
+	fsys.Chdir()
+
+	got, err := readBaseImagesFlavors("flavors.txt")
+	if err != nil {
+		t.Fatalf("readBaseImagesFlavors() error = %v", err)
+	}
+
+	if want := []string{"alpine", "debian"}; !slices.Equal(got, want) {
+		t.Errorf("flavors = %q, want %q", got, want)
 	}
 }

@@ -4,6 +4,7 @@
 package provider_test
 
 import (
+	"encoding/xml"
 	"strings"
 	"testing"
 
@@ -103,5 +104,63 @@ func TestForgeNPMRegistry_RenderNPMRC(t *testing.T) {
 		if !strings.Contains(rc, want) {
 			t.Errorf("github .npmrc missing %q:\n%s", want, rc)
 		}
+	}
+}
+
+// TestForgeMavenRegistry_RenderSettingsXML_EscapesEveryField parses the
+// rendered document as XML for each scheme and reads every value back: a
+// server id, a username or a token holding an apostrophe, a quote, an
+// ampersand or an angle bracket must survive the round trip rather than
+// close an element early. The substring check above cannot tell escaping
+// from truncation.
+func TestForgeMavenRegistry_RenderSettingsXML_EscapesEveryField(t *testing.T) {
+	t.Parallel()
+
+	const hostile = `a'b"c&d<e>f`
+
+	type settings struct {
+		Servers []struct {
+			ID       string `xml:"id"`
+			Username string `xml:"username"`
+			Password string `xml:"password"`
+			Headers  []struct {
+				Name  string `xml:"name"`
+				Value string `xml:"value"`
+			} `xml:"configuration>httpHeaders>property"`
+		} `xml:"servers>server"`
+	}
+
+	for _, scheme := range []provider.MavenAuthScheme{provider.MavenAuthServerPassword, provider.MavenAuthJobTokenHeader, provider.MavenAuthTokenHeader} {
+		t.Run(string(scheme), func(t *testing.T) {
+			t.Parallel()
+
+			registry := provider.ForgeMavenRegistry{ServerID: "id-" + hostile, AuthScheme: scheme, Username: "user-" + hostile, Token: "tok-" + hostile}
+
+			var parsed settings
+			if err := xml.Unmarshal([]byte(registry.RenderSettingsXML()), &parsed); err != nil {
+				t.Fatalf("rendered settings.xml does not parse: %v\n%s", err, registry.RenderSettingsXML())
+			}
+
+			if len(parsed.Servers) != 1 || parsed.Servers[0].ID != "id-"+hostile {
+				t.Fatalf("servers = %+v, want one with the literal id", parsed.Servers)
+			}
+
+			server := parsed.Servers[0]
+
+			switch scheme {
+			case provider.MavenAuthServerPassword:
+				if server.Username != "user-"+hostile || server.Password != "tok-"+hostile || len(server.Headers) != 0 {
+					t.Errorf("server-password fields = %+v", server)
+				}
+			case provider.MavenAuthJobTokenHeader:
+				if len(server.Headers) != 1 || server.Headers[0].Name != "Job-Token" || server.Headers[0].Value != "tok-"+hostile || server.Password != "" {
+					t.Errorf("job-token header = %+v", server)
+				}
+			case provider.MavenAuthTokenHeader:
+				if len(server.Headers) != 1 || server.Headers[0].Name != "Authorization" || server.Headers[0].Value != "token tok-"+hostile || server.Password != "" {
+					t.Errorf("token header = %+v", server)
+				}
+			}
+		})
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/retry"
 )
@@ -57,7 +58,7 @@ func PushImage(ctx context.Context, tool ImagePushTool, registry RawManifestRegi
 		return nil, err
 	}
 
-	result := &PushImageOutput{Digest: registryDigest, Ref: in.Destination + "@" + registryDigest}
+	result := &PushImageOutput{Digest: registryDigest, Ref: domaincontainer.StripDigest(in.Destination) + "@" + registryDigest}
 	if sink != nil {
 		if err := sink.Set(ctx, outputKeyDigest, result.Digest); err != nil {
 			return nil, err
@@ -82,6 +83,10 @@ func validatePushImageInput(tool ImagePushTool, registry RawManifestRegistry, in
 
 	if strings.TrimSpace(in.LocalImage) == "" {
 		return fmt.Errorf("container image push: local image is required: %w", errs.ErrUsage)
+	}
+
+	if canonical, err := domaincontainer.CanonicalImageRef(in.LocalImage); err != nil || canonical != in.LocalImage {
+		return fmt.Errorf("container image push: local image must be a safe OCI reference: %w", errs.ErrUsage)
 	}
 
 	if strings.TrimSpace(in.Destination) == "" || strings.ContainsAny(in.Destination, " \t\n\r") {

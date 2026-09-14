@@ -5,6 +5,7 @@ package security
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
+	"github.com/diggsweden/reusable-ci/v3/internal/secrettext"
 )
 
 // UploadSARIFInput drives UploadSARIF.
@@ -56,6 +58,12 @@ type UploadSARIFInput struct {
 // failure. Only github currently implements provider.SARIFUploader —
 // the CLI gates on platform before reaching this use case.
 //
+// Field formats: this use case only requires the identity fields. The
+// adapter validates the repository, because it becomes part of the request
+// URL; the commit SHA and ref travel in the JSON body and are validated by
+// the Code Scanning API, whose rejection the adapter classifies. A failure
+// message never carries the token.
+//
 //nolint:cyclop // SARIF upload flow: discover → gzip → enrich → upload → summary.
 func UploadSARIF(ctx context.Context, prov provider.SARIFUploader, w io.Writer, annot output.Annotator, in UploadSARIFInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.Token == "" {
@@ -74,6 +82,10 @@ func UploadSARIF(ctx context.Context, prov provider.SARIFUploader, w io.Writer, 
 	// input is always honoured.
 	if in.SARIFFile != cliio.StdSentinel {
 		if _, err := os.Stat(in.SARIFFile); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("inspect SARIF input: %w: %w", err, errs.ErrValidation)
+			}
+
 			annot.Noticef("SARIF file not found: %s — skipping upload", in.SARIFFile)
 
 			return nil //nolint:nilerr // soft-skip: notice already emitted
@@ -132,6 +144,7 @@ func UploadSARIF(ctx context.Context, prov provider.SARIFUploader, w io.Writer, 
 		Token:      in.Token,
 	})
 	if err != nil {
+		err = secrettext.RedactError(err, in.Token)
 		annot.Errorf("SARIF upload failed: %v", err)
 
 		return fmt.Errorf("upload sarif: %w", err)

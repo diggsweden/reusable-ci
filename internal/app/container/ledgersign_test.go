@@ -14,7 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -28,8 +28,9 @@ import (
 const ledgerSignDigest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 type recordingImageSigner struct {
-	signs   []cosign.SignImageInput
-	attests []recordedAttestation
+	beforeSign func()
+	signs      []cosign.SignImageInput
+	attests    []recordedAttestation
 }
 
 type recordedAttestation struct {
@@ -38,6 +39,10 @@ type recordedAttestation struct {
 }
 
 func (r *recordingImageSigner) SignImage(_ context.Context, in cosign.SignImageInput, _ io.Writer) error {
+	if r.beforeSign != nil {
+		r.beforeSign()
+	}
+
 	r.signs = append(r.signs, in)
 
 	return nil
@@ -234,7 +239,7 @@ func TestSignLedgerImages_AttestsAGeneratedSBOMAndTheImagesLineage(t *testing.T)
 	// The SBOM is generated from the same reference that is signed. Scanning
 	// a tag while signing a digest would attest a different image than the
 	// one the signature covers.
-	if !reflect.DeepEqual(syft.targets, []string{resolvedRef}) {
+	if !slices.Equal(syft.targets, []string{resolvedRef}) {
 		t.Errorf("syft targets = %v, want [%s]", syft.targets, resolvedRef)
 	}
 
@@ -280,9 +285,9 @@ func TestSignLedgerImages_AttestsAGeneratedSBOMAndTheImagesLineage(t *testing.T)
 		gotKeys = append(gotKeys, key)
 	}
 
-	sort.Strings(gotKeys)
+	slices.Sort(gotKeys)
 
-	if wantKeys := []string{"base", "image", "ref", "source"}; !reflect.DeepEqual(gotKeys, wantKeys) {
+	if wantKeys := []string{"base", "image", "ref", "source"}; !slices.Equal(gotKeys, wantKeys) {
 		t.Errorf("externalParameters keys = %v, want %v", gotKeys, wantKeys)
 	}
 
@@ -615,11 +620,12 @@ func TestSignLedgerImages_PremadeSBOMPin(t *testing.T) {
 		}
 	})
 
-	// The image is signed before the pin is checked, so a mismatch aborts the
-	// run with a signature already published and no SBOM attestation beside
-	// it. That ordering is recorded here rather than asserted as desirable --
-	// see docs/open-questions.md.
-	t.Run("mismatching pin fails closed before any attestation", func(t *testing.T) {
+	// A mismatched pin refuses the entry with nothing published: no
+	// signature, no attestation, and for keyless signing no permanent
+	// Rekor entry. The pin is a pure function of a file the run already
+	// holds, so there is no reason for it to be checked after the one
+	// irreversible step.
+	t.Run("mismatching pin publishes nothing", func(t *testing.T) {
 		bad := entry
 		bad.SBOMSHA256 = strings.Repeat("0", 64)
 		signer := &recordingImageSigner{}
@@ -633,10 +639,10 @@ func TestSignLedgerImages_PremadeSBOMPin(t *testing.T) {
 			t.Errorf("attests = %+v, want none after a pin mismatch", signer.attests)
 		}
 
-		// Signing happens first. Recorded so a change to that order is a
-		// deliberate edit to this expectation rather than a silent one.
-		if len(signer.signs) != 1 {
-			t.Errorf("signs = %+v, want the image signed before the pin was checked", signer.signs)
+		// The half that matters: signing is irreversible, so a refused
+		// entry must not have reached it.
+		if len(signer.signs) != 0 {
+			t.Errorf("signs = %+v, want nothing signed for a refused entry", signer.signs)
 		}
 	})
 }
@@ -680,29 +686,20 @@ func TestSignLedgerImages_ProvenanceExtras(t *testing.T) {
 				t.Fatalf("err = %v, want ErrValidation for reserved key %q", err, key)
 			}
 
-			// The collision is a property of the ledger entry alone, but it
-			// is found while building the provenance predicate -- by which
-			// point the image is signed and its SBOM attested. Recorded as
-			// it is, so the order cannot change unnoticed; see
-			// docs/open-questions.md.
-			if len(signer.signs) != 1 {
-				t.Errorf("signs = %+v, want the image signed before the collision was found", signer.signs)
+			// The collision is a property of the ledger entry alone, so
+			// it is settled before anything is published: the predicate
+			// is built ahead of the signature rather than after it.
+			if len(signer.signs) != 0 {
+				t.Errorf("signs = %+v, want nothing signed for a refused entry", signer.signs)
 			}
 
-			if len(signer.attests) != 1 || signer.attests[0].input.PredicateType != "cyclonedx" {
-				t.Errorf("attests = %+v, want the SBOM attested and no provenance", signer.attests)
+			if len(signer.attests) != 0 {
+				t.Errorf("attests = %+v, want nothing attested for a refused entry", signer.attests)
 			}
 		})
 	}
 }
 
-// TestSignLedgerImages_BaseKindEntries is the signer-flip proof: a
-// base-kind ledger entry — the exact shape nanolinter-ci's `base-images
-// collect --format ledger` emits — feeds `container ledger sign` green
-// with zero consumer schema. The base entry's content-addressed final tag
-// needs no release scope, its premade SBOM pin is verified (never
-// regenerated), and the attested predicate carries the retired
-// base-lineage field names (externalParameters.base_input_id, .flavor).
 // TestSignLedgerImages_BaseEntryRecordsItsLineageWithoutAParent covers what is
 // particular about signing a base image: it is the bottom of the chain, so its
 // provenance carries its own lineage -- the base input it was built from, and
@@ -731,8 +728,8 @@ func TestSignLedgerImages_BaseEntryRecordsItsLineageWithoutAParent(t *testing.T)
 		Digest:       digest,
 		SBOM:         "dist/base-sboms/base-sbom-go.cyclonedx.json",
 		SBOMSHA256:   hex.EncodeToString(sbomSum[:]),
-		Provenance:   map[string]any{"flavor": "go"},
 		FinalTag:     repo + ":" + baseID + "-go",
+		MovingTag:    repo + ":go",
 		CandidateTag: repo + ":staging-" + baseID + "-go",
 		BaseInputID:  baseID,
 	}})
@@ -815,6 +812,101 @@ func TestSignLedgerImages_BaseEntryRecordsItsLineageWithoutAParent(t *testing.T)
 	if image["flavor"] != "go" || image["final_tag"] != repo+":"+baseID+"-go" {
 		t.Errorf("image externalParameters mismatch: %#v", image)
 	}
+}
+
+func TestSignLedgerImages_BaseKindRequiresExactBaseIdentity(t *testing.T) {
+	const repo = "codeberg.org/itiquette/nanolinter-base"
+
+	baseID := strings.Repeat("b", 64)
+	entry := imageledger.Entry{
+		Role:         "base",
+		ImageKind:    imageledger.ImageKindBase,
+		Flavor:       "go",
+		Ref:          repo + "@" + ledgerSignDigest,
+		Digest:       ledgerSignDigest,
+		SBOM:         "dist/base-sboms/base-sbom-go.cyclonedx.json",
+		FinalTag:     repo + ":" + baseID + "-go",
+		MovingTag:    repo + ":go",
+		CandidateTag: repo + ":staging-" + baseID + "-go",
+		BaseInputID:  baseID,
+	}
+
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*imageledger.Entry, *appcontainer.SignLedgerImagesInput)
+		wantErr error
+		want    string
+	}{
+		{
+			name: "self-declared base kind cannot select an arbitrary final tag",
+			mutate: func(entry *imageledger.Entry, _ *appcontainer.SignLedgerImagesInput) {
+				entry.FinalTag = repo + ":v9.9.9-go"
+				entry.CandidateTag = repo + ":staging-v9.9.9-go"
+			},
+			wantErr: errs.ErrValidation,
+			want:    "base final_tag",
+		},
+		{
+			name: "base moving tag is tied to flavor",
+			mutate: func(entry *imageledger.Entry, _ *appcontainer.SignLedgerImagesInput) {
+				entry.MovingTag = repo + ":latest"
+			},
+			wantErr: errs.ErrValidation,
+			want:    "base moving_tag",
+		},
+		{
+			name: "base identity requires an expected repository",
+			mutate: func(_ *imageledger.Entry, input *appcontainer.SignLedgerImagesInput) {
+				input.ExpectedImageRepository = ""
+			},
+			wantErr: errs.ErrMissingInput,
+			want:    "expected image repository",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+
+			gotEntry := entry
+			input := appcontainer.SignLedgerImagesInput{
+				Entries:                 []imageledger.Entry{gotEntry},
+				PredicatePath:           writeBasePredicate(t),
+				Method:                  domainrelease.SignMethodKMS,
+				KeyRef:                  "env://COSIGN_KEY",
+				ExpectedImageRepository: repo,
+			}
+			tc.mutate(&gotEntry, &input)
+			input.Entries = []imageledger.Entry{gotEntry}
+			signer := &recordingImageSigner{}
+
+			err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, input)
+			if !errors.Is(err, tc.wantErr) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %v with %q", err, tc.wantErr, tc.want)
+			}
+
+			assertNothingPublished(t, signer)
+		})
+	}
+}
+
+func TestSignLedgerImages_RejectsMalformedBaseDigestReference(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	entry := ledgerSignEntry(t)
+	entry.BaseRef = "not a registry@" + ledgerSignDigest
+	signer := &recordingImageSigner{}
+
+	err := appcontainer.SignLedgerImages(context.Background(), signer, &fakeLedgerSyft{}, fakeLedgerResolver{}, io.Discard, io.Discard, appcontainer.SignLedgerImagesInput{
+		Entries:       []imageledger.Entry{entry},
+		ReleaseTag:    "v1.2.3",
+		PredicatePath: writeBasePredicate(t),
+		Method:        domainrelease.SignMethodKMS,
+		KeyRef:        "env://COSIGN_KEY",
+	})
+	if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "base_ref") {
+		t.Fatalf("err = %v, want malformed base_ref validation error", err)
+	}
+
+	assertNothingPublished(t, signer)
 }
 
 // TestSignLedgerImages_BaseKindRequiresBaseInputID pins the base-entry

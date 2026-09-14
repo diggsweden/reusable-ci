@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -62,6 +63,9 @@ var allowedKMSSchemes = []string{
 	"file",   // local key file (intentionally explicit prefix)
 }
 
+// KMSKeySchemes returns the reviewed scheme vocabulary without exposing its storage.
+func KMSKeySchemes() []string { return append([]string(nil), allowedKMSSchemes...) }
+
 // EffectiveMethod returns the configured method or the package default
 // when none is set. Callers that need to know whether the operator made
 // an explicit choice should inspect SignConfig.Method directly.
@@ -106,11 +110,11 @@ func (s SignConfig) Validate() error {
 	switch method {
 	case domainrelease.SignMethodGPG:
 		if s.Key != "" {
-			return fmt.Errorf("sign.key is forbidden for method=gpg (got %q): %w", s.Key, errs.ErrInvalidConfig)
+			return fmt.Errorf("sign.key is forbidden for method=gpg: %w", errs.ErrInvalidConfig)
 		}
 
 		if s.OIDCIssuer != "" {
-			return fmt.Errorf("sign.oidc-issuer is forbidden for method=gpg (got %q): %w", s.OIDCIssuer, errs.ErrInvalidConfig)
+			return fmt.Errorf("sign.oidc-issuer is forbidden for method=gpg: %w", errs.ErrInvalidConfig)
 		}
 
 		if s.Transparency != "" {
@@ -120,7 +124,7 @@ func (s SignConfig) Validate() error {
 		}
 	case domainrelease.SignMethodSigstore:
 		if s.Key != "" {
-			return fmt.Errorf("sign.key is forbidden for method=sigstore (keyless has no key) (got %q): %w", s.Key, errs.ErrInvalidConfig)
+			return fmt.Errorf("sign.key is forbidden for method=sigstore (keyless has no key): %w", errs.ErrInvalidConfig)
 		}
 
 		if s.OIDCIssuer != "" {
@@ -143,7 +147,7 @@ func (s SignConfig) Validate() error {
 		}
 
 		if s.OIDCIssuer != "" {
-			return fmt.Errorf("sign.oidc-issuer is forbidden for method=kms (got %q): %w", s.OIDCIssuer, errs.ErrInvalidConfig)
+			return fmt.Errorf("sign.oidc-issuer is forbidden for method=kms: %w", errs.ErrInvalidConfig)
 		}
 
 		if err := validateKMSKey(s.Key); err != nil {
@@ -169,8 +173,8 @@ func validateKMSKey(key string) error {
 	colon := strings.Index(key, ":")
 	if colon <= 0 {
 		return fmt.Errorf(
-			"sign.key %q does not start with a recognised scheme; expected one of %s (e.g. hashivault://transit/keys/<name>, awskms:///alias/<name>, file:<path>): %w",
-			key, strings.Join(allowedKMSSchemes, ", "), errs.ErrInvalidConfig,
+			"sign.key does not start with a recognised scheme; expected one of %s (e.g. hashivault://transit/keys/<name>, awskms:///alias/<name>, file:<path>): %w",
+			strings.Join(allowedKMSSchemes, ", "), errs.ErrInvalidConfig,
 		)
 	}
 
@@ -182,8 +186,8 @@ func validateKMSKey(key string) error {
 	}
 
 	return fmt.Errorf(
-		"sign.key scheme %q is not in the allowlist %s — to extend the allowlist, edit internal/domain/config/sign.go (security-relevant change): %w",
-		scheme, strings.Join(allowedKMSSchemes, ", "), errs.ErrInvalidConfig,
+		"sign.key scheme is not in the allowlist %s — to extend the allowlist, edit internal/domain/config/sign.go (security-relevant change): %w",
+		strings.Join(allowedKMSSchemes, ", "), errs.ErrInvalidConfig,
 	)
 }
 
@@ -192,21 +196,34 @@ func validateKMSKey(key string) error {
 // own Fulcio (Sigstore self-hosted) or use a non-standard issuer for
 // Forgejo. But we do reject HTTP and malformed URLs, since either
 // would degrade the trust model.
+// The authority must have a hostname, no userinfo, and an optional port
+// in 1..65535. net/url validates HTTPS IP-literal and colon syntax.
 func validateOIDCIssuer(raw string) error {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("sign.oidc-issuer %q is not a valid URL: %w: %w", raw, err, errs.ErrInvalidConfig)
+		return fmt.Errorf("sign.oidc-issuer is not a valid URL: %w", errs.ErrInvalidConfig)
 	}
 
 	if parsed.Scheme != "https" {
 		return fmt.Errorf(
-			"sign.oidc-issuer %q must use https:// (got scheme %q) — OIDC tokens must travel over TLS: %w",
-			raw, parsed.Scheme, errs.ErrInvalidConfig,
+			"sign.oidc-issuer must use https:// — OIDC tokens must travel over TLS: %w",
+			errs.ErrInvalidConfig,
 		)
 	}
 
-	if parsed.Host == "" {
-		return fmt.Errorf("sign.oidc-issuer %q has no host component: %w", raw, errs.ErrInvalidConfig)
+	if parsed.Hostname() == "" {
+		return fmt.Errorf("sign.oidc-issuer has no host component: %w", errs.ErrInvalidConfig)
+	}
+
+	if parsed.User != nil {
+		return fmt.Errorf("sign.oidc-issuer must not contain userinfo: %w", errs.ErrInvalidConfig)
+	}
+
+	if port := parsed.Port(); port != "" || strings.HasSuffix(parsed.Host, ":") {
+		number, portErr := strconv.ParseUint(port, 10, 16)
+		if portErr != nil || number == 0 {
+			return fmt.Errorf("sign.oidc-issuer port must be in 1..65535: %w", errs.ErrInvalidConfig)
+		}
 	}
 
 	return nil

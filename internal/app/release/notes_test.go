@@ -6,12 +6,16 @@ package release_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
@@ -167,6 +171,30 @@ func TestPrepareNotes_DefaultsForFileNames(t *testing.T) {
 	}
 }
 
+// TestPrepareNotes_ReadsTheDefaultSource covers the other default. The test
+// above supplies no source file at all, so it exercises the version stub and
+// never the default source name: a changed or misspelled default would stop
+// the git-cliff output from being picked up, and every release would ship the
+// stub instead of its changelog with nothing failing.
+func TestPrepareNotes_ReadsTheDefaultSource(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.Chdir()
+
+	const changelog = "## v1.0.0\n\n- feat: the change this release is about\n"
+
+	fsys.WriteFile("ReleasenotesTmp", []byte(changelog))
+
+	if err := apprelease.PrepareNotes(context.Background(), &bytes.Buffer{}, apprelease.PrepareNotesInput{
+		ReleaseVersion: "v1.0.0",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := string(fsys.ReadFile("release-notes.md")); got != changelog {
+		t.Errorf("release-notes.md = %q, want the default source copied verbatim %q", got, changelog)
+	}
+}
+
 func TestVerifyChangelog_PrintsPreview(t *testing.T) {
 	t.Parallel()
 	fsys := testfs.NewReal(t)
@@ -191,6 +219,55 @@ func TestVerifyChangelog_PrintsPreview(t *testing.T) {
 	}
 }
 
+// TestVerifyChangelog_PreviewStopsAtTenLines pins the boundary the three-line
+// fixture above cannot reach. The preview goes to the CI log, where a whole
+// changelog is noise, so it is bounded; exactly ten lines must all appear and
+// an eleventh must not.
+func TestVerifyChangelog_PreviewStopsAtTenLines(t *testing.T) {
+	t.Parallel()
+
+	for _, total := range []int{10, 11} {
+		t.Run(strconv.Itoa(total)+" lines", func(t *testing.T) {
+			t.Parallel()
+
+			fsys := testfs.NewReal(t)
+
+			var body strings.Builder
+			for i := 1; i <= total; i++ {
+				fmt.Fprintf(&body, "entry-%02d\n", i)
+			}
+
+			fsys.WriteFile("CHANGELOG.md", []byte(body.String()))
+
+			var buf bytes.Buffer
+			if err := apprelease.VerifyChangelog(context.Background(), &buf, apprelease.VerifyChangelogInput{
+				ChangelogFile: fsys.Path("CHANGELOG.md"),
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			_, preview, found := strings.Cut(buf.String(), "========================\n")
+			if !found {
+				t.Fatalf("no preview section in:\n%s", buf.String())
+			}
+
+			for i := 1; i <= 10; i++ {
+				if line := fmt.Sprintf("entry-%02d", i); !strings.Contains(preview, line) {
+					t.Errorf("preview is missing %s", line)
+				}
+			}
+
+			if strings.Contains(preview, "entry-11") {
+				t.Errorf("preview includes an eleventh line:\n%s", preview)
+			}
+
+			if want := fmt.Sprintf("Line count: %d", total); !strings.Contains(buf.String(), want) {
+				t.Errorf("output missing %q", want)
+			}
+		})
+	}
+}
+
 func TestVerifyChangelog_MissingFails(t *testing.T) {
 	t.Parallel()
 	fsys := testfs.NewReal(t)
@@ -198,8 +275,11 @@ func TestVerifyChangelog_MissingFails(t *testing.T) {
 	err := apprelease.VerifyChangelog(context.Background(), &bytes.Buffer{}, apprelease.VerifyChangelogInput{
 		ChangelogFile: fsys.Path("missing.md"),
 	})
-	if err == nil || !strings.Contains(err.Error(), "no changelog generated") {
-		t.Errorf("err = %v", err)
+	// ErrValidation, not ErrMissingInput: the caller named a file and the
+	// generator was expected to have produced it, so an absent one means the
+	// changelog step did not do its job.
+	if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "no changelog generated") {
+		t.Errorf("err = %v, want ErrValidation", err)
 	}
 }
 
@@ -207,7 +287,7 @@ func TestVerifyChangelog_EmptyPathErrors(t *testing.T) {
 	t.Parallel()
 
 	err := apprelease.VerifyChangelog(context.Background(), &bytes.Buffer{}, apprelease.VerifyChangelogInput{})
-	if err == nil || !strings.Contains(err.Error(), "changelog file is required") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "changelog file is required") {
+		t.Errorf("err = %v, want ErrUsage naming the missing flag", err)
 	}
 }

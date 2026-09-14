@@ -5,12 +5,14 @@ package container_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"reflect"
 	"testing"
 
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
 
@@ -18,10 +20,12 @@ import (
 type fakeBuilder struct {
 	got         container.BuildRequest
 	builtLayout bool
+	calls       int
 }
 
 func (f *fakeBuilder) Build(_ context.Context, req container.BuildRequest, _ io.Writer) error {
 	f.got = req
+	f.calls++
 
 	return nil
 }
@@ -29,6 +33,7 @@ func (f *fakeBuilder) Build(_ context.Context, req container.BuildRequest, _ io.
 func (f *fakeBuilder) BuildToLayout(_ context.Context, req container.BuildRequest, _ string, _ io.Writer) error {
 	f.got = req
 	f.builtLayout = true
+	f.calls++
 
 	return nil
 }
@@ -37,10 +42,12 @@ func (f *fakeBuilder) BuildToLayout(_ context.Context, req container.BuildReques
 type fakePusher struct {
 	gotRef string
 	digest string
+	calls  int
 }
 
 func (f *fakePusher) PushLayoutByDigest(_ context.Context, _, imageRef string) (string, error) {
 	f.gotRef = imageRef
+	f.calls++
 
 	return f.digest, nil
 }
@@ -58,7 +65,7 @@ func TestBuildImage_PushByDigestHandsTheBuilderEveryInput(t *testing.T) {
 	t.Parallel()
 
 	builder := &fakeBuilder{}
-	pusher := &fakePusher{digest: "sha256:abc123"}
+	pusher := &fakePusher{digest: oneDigest}
 	sink := fakeoutputsink.New(t)
 
 	in := appcontainer.BuildImageInput{
@@ -82,12 +89,12 @@ func TestBuildImage_PushByDigestHandsTheBuilderEveryInput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got != "sha256:abc123" {
+	if got != oneDigest {
 		t.Errorf("returned digest = %q, want the digest the push reported", got)
 	}
 
-	if v := sink.Single("digest"); v != "sha256:abc123" {
-		t.Errorf("sink digest = %q, want sha256:abc123", v)
+	if v := sink.Single("digest"); v != oneDigest {
+		t.Errorf("sink digest = %q, want %s", v, oneDigest)
 	}
 
 	// Push-by-digest builds to an OCI layout and pushes that, rather than
@@ -126,26 +133,40 @@ func TestBuildImage_PushByDigestHandsTheBuilderEveryInput(t *testing.T) {
 	}
 }
 
-func TestBuildImage_LoadMode_EmitsNoDigest(t *testing.T) {
+// TestBuildImage_InPlaceModesPushNothing covers the two modes that build in
+// place. Neither may reach the pusher or publish an output: the image stays in
+// local storage or a directory, and a digest output would name nothing.
+func TestBuildImage_InPlaceModesPushNothing(t *testing.T) {
 	t.Parallel()
 
-	builder := &fakeBuilder{}
-	sink := fakeoutputsink.New(t)
+	for name, in := range map[string]appcontainer.BuildImageInput{
+		"load":  {Context: ".", Mode: container.BuildModeLoad, ImageRef: "local:verify"},
+		"local": {Context: ".", Mode: container.BuildModeLocal, OutputDir: "out"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	if _, err := appcontainer.BuildImage(context.Background(), builder, &fakePusher{}, sink, io.Discard, appcontainer.BuildImageInput{
-		Context:  ".",
-		Mode:     container.BuildModeLoad,
-		ImageRef: "local:verify",
-	}); err != nil {
-		t.Fatal(err)
-	}
+			builder := &fakeBuilder{}
+			pusher := &fakePusher{digest: oneDigest}
+			sink := fakeoutputsink.New(t)
 
-	if builder.builtLayout {
-		t.Error("load mode must not go through BuildToLayout")
-	}
+			digest, err := appcontainer.BuildImage(context.Background(), builder, pusher, sink, io.Discard, in)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	if v := sink.Single("digest"); v != "" {
-		t.Errorf("load mode wrote a digest output %q; want none", v)
+			if builder.calls != 1 || builder.builtLayout {
+				t.Errorf("builder calls = %d, layout = %v; want one in-place build", builder.calls, builder.builtLayout)
+			}
+
+			if pusher.calls != 0 {
+				t.Errorf("pusher calls = %d, want none", pusher.calls)
+			}
+
+			if digest != "" || len(sink.Keys()) != 0 {
+				t.Errorf("digest = %q, outputs = %v; want neither", digest, sink.Keys())
+			}
+		})
 	}
 }
 
@@ -153,14 +174,17 @@ func TestBuildImage_RejectsInvalidRequestBeforeBuilding(t *testing.T) {
 	t.Parallel()
 
 	builder := &fakeBuilder{}
+	pusher := &fakePusher{digest: oneDigest}
+	sink := fakeoutputsink.New(t)
 
 	// load mode without an image ref is a usage error caught before the builder runs.
-	if _, err := appcontainer.BuildImage(context.Background(), builder, &fakePusher{}, fakeoutputsink.New(t), io.Discard,
-		appcontainer.BuildImageInput{Context: ".", Mode: container.BuildModeLoad}); err == nil {
-		t.Fatal("expected validation error for load mode without image-ref")
+	_, err := appcontainer.BuildImage(context.Background(), builder, pusher, sink, io.Discard,
+		appcontainer.BuildImageInput{Context: ".", Mode: container.BuildModeLoad})
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Errorf("err = %v, want ErrUsage for load mode without image-ref", err)
 	}
 
-	if builder.got.Context != "" {
-		t.Error("builder was invoked despite an invalid request")
+	if builder.calls != 0 || pusher.calls != 0 || len(sink.Keys()) != 0 {
+		t.Errorf("builder calls = %d, pusher calls = %d, outputs = %v; want nothing touched", builder.calls, pusher.calls, sink.Keys())
 	}
 }

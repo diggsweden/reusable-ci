@@ -6,7 +6,6 @@ package imageledger_test
 import (
 	"context"
 	"errors"
-	"reflect"
 	"slices"
 	"testing"
 
@@ -18,15 +17,20 @@ import (
 // dest at source's digest, modelling a correct registry copy. badCopy
 // overrides the digest a copy lands, modelling a wrong-image promotion.
 type fakeRegistry struct {
-	digests map[string]string
-	badCopy string // when set, CopyTag lands this digest instead of source's
-	copies  []string
+	digests    map[string]string
+	resolveErr map[string]error
+	badCopy    string // when set, CopyTag lands this digest instead of source's
+	copies     []string
 }
 
 func (r *fakeRegistry) ResolveDigest(_ context.Context, ref string) (string, error) {
+	if err := r.resolveErr[ref]; err != nil {
+		return "", err
+	}
+
 	d, ok := r.digests[ref]
 	if !ok {
-		return "", errors.New("ref not found") //nolint:err113 // test mock error
+		return "", errs.ErrMissingInput
 	}
 
 	return d, nil
@@ -157,6 +161,26 @@ func TestPromoteToStage_ReleaseSkipsExistingFinalAtSameDigest(t *testing.T) {
 	want := []string{e.CandidateTag + "->" + e.MovingTag}
 	if !slices.Equal(reg.copies, want) {
 		t.Errorf("expected only moving-tag copy when final already serves digest, got %v", reg.copies)
+	}
+}
+
+func TestPromoteToStage_ReleaseStopsWhenFinalLookupIsUncertain(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	reg := &fakeRegistry{
+		digests:    map[string]string{e.CandidateTag: goodDigest},
+		resolveErr: map[string]error{e.FinalTag: errs.ErrDependencyUnavailable},
+	}
+	stage := imageledger.Stage{Name: "release", UseEntryReleaseTags: true}
+
+	err := imageledger.PromoteToStage(context.Background(), reg, nil, []imageledger.Entry{e}, "v1.2.3", stage)
+	if !errors.Is(err, errs.ErrDependencyUnavailable) {
+		t.Fatalf("uncertain final lookup must stop promotion, got %v", err)
+	}
+
+	if len(reg.copies) != 0 {
+		t.Errorf("no tag should be copied after an uncertain final lookup, got %v", reg.copies)
 	}
 }
 
@@ -427,7 +451,7 @@ func TestPromote_PromotesEveryEntry(t *testing.T) {
 		first.CandidateTag + "->" + firstPointer,
 		second.CandidateTag + "->" + secondPointer,
 	}
-	if !reflect.DeepEqual(reg.copies, want) {
+	if !slices.Equal(reg.copies, want) {
 		t.Errorf("copies = %v, want %v", reg.copies, want)
 	}
 

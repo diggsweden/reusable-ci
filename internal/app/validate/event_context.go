@@ -82,5 +82,5 @@ func guidanceFor(eventName string) string {
 	}
 
 	return "gate the caller workflow to one of the listed events, or pass " +
-		"--allowed-events on this step to extend the policy"
+		"--allowed-events on this step; it replaces the default policy, so list every event the step should accept"
 }

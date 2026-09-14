@@ -11,7 +11,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/runtimetags"
 )
 
-func TestRewrite(t *testing.T) {
+func TestRewrite_RepinsRuntimeImagesAndCountsThem(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -67,11 +67,11 @@ c: "reusable-ci-runtime-rust-stable:v3.1.0"`,
 	}
 }
 
-func TestVersionPattern(t *testing.T) {
+func TestValidVersion_MatchesOnlyStableVPrefixedVersions(t *testing.T) {
 	t.Parallel()
 
-	require.Regexp(t, runtimetags.VersionPattern, "v3.1.0")
-	require.NotRegexp(t, runtimetags.VersionPattern, "3.1.0")
-	require.NotRegexp(t, runtimetags.VersionPattern, "v3.1.0-rc.1")
-	require.NotRegexp(t, runtimetags.VersionPattern, "verify")
+	require.True(t, runtimetags.ValidVersion("v3.1.0"))
+	require.False(t, runtimetags.ValidVersion("3.1.0"))
+	require.False(t, runtimetags.ValidVersion("v3.1.0-rc.1"))
+	require.False(t, runtimetags.ValidVersion("verify"))
 }

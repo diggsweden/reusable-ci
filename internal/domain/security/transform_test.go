@@ -5,6 +5,7 @@ package security_test
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -88,15 +89,15 @@ func TestTrivyToGitLabDep_SeverityMapping(t *testing.T) {
 	gl := security.TrivyToGitLabDep(report, security.Options{})
 
 	severities := make([]string, 0, len(gl.Vulnerabilities))
-	for _, v := range gl.Vulnerabilities {
-		severities = append(severities, v.Severity)
+	for _, vuln := range gl.Vulnerabilities {
+		severities = append(severities, vuln.Severity)
 	}
 
+	// Compared as a whole: an index loop over `severities` asserts nothing
+	// at all if the converter returns no findings.
 	want := []string{"High", "Medium"} //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-	for i, s := range severities {
-		if s != want[i] {
-			t.Errorf("severities[%d] = %q, want %q", i, s, want[i])
-		}
+	if !slices.Equal(severities, want) {
+		t.Errorf("severities = %v, want %v", severities, want)
 	}
 }
 
@@ -158,14 +159,30 @@ func TestTrivyToGitLabDep_LinksDeduplicated(t *testing.T) {
 func TestTrivyToGitLabDep_DeterministicUUIDs(t *testing.T) {
 	t.Parallel()
 	report := parseTrivy(t, sampleTrivy)
-	a := security.TrivyToGitLabDep(report, security.Options{}) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	first := security.TrivyToGitLabDep(report, security.Options{})
+	second := security.TrivyToGitLabDep(report, security.Options{})
 
-	b := security.TrivyToGitLabDep(report, security.Options{})
-	for i := range a.Vulnerabilities {
-		if a.Vulnerabilities[i].ID != b.Vulnerabilities[i].ID {
-			t.Errorf("UUID for vuln %d not deterministic: %q vs %q",
-				i, a.Vulnerabilities[i].ID, b.Vulnerabilities[i].ID)
+	// Without this the loop below can pass over an empty slice.
+	if len(first.Vulnerabilities) < 2 {
+		t.Fatalf("fixture has %d findings; distinctness needs at least 2", len(first.Vulnerabilities))
+	}
+
+	seen := map[string]int{}
+
+	for i := range first.Vulnerabilities {
+		id := first.Vulnerabilities[i].ID
+		if id != second.Vulnerabilities[i].ID {
+			t.Errorf("UUID for vuln %d not deterministic: %q vs %q", i, id, second.Vulnerabilities[i].ID)
 		}
+
+		// Two findings sharing an id collapse into one GitLab
+		// vulnerability. A constant id passes the determinism check above
+		// perfectly, so distinctness has to be asserted separately.
+		if prev, dup := seen[id]; dup {
+			t.Errorf("vulns %d and %d share id %q", prev, i, id)
+		}
+
+		seen[id] = i
 	}
 }
 
@@ -234,7 +251,7 @@ func TestTrivyToGitLabContainer_EmptyResults(t *testing.T) {
 	}
 }
 
-func TestNormalizeSeverity(t *testing.T) {
+func TestNormalizeSeverity_TitleCasesKnownBandsElseUnknown(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
@@ -301,7 +318,7 @@ func TestDeterministicUUID_Format(t *testing.T) {
 	}
 }
 
-func TestDefaultsApplyWhenOptionsZero(t *testing.T) {
+func TestTrivyToGitLabDep_DefaultsApplyWhenOptionsAreZero(t *testing.T) {
 	t.Parallel()
 	report := parseTrivy(t, sampleTrivy)
 	gl := security.TrivyToGitLabDep(report, security.Options{})

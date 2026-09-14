@@ -22,12 +22,14 @@ import (
 // Skip semantics (return nil): caller-side — empty Token or empty
 // SARIF body. This method always attempts the POST; failures propagate.
 func (p *Provider) UploadSARIF(ctx context.Context, up provider.SARIFUpload) error {
-	if up.Token == "" {
-		return fmt.Errorf("github upload sarif: token is empty: %w", errs.ErrPermissionDenied)
+	// The repository becomes part of the request path, so an empty or
+	// malformed one is refused before anything is sent.
+	if _, _, err := splitRepo(up.Repository); err != nil {
+		return err
 	}
 
-	if up.Repository == "" {
-		return fmt.Errorf("github upload sarif: repository is empty: %w", errs.ErrUsage)
+	if up.Token == "" {
+		return fmt.Errorf("github upload sarif: token is empty: %w", errs.ErrPermissionDenied)
 	}
 
 	encoded, err := gzipBase64(up.SARIF)

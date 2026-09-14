@@ -143,9 +143,13 @@ func promotionSource(ctx context.Context, reg DigestResolver, entry Entry, allow
 }
 
 func immutableFinalAlreadyServesDigest(ctx context.Context, reg DigestResolver, ref, want string) (bool, error) {
-	got, err := reg.ResolveDigest(ctx, ref)
+	got, present, err := resolveDigestIfPresent(ctx, reg, ref)
 	if err != nil {
-		return false, nil //nolint:nilerr // deliberate: an unresolvable final tag means "not already promoted"; the promotion copy proceeds and surfaces any real registry failure itself.
+		return false, fmt.Errorf("check immutable final tag: %w", err)
+	}
+
+	if !present {
+		return false, nil
 	}
 
 	if got != want {

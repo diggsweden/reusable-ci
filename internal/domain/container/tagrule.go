@@ -65,7 +65,22 @@ func priorityFor(t RuleType) int {
 // ParseRules splits TAG_RULES (newline-separated csv lines) into typed
 // rules. Blank lines and lines starting with '#' (after trimming) are
 // skipped. Any unrecognised type / attribute / pattern / ref event
-// returns an error mentioning the offending value.
+// returns an error mentioning the offending value, numbered by its line in
+// the input including the skipped ones.
+//
+// The accepted grammar is deliberately narrower than docker/metadata-action's
+// CSV, and stated here rather than inherited:
+//   - empty fields are ignored, so a trailing comma is harmless;
+//   - an attribute may appear once per rule -- a repeat is refused, because
+//     "type=raw,type=sha" or "value=a,value=b" otherwise resolved silently to
+//     the last one;
+//   - enable takes exactly "true" or "false". Anything else used to disable
+//     the rule without a word, so "enable=TRUE" or "enable=yes" dropped a tag
+//     from the release.
+//
+// Values are kept as bytes. Whether a value makes a valid image tag is Apply's
+// decision, made against the OCI tag grammar in one place, so invalid UTF-8
+// here reaches Apply and is refused there.
 func ParseRules(input string) ([]Rule, error) {
 	var rules []Rule
 
@@ -89,6 +104,7 @@ func ParseRules(input string) ([]Rule, error) {
 //nolint:cyclop // tag-rule parser: one branch per known docker/metadata-action attribute.
 func parseRule(line string) (Rule, error) {
 	r := Rule{Enable: true} //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+	seen := make(map[string]bool)
 
 	for _, field := range strings.Split(line, ",") {
 		field = strings.TrimSpace(field)
@@ -104,6 +120,12 @@ func parseRule(line string) (Rule, error) {
 		key = strings.TrimSpace(key)
 		val = strings.TrimSpace(val)
 
+		if seen[key] {
+			return r, fmt.Errorf("attribute %q appears more than once in rule: %s: %w", key, line, errs.ErrValidation)
+		}
+
+		seen[key] = true
+
 		switch key {
 		case "type":
 			t, err := parseRuleType(val, line)
@@ -113,7 +135,14 @@ func parseRule(line string) (Rule, error) {
 
 			r.Type = t
 		case "enable":
-			r.Enable = val == "true"
+			switch val {
+			case "true":
+				r.Enable = true
+			case "false":
+				r.Enable = false
+			default:
+				return r, fmt.Errorf("enable must be true or false, got %q in rule: %s: %w", val, line, errs.ErrValidation)
+			}
 		case "value":
 			r.Value = val
 		case "pattern":

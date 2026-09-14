@@ -14,12 +14,23 @@ package livetest
 // repository's carve-out convention.
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
+
+// errTransportBlocked is what the blocked transport returns; tests match it by
+// identity rather than by message.
+var errTransportBlocked = errors.New("test transport blocked")
 
 func validContract(now time.Time) (Target, contract, tokenMetadata) {
 	// G101: every value here is inert; the guard only checks the token is
@@ -308,28 +319,106 @@ func TestRequireAccepted_RefusesUnguardedTarget(t *testing.T) {
 	// A Target built by hand has never passed the guard, so no helper may act
 	// through it however complete it looks.
 	recorder := &fatalRecorder{}
-	requireAccepted(recorder, Target{
+	downstream := false
+
+	defer func() {
+		failure, ok := recover().(acceptanceFailure)
+		if !ok || string(failure) != "livetest: refusing to act through a target the destructive guard never accepted" {
+			t.Errorf("refusal = %q, want nonreturning Fatalf acceptance refusal", failure)
+		}
+
+		if downstream || recorder.failed || recorder.skipped {
+			t.Errorf("guard returned or used Errorf/Skipf: downstream=%t recorder=%+v", downstream, recorder)
+		}
+	}()
+
+	requireAccepted(stopOnFatalTB{TB: recorder}, Target{
 		Forge: provider.ForgeForgejo,
 		Host:  "forgejo.compose.forgelab:8443",
 		Owner: "garga",
 		Token: "token",
 	})
 
-	if !recorder.failed {
-		t.Fatal("requireAccepted accepted a target the guard never armed")
-	}
+	downstream = true
 }
 
 func TestDeleteScratchRepo_RefusesForeignNamespace(t *testing.T) {
 	t.Parallel()
 
-	target := Target{Forge: provider.ForgeForgejo, Host: "forgejo.compose.forgelab:8443", Owner: "garga"}
+	target := Target{Forge: provider.ForgeForgejo, Host: "forgejo.compose.forgelab:8443", Owner: "garga", accepted: true}
 
 	// cl- belongs to git-provider-clean. Even armed, this suite must not reach
 	// outside the namespace it declared.
-	if err := DeleteScratchRepo(t.Context(), target, "cl-runs-mixed"); err == nil {
-		t.Fatal("DeleteScratchRepo accepted a repository outside this suite's namespace")
+	if err := DeleteScratchRepo(t.Context(), target, "cl-runs-mixed"); !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("namespace refusal = %v, want namespace-specific ErrValidation", err)
 	}
+}
+
+// These entrypoints must refuse before even listing remote resources. A blocked
+// dialer makes a missing guard observable without ever opening a socket.
+func TestScratchMutators_RejectUnacceptedTargetsBeforeTransport(t *testing.T) {
+	original := http.DefaultTransport
+
+	var calls atomic.Int32
+
+	http.DefaultTransport = &http.Transport{
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			calls.Add(1)
+
+			return nil, errTransportBlocked
+		},
+	}
+
+	t.Cleanup(func() { http.DefaultTransport = original })
+	t.Setenv("RC_LIVE_TIMEOUT_SCRATCH", "20ms")
+
+	for _, forge := range []provider.ForgeAPI{provider.ForgeForgejo, provider.ForgeGitLab} {
+		for _, operation := range []string{"delete", "unique"} {
+			t.Run(string(forge)+"/"+operation, func(t *testing.T) {
+				calls.Store(0)
+
+				target := Target{
+					Forge: forge, Host: "unapproved.example.invalid", Owner: "test-owner",
+					Token: "synthetic-test-token", ForgeAuthorities: []string{"https://unapproved.example.invalid"},
+				}
+
+				defer func() {
+					if got := calls.Load(); got != 0 {
+						t.Errorf("unaccepted target reached transport %d time(s)", got)
+					}
+				}()
+
+				if operation == "delete" {
+					ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+					defer cancel()
+
+					err := DeleteScratchRepo(ctx, target, "rc-test")
+					if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "unaccepted") {
+						t.Fatalf("unaccepted cleanup = %v, want acceptance-specific ErrValidation", err)
+					}
+
+					return
+				}
+
+				defer func() {
+					failure, ok := recover().(acceptanceFailure)
+					if !ok || !strings.Contains(string(failure), "never accepted") {
+						t.Errorf("unique scratch refusal = %q, want fatal acceptance guard", failure)
+					}
+				}()
+
+				NewScratchRepoUnique(stopOnFatalTB{TB: t}, target, "test")
+			})
+		}
+	}
+}
+
+type acceptanceFailure string
+
+type stopOnFatalTB struct{ TB }
+
+func (tb stopOnFatalTB) Fatalf(format string, args ...any) {
+	panic(acceptanceFailure(fmt.Sprintf(format, args...)))
 }
 
 // fatalRecorder is the minimum TB that records a Fatalf without stopping the

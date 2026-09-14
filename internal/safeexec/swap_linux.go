@@ -13,12 +13,18 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// procSwapsPath is the kernel-published list of active swap areas.
-// Overridable via the REUSABLE_CI_PROC_SWAPS env var purely for
-// testability — production code always reads /proc/swaps. The env
-// override is internal contract, not user-facing API; it has no flag,
-// no docs, no support.
-const procSwapsPath = "/proc/swaps"
+// procSwapsPath is the kernel-published list of active swap areas. Unit tests
+// in this package point it at a fixture; nothing else changes it.
+//
+//nolint:gochecknoglobals // package-private test seam for the kernel file.
+var procSwapsPath = "/proc/swaps"
+
+// procSwapsOverrideEnv names a file read instead of /proc/swaps. It is the
+// swap-state injection point of the black-box suite, which drives the real
+// binary. It used to be treated as the kernel's answer; a pass read from it is
+// now reported as SwapOverridden, so a job that sets it cannot present fixture
+// bytes as measured kernel state without the log saying so.
+const procSwapsOverrideEnv = "REUSABLE_CI_PROC_SWAPS"
 
 // SwapEnabled reports whether the running kernel has any active swap
 // area, by reading /proc/swaps. /proc/swaps always has a header line;
@@ -31,11 +37,11 @@ const procSwapsPath = "/proc/swaps"
 // positive evidence too.
 func SwapEnabled() (bool, error) {
 	path := procSwapsPath
-	if override := os.Getenv("REUSABLE_CI_PROC_SWAPS"); override != "" {
+	if override := os.Getenv(procSwapsOverrideEnv); override != "" {
 		path = override
 	}
 
-	body, err := os.ReadFile(path) //nolint:gosec // path is a constant or test-only override.
+	body, err := os.ReadFile(path) //nolint:gosec // the kernel file, a package test fixture or the reported override.
 	if err != nil {
 		return false, err
 	}
@@ -65,49 +71,62 @@ func SwapEnabled() (bool, error) {
 //     our process (Sigstore keyless, KMS-backed signing — neither of
 //     which reusable-ci itself implements today)
 //
-// Returns nil when:
+// Reports which of the three passing states applied, so the caller can tell
+// the operator apart from the log:
 //
-//   - debugAllowSwap is true (operator opt-out), or
-//   - swap is not active, or
-//   - /proc/swaps is unreadable (we can't assert swap is on without
-//     positive evidence; refusing here would block legitimate
+//   - SwapAbsent: swap state was read and no swap area is active.
+//   - SwapBypassed: swap is active and debugAllowSwap waived it (operator
+//     opt-out). Only reported when a waiver actually mattered.
+//   - SwapOverridden: no swap area was reported by the REUSABLE_CI_PROC_SWAPS
+//     file rather than by /proc/swaps.
+//   - SwapUndetermined: /proc/swaps is unreadable — we can't assert swap is
+//     on without positive evidence, and refusing would block legitimate
 //     restricted-container deployments where the indeterminacy is
-//     structural).
+//     structural. The policy did not run; the caller says so.
 //
 // Returns errs.ErrInvalidConfig (exit code EX_CONFIG = 78) when
 // swap is active and debugAllowSwap is false.
-func RequireNoSwap(debugAllowSwap bool) error {
-	if debugAllowSwap {
-		return nil
-	}
-
+func RequireNoSwap(debugAllowSwap bool) (SwapState, error) {
 	on, err := SwapEnabled()
 	if err != nil {
 		// Deliberate fail-open: when /proc/swaps isn't readable
 		// (containerless test runs, locked-down jail, /proc not mounted)
 		// we can't determine swap state. The defensive posture would be
 		// to block, but that would refuse to run a great many legitimate
-		// CI setups for a check that's already a defence-in-depth layer
-		// (mlock + RLIMIT_CORE + PR_SET_DUMPABLE are the primary
-		// controls). Adopters in strict-posture environments can
+		// CI setups for a check that is a defence-in-depth layer. Nothing
+		// else keeps key material out of swap: the process hardening
+		// (RLIMIT_CORE, PR_SET_DUMPABLE) covers core files and debuggers, and
+		// no memory is mlocked. Adopters in strict-posture environments can
 		// surface the underlying error via a separate `SwapEnabled()`
 		// call if they want hard guarantees.
-		return nil //nolint:nilerr // see comment above
+		return SwapUndetermined, nil //nolint:nilerr // see comment above
 	}
 
 	if !on {
-		return nil
+		if os.Getenv(procSwapsOverrideEnv) != "" {
+			return SwapOverridden, nil
+		}
+
+		return SwapAbsent, nil
 	}
 
-	return fmt.Errorf(
+	// Swap is active. The operator's explicit waiver is consulted only now,
+	// so --debug-allow-swap on a swap-free runner is not reported as a
+	// bypass: nothing was waived, and a loud warning there would train
+	// operators to ignore the one that matters.
+	if debugAllowSwap {
+		return SwapBypassed, nil
+	}
+
+	return SwapAbsent, fmt.Errorf(
 		"swap is enabled on this runner; refusing to handle private-key material to prevent swap-page extraction.\n\n"+
 			"Fix the runner:\n"+
 			"  • disable swap: `sudo swapoff -a` (persist via /etc/fstab)\n"+
 			"  • OR run release-signing on a hosted runner (GHA-hosted has swap off by default)\n\n"+
-			"Or sign your release outside reusable-ci using a path that doesn't decrypt the key in our process:\n"+
-			"  • Sigstore keyless (cosign + OIDC) — see https://docs.sigstore.dev\n"+
-			"  • KMS-backed signing (AWS KMS / GCP KMS / TPM)\n"+
-			"  (reusable-ci does not yet provide these signing paths natively)\n\n"+
+			"Or use reusable-ci release sign with a backend that does not load a long-lived private key into this process:\n"+
+			"  --method=sigstore: Sigstore keyless via cosign and OIDC (ephemeral keys are still handled by cosign)\n"+
+			"  --method=kms: KMS-backed signing with a remote key reference (a local key file is not remote KMS)\n"+
+			"  Backend credentials and subprocess key handling still require a trusted runner.\n\n"+
 			"Debug-only escape hatch (LOCAL USE ONLY — NOT for production releases):\n"+
 			"  reusable-ci release sign --debug-allow-swap\n"+
 			"  When set, the policy is bypassed and a Warning annotation is emitted.\n\n"+

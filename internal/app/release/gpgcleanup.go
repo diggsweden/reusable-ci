@@ -20,8 +20,8 @@ type gpgCleaner interface {
 
 // GPGCleanup removes the imported keys and stops gpg-agent. Idempotent:
 // passing an empty fingerprint is a successful no-op (the import step
-// never ran or was skipped). Errors during delete are intentionally
-// swallowed — this is post-step cleanup wired as `if: always()`.
+// never ran or was skipped). The adapter reports cleanup failures but
+// this post-step remains best-effort so every operation is attempted.
 func GPGCleanup(ctx context.Context, gpg gpgCleaner, fingerprint string, out io.Writer) {
 	if fingerprint == "" {
 		_, _ = fmt.Fprintln(out, "No fingerprint supplied — nothing to clean up.")

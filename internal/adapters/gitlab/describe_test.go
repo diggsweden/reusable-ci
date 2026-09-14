@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/gitlab"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 func TestDescribe_GitLab_SaaSDefault(t *testing.T) {
@@ -42,26 +43,43 @@ func TestDescribe_GitLab_SelfHostedIssuer(t *testing.T) {
 	}
 }
 
+// TestCapabilities_GitLab asserts the whole struct, from a fixed environment.
+//
+// Two things were wrong with checking four fields individually. It read
+// gitlab.New(), whose Env is os.Getenv, so CI_SERVER_URL from whatever shell
+// or runner the suite happened to run in decided PublicFulcioTrusted — the one
+// field here that is not a constant. And a capability added to the struct
+// defaults to false, so the matrix could gain a field this adapter silently
+// under-reports and every individual check still passes.
+//
+// Exact equality fixes both: a new field forces a decision here, and the
+// environment is supplied rather than inherited.
 func TestCapabilities_GitLab(t *testing.T) {
 	t.Parallel()
 
-	caps := gitlab.New().Capabilities()
-	if caps.SARIFUpload {
-		t.Error("GitLab should not advertise SARIFUpload")
-	}
+	p := &gitlab.Provider{Env: func(string) string { return "" }}
 
-	if !caps.ReleaseAssets {
-		t.Error("GitLab should advertise ReleaseAssets")
-	}
+	want := provider.Capabilities{
+		// Derived from the roles this adapter implements.
+		ReleaseAssets:           true,
+		ContainerTagDeletion:    true,
+		ContainerPackageListing: true,
 
-	if !caps.PublicFulcioTrusted {
-		t.Errorf("Capabilities = %+v, want PublicFulcioTrusted", caps)
-	}
+		// Declared.
+		MintsOIDCToken:      true,
+		PublicFulcioTrusted: true,
 
-	// Run artifacts are omitted by design: GitLab passes them declaratively
-	// via artifacts:/needs: in the job template, not this binary.
-	if caps.RunArtifacts {
-		t.Error("GitLab must not advertise RunArtifacts (declarative artifacts:/needs:)")
+		// False by design, each for its own reason: GitLab consumes the SAST
+		// JSON report rather than SARIF, has no build-provenance attestation
+		// API, and passes intra-pipeline artifacts declaratively through
+		// artifacts:/needs: in the job template rather than a programmatic
+		// in-job store.
+		SARIFUpload:  false,
+		Attestation:  false,
+		RunArtifacts: false,
+	}
+	if got := p.Capabilities(); got != want {
+		t.Errorf("Capabilities = %+v\nwant                %+v", got, want)
 	}
 }
 

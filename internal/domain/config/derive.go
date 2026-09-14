@@ -14,9 +14,17 @@ import (
 // Derive applies the post-parse computed fields used by downstream
 // config consumers: default sbom values, effective sbom layers, and the
 // container fields derived from referenced artifacts.
+// Build-argument framing is checked before computing any fields, including
+// for direct callers; this does not replace full config validation.
 func Derive(cfg *Config) error {
 	if cfg == nil {
 		return nil
+	}
+
+	for _, container := range cfg.Containers {
+		if violations := validateBuildArgs(container); len(violations) > 0 {
+			return &ValidationError{Violations: violations}
+		}
 	}
 
 	for i := range cfg.Artifacts {

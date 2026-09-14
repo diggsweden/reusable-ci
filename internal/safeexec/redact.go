@@ -5,7 +5,8 @@ package safeexec
 
 import (
 	"bytes"
-	"regexp"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/secrettext"
 )
 
 // privateKeyMarkers are the PEM-style preamble lines that signal a
@@ -38,15 +39,6 @@ var privateKeyMarkers = [][]byte{
 	[]byte("BEGIN ENCRYPTED COSIGN PRIVATE KEY"),
 }
 
-// jwtPattern matches a three-segment base64url-without-padding token —
-// the compact JWS (JWT) shape. Detects OAuth bearer tokens that future
-// subprocesses might echo on error. The minimum-length floor (≥20
-// base64url chars per segment) avoids matching short coincidental
-// dot-separated strings like file paths or version numbers.
-//
-//nolint:gochecknoglobals // immutable compiled regexp.
-var jwtPattern = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}`)
-
 // RedactKeyMaterial scans body for any private-key marker or a
 // JWT-shaped token and, when found, replaces the entire body with a
 // redaction notice. The whole body is replaced (rather than just the
@@ -64,7 +56,7 @@ func RedactKeyMaterial(body []byte) []byte {
 		}
 	}
 
-	if jwtPattern.Match(body) {
+	if secrettext.ContainsJWT(body) {
 		return []byte("<output redacted: contained a JWT-shaped token>")
 	}
 

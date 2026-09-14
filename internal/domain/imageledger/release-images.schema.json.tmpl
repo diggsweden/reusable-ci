@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/diggsweden/reusable-ci/docs/schemas/release-images.schema.json",
   "title": "reusable-ci release image ledger",
-  "description": "Digest-first ledger handed from build to sign/publish. A bare JSON array of image entries. GENERATED from the Go validator (internal/domain/imageledger) by cmd/gen-release-images-schema — the Go code is the authority; do not hand-edit. additionalProperties is false as editor lint: the Go reader tolerates unknown keys, but a producer emitting one is almost certainly typoing a real field.",
+  "description": "Digest-first ledger handed from build to sign/publish. A bare JSON array of image entries. GENERATED from the Go validator (internal/domain/imageledger) by cmd/gen-release-images-schema — the Go code is the authority; do not hand-edit. Both the schema and the Go reader reject unknown entry keys.",
   "type": "array",
   "items": {
     "type": "object",

@@ -7,6 +7,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -23,7 +26,7 @@ type stubResolver map[string]string
 func (s stubResolver) ResolveDigest(_ context.Context, ref string) (string, error) {
 	d, ok := s[ref]
 	if !ok {
-		return "", errors.New("not found") //nolint:err113 // test mock error
+		return "", errs.ErrMissingInput
 	}
 
 	return d, nil
@@ -153,17 +156,150 @@ func TestLedgerMutatingVerbsHaveDryRun(t *testing.T) {
 func TestLedgerPromoteRollbackExposePromotionJournal(t *testing.T) {
 	t.Parallel()
 
+	// Tracked rather than merely scanned: a loop that finds neither verb
+	// passes silently, so renaming or dropping one would switch the rule off
+	// instead of failing it.
+	found := map[string]bool{}
+
 	for _, sub := range ledgerGroup().Commands {
 		switch sub.Name {
 		case "promote", "rollback":
+			found[sub.Name] = true
+
 			if !hasFlag(sub, "journal") {
 				t.Errorf("ledger %q must expose --journal", sub.Name)
 			}
 		}
 	}
+
+	for _, name := range []string{"promote", "rollback"} {
+		if !found[name] {
+			t.Errorf("ledger %s command not found", name)
+		}
+	}
 }
 
-func TestLedgerPromoteExposesDigestRefFallback(t *testing.T) {
+func TestMergeLedgerDocsFailsClosedWithoutEntries(t *testing.T) {
+	t.Parallel()
+
+	emptyDir := t.TempDir()
+	if _, _, err := mergeLedgerDocs([]string{emptyDir}); !errors.Is(err, errs.ErrMissingInput) {
+		t.Fatalf("empty ledger directory error = %v, want ErrMissingInput", err)
+	}
+
+	// A path that is not there at all: the cause must survive so the operator
+	// sees "no such file" rather than a bare "merge failed".
+	missing := filepath.Join(t.TempDir(), "missing")
+	if _, _, err := mergeLedgerDocs([]string{missing}); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("missing ledger input err = %v, want fs.ErrNotExist", err)
+	}
+}
+
+func TestWritePromotionJournal_ReusesMatchingOriginalState(t *testing.T) {
+	t.Parallel()
+
+	const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	entry := imageledger.Entry{
+		Ref:          "codeberg.org/itiquette/repo@" + digest,
+		Digest:       digest,
+		FinalTag:     "codeberg.org/itiquette/repo:v1.2.3",
+		MovingTag:    "codeberg.org/itiquette/repo:stable",
+		CandidateTag: "codeberg.org/itiquette/repo:staging-v1.2.3",
+	}
+	journal := filepath.Join(t.TempDir(), "promotion.jsonl")
+	resolver := stubResolver{entry.CandidateTag: digest}
+	run := promotionRun{
+		reg:            &recordingRegistry{stubResolver: resolver},
+		entries:        []imageledger.Entry{entry},
+		releaseTag:     "v1.2.3",
+		stage:          imageledger.Stage{Name: "release", UseEntryReleaseTags: true},
+		journal:        journal,
+		journalDirPerm: 0o700,
+		errPrefix:      "test",
+	}
+
+	if err := writePromotionJournal(context.Background(), run); err != nil {
+		t.Fatalf("write initial journal: %v", err)
+	}
+
+	original, err := os.ReadFile(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Model a retry after a partial promotion. Replanning now would record the
+	// promoted state and destroy the rollback evidence; reuse must keep the
+	// original bytes instead.
+	resolver[entry.FinalTag] = digest
+	resolver[entry.MovingTag] = digest
+
+	if writeErr := writePromotionJournal(context.Background(), run); writeErr != nil {
+		t.Fatalf("reuse matching journal: %v", writeErr)
+	}
+
+	after, err := os.ReadFile(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(after, original) {
+		t.Fatalf("retry rewrote original rollback evidence\nbefore: %s\nafter:  %s", original, after)
+	}
+}
+
+func TestWritePromotionJournal_RefusesMismatchedExistingJournal(t *testing.T) {
+	t.Parallel()
+
+	const (
+		digest      = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+		otherDigest = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	)
+
+	entry := imageledger.Entry{
+		Ref:          "codeberg.org/itiquette/repo@" + digest,
+		Digest:       digest,
+		FinalTag:     "codeberg.org/itiquette/repo:v1.2.3",
+		CandidateTag: "codeberg.org/itiquette/repo:staging-v1.2.3",
+	}
+	journal := filepath.Join(t.TempDir(), "promotion.jsonl")
+	run := promotionRun{
+		reg:            &recordingRegistry{stubResolver: stubResolver{entry.CandidateTag: digest}},
+		entries:        []imageledger.Entry{entry},
+		releaseTag:     "v1.2.3",
+		stage:          imageledger.Stage{Name: "release", UseEntryReleaseTags: true},
+		journal:        journal,
+		journalDirPerm: 0o700,
+		errPrefix:      "test",
+	}
+
+	if err := writePromotionJournal(context.Background(), run); err != nil {
+		t.Fatalf("write initial journal: %v", err)
+	}
+
+	original, err := os.ReadFile(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	run.entries[0].Digest = otherDigest
+	run.entries[0].Ref = "codeberg.org/itiquette/repo@" + otherDigest
+
+	if writeErr := writePromotionJournal(context.Background(), run); !errors.Is(writeErr, errs.ErrValidation) {
+		t.Fatalf("mismatched journal must be refused, got %v", writeErr)
+	}
+
+	after, err := os.ReadFile(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(after, original) {
+		t.Fatalf("mismatched retry changed journal\nbefore: %s\nafter:  %s", original, after)
+	}
+}
+
+func TestLedgerPromote_ExposesDigestRefFallback(t *testing.T) {
 	t.Parallel()
 
 	for _, sub := range ledgerGroup().Commands {
@@ -205,7 +341,7 @@ func TestLedgerRollbackAndCleanupExposeExpectedRepository(t *testing.T) {
 	}
 }
 
-func TestLedgerSignCommandExposesSignerFlags(t *testing.T) {
+func TestLedgerSign_ExposesSignerFlags(t *testing.T) {
 	t.Parallel()
 
 	for _, sub := range ledgerGroup().Commands {
@@ -225,7 +361,11 @@ func TestLedgerSignCommandExposesSignerFlags(t *testing.T) {
 	t.Fatal("ledger sign command not found")
 }
 
-func TestLedgerValidateCommandExposesNonEmpty(t *testing.T) {
+// TestLedgerValidate_ExposesTheEmptyLedgerFlags pins both halves of the
+// empty-ledger contract on the command surface: --allow-empty is the opt-out
+// from the default refusal, and --non-empty is still accepted (it now names
+// the default) so callers that pass it keep working.
+func TestLedgerValidate_ExposesTheEmptyLedgerFlags(t *testing.T) {
 	t.Parallel()
 
 	for _, sub := range ledgerGroup().Commands {
@@ -233,8 +373,12 @@ func TestLedgerValidateCommandExposesNonEmpty(t *testing.T) {
 			continue
 		}
 
+		if !hasFlag(sub, "allow-empty") {
+			t.Error("ledger validate missing --allow-empty")
+		}
+
 		if !hasFlag(sub, "non-empty") {
-			t.Error("ledger validate missing --non-empty")
+			t.Error("ledger validate dropped --non-empty; retained so callers passing it keep working")
 		}
 
 		return
@@ -243,7 +387,7 @@ func TestLedgerValidateCommandExposesNonEmpty(t *testing.T) {
 	t.Fatal("ledger validate command not found")
 }
 
-func TestCaptureEntryDigest(t *testing.T) {
+func TestCaptureEntryDigest_PinsTheRefToADigestOrFails(t *testing.T) {
 	t.Parallel()
 
 	const dig = "sha256:" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -481,7 +625,7 @@ func TestLedgerAddEntryFromFlags_RejectsMalformedProvenanceJSON(t *testing.T) {
 	}
 }
 
-func TestLedgerAddCommandExposesSBOMPinAndProvenanceFlags(t *testing.T) {
+func TestLedgerAdd_ExposesSBOMPinAndProvenanceFlags(t *testing.T) {
 	t.Parallel()
 
 	for _, sub := range ledgerGroup().Commands {
@@ -526,4 +670,58 @@ func hasFlag(cmd *cli.Command, name string) bool {
 	}
 
 	return false
+}
+
+// failingCopyRegistry resolves digests normally but refuses every copy,
+// modelling a promotion that dies after planning and before any tag lands.
+type failingCopyRegistry struct {
+	stubResolver
+}
+
+func (failingCopyRegistry) CopyTag(context.Context, string, string) error {
+	return errs.ErrValidation // any error: the copy refusing is the point
+}
+
+// TestRunLedgerPromotion_JournalsBeforeTheFirstCopy pins the crash-safety
+// ordering the promotion body promises: the rollback journal is written before
+// PromoteToStage moves any tag. The blackbox suite cannot prove this — failing
+// the copy from outside also fails journal planning, because both resolve the
+// candidate — so the ordering is pinned here, where the copy can fail alone.
+func TestRunLedgerPromotion_JournalsBeforeTheFirstCopy(t *testing.T) {
+	t.Parallel()
+
+	const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+	entry := imageledger.Entry{
+		Ref:          "codeberg.org/itiquette/repo@" + digest,
+		Digest:       digest,
+		FinalTag:     "codeberg.org/itiquette/repo:v1.2.3",
+		MovingTag:    "codeberg.org/itiquette/repo:stable",
+		CandidateTag: "codeberg.org/itiquette/repo:staging-v1.2.3",
+	}
+	journal := filepath.Join(t.TempDir(), "promotion.jsonl")
+	run := promotionRun{
+		reg:            failingCopyRegistry{stubResolver{entry.CandidateTag: digest}},
+		entries:        []imageledger.Entry{entry},
+		releaseTag:     "v1.2.3",
+		stage:          imageledger.Stage{Name: "release", UseEntryReleaseTags: true},
+		journal:        journal,
+		journalDirPerm: 0o700,
+		errPrefix:      "test",
+	}
+
+	err := runLedgerPromotion(context.Background(), run)
+	if err == nil {
+		t.Fatal("promotion succeeded although every copy failed")
+	}
+
+	body, readErr := os.ReadFile(journal)
+	if readErr != nil {
+		t.Fatalf("journal missing after a failed promotion — it must be written before the first copy "+
+			"so a promotion that dies midway can be rolled back: %v", readErr)
+	}
+
+	if !bytes.Contains(body, []byte(digest)) {
+		t.Fatalf("journal does not record the planned digest: %s", body)
+	}
 }

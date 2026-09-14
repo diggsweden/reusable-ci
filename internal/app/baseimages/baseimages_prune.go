@@ -60,8 +60,12 @@ type BaseImagePruneResult struct {
 	Inventory  []string `json:"inventory"`
 	Referenced []string `json:"referenced"`
 	Prunable   []string `json:"prunable"`
-	Deleted    []string `json:"deleted"`
-	DryRun     bool     `json:"dry_run"`
+	// Deleted lists the base-input IDs removed: every flavor tag of each was
+	// deleted. DeletedTags lists those tag versions (a bare-ID tag is its own
+	// version) for the audit trail.
+	Deleted     []string `json:"deleted"`
+	DeletedTags []string `json:"deleted_tags"`
+	DryRun      bool     `json:"dry_run"`
 }
 
 // PruneBaseImages deletes promoted base images no supported release is built
@@ -105,12 +109,12 @@ func PruneBaseImages(
 		return BaseImagePruneResult{}, err
 	}
 
-	inventory, err := baseImageInventory(ctx, pruner, in.ExpectedRepository)
+	referenced, err := referencedBaseInputs(ctx, verifier, out, in)
 	if err != nil {
 		return BaseImagePruneResult{}, err
 	}
 
-	referenced, err := referencedBaseInputs(ctx, verifier, out, in)
+	inventory, tagsByID, err := baseImageInventory(ctx, pruner, in.ExpectedRepository)
 	if err != nil {
 		return BaseImagePruneResult{}, err
 	}
@@ -130,14 +134,22 @@ func PruneBaseImages(
 
 	reportPruneScope(out, result)
 
-	deleted, deleteErr := deletePrunableBaseImages(ctx, pruner, out, in, prunable)
+	deleted, deletedTags, deleteErr := deletePrunableBaseImages(ctx, pruner, out, in, prunable, tagsByID)
 	result.Deleted = deleted
+	result.DeletedTags = deletedTags
 
 	return result, deleteErr
 }
 
-// baseImageInventory lists the promoted base images in the package: versions
-// whose tag is a bare base_input_id.
+// baseImageInventory lists the promoted base images in the package, keyed by
+// base-input ID, together with the tag versions that carry each ID.
+//
+// VerifyExistingBaseImages and PromoteBaseImages mint every final tag as
+// <base_input_id>-<flavor>, and one ID can own several flavors. Matching only a
+// bare <base_input_id> tag, as this once did, therefore matched nothing that
+// promotion ever created: the retention pass reported "0 promoted in the
+// registry" and pruned nothing, forever. A bare-ID tag is still accepted so an
+// older or hand-tagged base is not invisible.
 //
 // Staging versions are skipped rather than rejected — CleanupStagingBaseImages
 // owns those, and a pass running while a build is mid-flight will legitimately
@@ -150,29 +162,59 @@ func PruneBaseImages(
 // tags. They survive the filter because a base-input ID is bare hex with no
 // prefix, so the two shapes cannot be confused -- but only by that one
 // character of difference, which is why it is written down here.
-func baseImageInventory(ctx context.Context, pruner baseImagePackageAPI, expectedRepository string) ([]string, error) {
+func baseImageInventory(ctx context.Context, pruner baseImagePackageAPI, expectedRepository string) ([]string, map[string][]string, error) {
 	owner, name, err := baseImagePackageOwnerName(expectedRepository)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	versions, err := pruner.ListContainerPackageVersions(ctx, owner, name)
 	if err != nil {
-		return nil, fmt.Errorf("base images prune: list %s/%s versions: %w", owner, name, err)
+		return nil, nil, fmt.Errorf("base images prune: list %s/%s versions: %w", owner, name, err)
 	}
 
 	inventory := make([]string, 0, len(versions))
+	tagsByID := make(map[string][]string, len(versions))
 
 	for _, version := range versions {
 		trimmed := strings.TrimSpace(version)
-		if domaincontainer.ValidSHA256Hex(trimmed) && !slices.Contains(inventory, trimmed) {
-			inventory = append(inventory, trimmed)
+
+		id, ok := promotedBaseInputID(trimmed)
+		if !ok || slices.Contains(tagsByID[id], trimmed) {
+			continue
 		}
+
+		if _, seen := tagsByID[id]; !seen {
+			inventory = append(inventory, id)
+		}
+
+		tagsByID[id] = append(tagsByID[id], trimmed)
 	}
 
 	slices.Sort(inventory)
 
-	return inventory, nil
+	for id := range tagsByID {
+		slices.Sort(tagsByID[id])
+	}
+
+	return inventory, tagsByID, nil
+}
+
+// promotedBaseInputID extracts the base-input ID a promoted final tag is named
+// after: <base_input_id>-<flavor> as promotion mints them, or a bare
+// <base_input_id>. Staging tags and cosign's sha256-<hex> companions fit
+// neither shape.
+func promotedBaseInputID(version string) (string, bool) {
+	if domaincontainer.ValidSHA256Hex(version) {
+		return version, true
+	}
+
+	id, flavor, ok := strings.Cut(version, "-")
+	if !ok || !domaincontainer.ValidSHA256Hex(id) || !baseImageFlavorRE.MatchString(flavor) {
+		return "", false
+	}
+
+	return id, true
 }
 
 // requireDigestPinnedReleaseImages refuses a release image that is not pinned
@@ -234,7 +276,7 @@ func referencedBaseInputs(ctx context.Context, verifier imageEvidenceVerifier, o
 			return nil, fmt.Errorf("base images prune: verify attestation for %s: %w", ref, err)
 		}
 
-		id, err := baseInputIDFromAttestation(payload.Bytes())
+		id, err := baseInputIDFromAttestation(payload.Bytes(), in.ExpectedRepository)
 		if err != nil {
 			return nil, fmt.Errorf("base images prune: %s: %w", ref, err)
 		}
@@ -252,11 +294,13 @@ func referencedBaseInputs(ctx context.Context, verifier imageEvidenceVerifier, o
 // baseInputIDFromAttestation reads externalParameters.base.input_id from a
 // verified in-toto statement, the field enrichPredicateBaseLineage writes when
 // it signs a release image.
-func baseInputIDFromAttestation(payload []byte) (string, error) {
+func baseInputIDFromAttestation(payload []byte, expectedRepository string) (string, error) { //nolint:cyclop // one refusal per envelope, SLSA, identity and dependency binding boundary.
 	envelopes, err := provenance.Envelopes(payload)
 	if err != nil {
 		return "", err
 	}
+
+	matchedID := ""
 
 	for _, envelope := range envelopes {
 		encoded, ok := provenance.EnvelopePayload(envelope)
@@ -269,6 +313,10 @@ func baseInputIDFromAttestation(payload []byte) (string, error) {
 			return "", err
 		}
 
+		if provenance.StatementString(statement, "predicateType") != provenance.PredicateTypeV1 {
+			continue
+		}
+
 		base, ok := provenance.NestedMap(statement, "predicate", "buildDefinition", "externalParameters", "base")
 		if !ok {
 			continue
@@ -279,7 +327,36 @@ func baseInputIDFromAttestation(payload []byte) (string, error) {
 			return "", fmt.Errorf("attestation base.input_id is not a sha256 hex digest: %q: %w", id, errs.ErrValidation)
 		}
 
-		return id, nil
+		ref := provenance.StatementString(base, "ref")
+		if err := validateBaseImageRef(ref, expectedRepository); err != nil {
+			return "", err
+		}
+
+		definition, _ := provenance.NestedMap(statement, "predicate", "buildDefinition")
+		dependencies, _ := definition["resolvedDependencies"].([]any)
+		bound := false
+
+		for _, value := range dependencies {
+			dependency, _ := value.(map[string]any)
+			digest, _ := provenance.NestedMap(dependency, "digest")
+
+			annotations, _ := provenance.NestedMap(dependency, "annotations")
+			if provenance.StatementString(dependency, "uri") == "oci://"+ref &&
+				provenance.StatementString(digest, "sha256") == strings.TrimPrefix(digestFromRef(ref), "sha256:") &&
+				provenance.StatementString(annotations, "base_input_id") == id {
+				bound = true
+			}
+		}
+
+		if !bound || matchedID != "" {
+			return "", fmt.Errorf("base lineage must have one SLSA v1 statement and a matching resolved dependency: %w", errs.ErrValidation)
+		}
+
+		matchedID = id
+	}
+
+	if matchedID != "" {
+		return matchedID, nil
 	}
 
 	return "", fmt.Errorf(
@@ -333,34 +410,43 @@ func reportPruneScope(out io.Writer, result BaseImagePruneResult) {
 	}
 }
 
-// deletePrunableBaseImages deletes each unreferenced base tag, or reports them
-// when DryRun is set.
-func deletePrunableBaseImages(ctx context.Context, pruner baseImagePackageAPI, out io.Writer, in BaseImagePruneInput, prunable []string) ([]string, error) {
+// deletePrunableBaseImages deletes every flavor tag of each unreferenced base,
+// or reports them when DryRun is set. It returns the base-input IDs whose tags
+// were all deleted and the tag versions removed; a failure mid-way returns what
+// was deleted before it.
+func deletePrunableBaseImages(ctx context.Context, pruner baseImagePackageAPI, out io.Writer, in BaseImagePruneInput, prunable []string, tagsByID map[string][]string) ([]string, []string, error) {
 	if len(prunable) == 0 {
 		_, _ = fmt.Fprintln(out, "No unreferenced base images to prune.")
 
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	deleted := make([]string, 0, len(prunable))
+	deletedIDs := make([]string, 0, len(prunable))
+	deletedTags := make([]string, 0, len(prunable))
 
 	for _, id := range prunable {
-		ref := in.ExpectedRepository + ":" + id
+		for _, version := range tagsByID[id] {
+			ref := in.ExpectedRepository + ":" + version
 
-		if in.DryRun {
-			_, _ = fmt.Fprintf(out, "Would prune unreferenced base image %s\n", ref)
+			if in.DryRun {
+				_, _ = fmt.Fprintf(out, "Would prune unreferenced base image %s\n", ref)
 
-			continue
+				continue
+			}
+
+			if err := pruner.DeleteTag(ctx, ref); err != nil {
+				return deletedIDs, deletedTags, fmt.Errorf("base images prune: delete %s: %w", ref, err)
+			}
+
+			deletedTags = append(deletedTags, version)
+
+			_, _ = fmt.Fprintf(out, "Pruned unreferenced base image %s\n", ref)
 		}
 
-		if err := pruner.DeleteTag(ctx, ref); err != nil {
-			return deleted, fmt.Errorf("base images prune: delete %s: %w", ref, err)
+		if !in.DryRun {
+			deletedIDs = append(deletedIDs, id)
 		}
-
-		deleted = append(deleted, id)
-
-		_, _ = fmt.Fprintf(out, "Pruned unreferenced base image %s\n", ref)
 	}
 
-	return deleted, nil
+	return deletedIDs, deletedTags, nil
 }

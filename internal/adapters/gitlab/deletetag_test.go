@@ -23,11 +23,14 @@ const (
 func newDeleteTagProvider(srv *fakegitlabserver.Server) *gitlab.Provider {
 	return &gitlab.Provider{
 		APIBaseOverride: srv.URL(),
+		HTTPClient:      srv.Client(),
 		Env:             envFunc(map[string]string{"GITLAB_TOKEN": "t"}),
 	}
 }
 
 func TestDeleteTag_DeletesTheTagKeepingTheManifest(t *testing.T) {
+	t.Parallel()
+
 	srv := fakegitlabserver.New(t)
 
 	srv.OnGet(glRegistryRepos, func(fakegitlabserver.Request) fakegitlabserver.Response {
@@ -55,6 +58,8 @@ func TestDeleteTag_DeletesTheTagKeepingTheManifest(t *testing.T) {
 // A registry repository nested below its project (group/project/image) resolves
 // by trying the ref's path first and then the shorter project prefix.
 func TestDeleteTag_ResolvesARepositoryNestedBelowItsProject(t *testing.T) {
+	t.Parallel()
+
 	srv := fakegitlabserver.New(t)
 
 	srv.OnGet("/api/v4/projects/itiquette%2Frepo%2Fapp/registry/repositories",
@@ -78,6 +83,8 @@ func TestDeleteTag_ResolvesARepositoryNestedBelowItsProject(t *testing.T) {
 // The guard that makes prefix-probing safe: a project may hold several registry
 // repositories, and only the one whose path matches the ref may be touched.
 func TestDeleteTag_RefusesToDeleteFromANeighbouringImage(t *testing.T) {
+	t.Parallel()
+
 	srv := fakegitlabserver.New(t)
 
 	srv.OnGet(glRegistryRepos, func(fakegitlabserver.Request) fakegitlabserver.Response {
@@ -96,6 +103,8 @@ func TestDeleteTag_RefusesToDeleteFromANeighbouringImage(t *testing.T) {
 }
 
 func TestDeleteTag_TreatsAnAbsentTagAsAlreadyDeleted(t *testing.T) {
+	t.Parallel()
+
 	srv := fakegitlabserver.New(t)
 
 	srv.OnGet(glRegistryRepos, func(fakegitlabserver.Request) fakegitlabserver.Response {
@@ -111,6 +120,8 @@ func TestDeleteTag_TreatsAnAbsentTagAsAlreadyDeleted(t *testing.T) {
 }
 
 func TestDeleteTag_IsSilentWhenTheRepositoryDoesNotExist(t *testing.T) {
+	t.Parallel()
+
 	srv := fakegitlabserver.New(t)
 
 	srv.OnGet(glRegistryRepos, func(fakegitlabserver.Request) fakegitlabserver.Response {
@@ -125,6 +136,8 @@ func TestDeleteTag_IsSilentWhenTheRepositoryDoesNotExist(t *testing.T) {
 // The refusal that protects the shared-digest promotion model: a digest names a
 // manifest, and deleting it would destroy the promoted release image.
 func TestDeleteTag_RefusesADigestPinnedRef(t *testing.T) {
+	t.Parallel()
+
 	srv := fakegitlabserver.New(t)
 
 	err := newDeleteTagProvider(srv).DeleteTag(context.Background(),

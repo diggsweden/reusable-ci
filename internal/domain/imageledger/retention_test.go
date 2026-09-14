@@ -5,6 +5,7 @@ package imageledger_test
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,7 +21,7 @@ const (
 	idC = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 )
 
-func TestUnreferencedBaseInputs(t *testing.T) {
+func TestUnreferencedBaseInputs_ReturnsInventoryNotReferenced(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -83,24 +84,18 @@ func TestUnreferencedBaseInputs(t *testing.T) {
 				t.Fatalf("UnreferencedBaseInputs() error = %v, want nil", err)
 			}
 
-			if len(got) != len(tc.want) {
+			if !slices.Equal(got, tc.want) {
 				t.Fatalf("got %v, want %v", got, tc.want)
-			}
-
-			for i := range got {
-				if got[i] != tc.want[i] {
-					t.Fatalf("got %v, want %v", got, tc.want)
-				}
 			}
 		})
 	}
 }
 
-// TestUnreferencedBaseInputsRejectsUnparseableIDs is the safety property: an ID
+// TestUnreferencedBaseInputs_RejectsUnparsableIDs is the safety property: an ID
 // this function cannot parse is one it also cannot match against the referenced
 // set, so silently treating it as unrecognised would classify a live base as
 // prunable. Every malformed input must fail the pass instead.
-func TestUnreferencedBaseInputsRejectsUnparseableIDs(t *testing.T) {
+func TestUnreferencedBaseInputs_RejectsUnparsableIDs(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {

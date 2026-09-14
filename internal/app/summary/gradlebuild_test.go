@@ -32,7 +32,11 @@ func TestGradleBuild_RendersAllFields(t *testing.T) {
 	for _, want := range []string{
 		"## Gradle Build Summary 🔨",
 		"- **Java:** 25",
-		"- **Tasks:** build :app:bundle",
+		// Task paths go through summary.LiteralText like every other value
+		// the build summaries render, so ":" is entity-encoded in the raw
+		// output and displays as ":" once rendered. It used to be interpolated
+		// raw, which let a newline in any field forge a summary row.
+		"- **Tasks:** build &#58;app&#58;bundle",
 		"- **Tests:** ⊘ Skipped",
 		"- **Version:** 1.2.3",
 		"*Build completed at 2026-05-10 12:00:00 UTC*",

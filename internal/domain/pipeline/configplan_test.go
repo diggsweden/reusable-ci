@@ -4,7 +4,7 @@
 package pipeline_test
 
 import (
-	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
@@ -44,11 +44,11 @@ func TestNewConfigPlan_GroupsArtifactsAndDefaultsContainers(t *testing.T) {
 		t.Errorf("fallback project type = %q", plan.FallbackProjectType)
 	}
 
-	if got := names(plan.Artifacts.ForgePackages); !reflect.DeepEqual(got, []string{"lib", "pkg"}) {
+	if got := names(plan.Artifacts.ForgePackages); !slices.Equal(got, []string{"lib", "pkg"}) {
 		t.Errorf("github packages = %v", got)
 	}
 
-	if got := names(plan.Artifacts.MavenCentral); !reflect.DeepEqual(got, []string{"lib"}) {
+	if got := names(plan.Artifacts.MavenCentral); !slices.Equal(got, []string{"lib"}) {
 		t.Errorf("maven central = %v", got)
 	}
 
@@ -56,7 +56,7 @@ func TestNewConfigPlan_GroupsArtifactsAndDefaultsContainers(t *testing.T) {
 		t.Errorf("npmjs should be unsupported for current workflows, got %v", got)
 	}
 
-	if got := names(plan.Artifacts.GoArtifactFirst); !reflect.DeepEqual(got, []string{"go-cli"}) {
+	if got := names(plan.Artifacts.GoArtifactFirst); !slices.Equal(got, []string{"go-cli"}) {
 		t.Errorf("go artifact first = %v", got)
 	}
 
@@ -76,7 +76,7 @@ func TestNewConfigPlan_GroupsArtifactsAndDefaultsContainers(t *testing.T) {
 		t.Errorf("go build artifact name = %q", got)
 	}
 
-	if got := names(plan.Artifacts.GoContainerFirst); !reflect.DeepEqual(got, []string{"go-service"}) {
+	if got := names(plan.Artifacts.GoContainerFirst); !slices.Equal(got, []string{"go-service"}) {
 		t.Errorf("go container first = %v", got)
 	}
 
@@ -183,7 +183,7 @@ func TestNewConfigPlan_BuildSecretsPropagated(t *testing.T) {
 		byName[c.Name] = c
 	}
 
-	if got := byName["with-secrets"].BuildSecrets; !reflect.DeepEqual(got, []string{"DB_PASSWORD", "API_TOKEN"}) {
+	if got := byName["with-secrets"].BuildSecrets; !slices.Equal(got, []string{"DB_PASSWORD", "API_TOKEN"}) {
 		t.Errorf("with-secrets BuildSecrets = %v", got)
 	}
 
@@ -225,6 +225,21 @@ func TestNewConfigPlan_BuildArtifactNamesMatchConditionalUploads(t *testing.T) {
 		if got := byName[name].BuildArtifactName; got != want {
 			t.Errorf("%s build artifact name = %q, want %q", name, got, want)
 		}
+	}
+}
+
+func TestNewConfigPlan_AndroidReleaseNameDoesNotUseSubstringMatching(t *testing.T) {
+	t.Parallel()
+
+	yes := true
+	cfg := &config.Config{Artifacts: []config.Artifact{{
+		Name: "android-lookalike", ProjectType: projecttype.GradleAndroid,
+		GradleAndroid: &config.GradleAndroidConfig{IncludeAAB: &yes, BuildTypes: "notrelease"},
+	}}}
+
+	plan := pipeline.NewConfigPlan(cfg)
+	if got := plan.Artifacts.All[0].BuildArtifactName; got != "" {
+		t.Fatalf("substring build type produced release artifact name %q", got)
 	}
 }
 

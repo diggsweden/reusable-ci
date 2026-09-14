@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -21,20 +22,31 @@ type UploadEntry struct {
 	Abs     string
 	RelPath string // forward-slash, relative to the artifact root
 	Size    int64
+	info    fs.FileInfo
 }
 
-// CollectUploadEntries resolves an upload set. Dir mode walks the tree and
-// preserves relative paths; Files mode flattens to basenames. Symlinks and
+// CollectUploadEntries resolves an upload set. Dir mode walks the tree; Files
+// mode roots exact files at their least common parent. Both preserve stable
+// artifact-relative paths. Symlinks and
 // other non-regular entries are skipped (never followed), so an artifact
 // can never smuggle a link out of the workspace. When includeHidden is false,
-// dotfiles (and anything under a dot-directory) are skipped — matching
-// actions/upload-artifact's include-hidden-files default.
+// dotfiles and dot-directories below that artifact root are skipped. External
+// ancestors of the directory or least common parent do not affect selection.
+//
+//nolint:cyclop // directory and exact-file collection share normalization checks.
 func CollectUploadEntries(dir string, files []string, includeHidden bool) ([]UploadEntry, error) {
 	if dir != "" {
 		return walkDir(dir, includeHidden)
 	}
 
-	out := make([]UploadEntry, 0, len(files))
+	type selectedFile struct {
+		abs  string
+		info fs.FileInfo
+	}
+
+	selected := make([]selectedFile, 0, len(files))
+	parents := make([]string, 0, len(files))
+	seen := make(map[string]struct{}, len(files))
 
 	for _, path := range files {
 		info, err := os.Lstat(path)
@@ -46,20 +58,54 @@ func CollectUploadEntries(dir string, files []string, includeHidden bool) ([]Upl
 			continue
 		}
 
-		if !includeHidden && strings.HasPrefix(filepath.Base(path), ".") {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("absolute path for %q: %w", path, err)
+		}
+
+		if _, ok := seen[abs]; ok {
 			continue
 		}
 
-		out = append(out, UploadEntry{Abs: path, RelPath: filepath.Base(path), Size: info.Size()})
+		seen[abs] = struct{}{}
+		selected = append(selected, selectedFile{abs: abs, info: info})
+		parents = append(parents, filepath.Dir(abs))
 	}
+
+	if len(selected) == 0 {
+		return nil, nil
+	}
+
+	root := commonPrefixDir(parents)
+
+	out := make([]UploadEntry, 0, len(selected))
+	for _, file := range selected {
+		rel, err := filepath.Rel(root, file.abs)
+		if err != nil {
+			return nil, fmt.Errorf("relativise %q under %q: %w", file.abs, root, err)
+		}
+
+		if !includeHidden && hasHiddenSegment(rel) {
+			continue
+		}
+
+		out = append(out, UploadEntry{Abs: file.abs, RelPath: filepath.ToSlash(rel), Size: file.info.Size(), info: file.info})
+	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].RelPath < out[j].RelPath })
 
 	return out, nil
 }
 
 func walkDir(dir string, includeHidden bool) ([]UploadEntry, error) {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, fmt.Errorf("absolute directory: %w", err)
+	}
+
 	var out []UploadEntry
 
-	err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+	err = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -86,7 +132,7 @@ func walkDir(dir string, includeHidden bool) ([]UploadEntry, error) {
 			return err
 		}
 
-		out = append(out, UploadEntry{Abs: path, RelPath: filepath.ToSlash(rel), Size: info.Size()})
+		out = append(out, UploadEntry{Abs: path, RelPath: filepath.ToSlash(rel), Size: info.Size(), info: info})
 
 		return nil
 	})

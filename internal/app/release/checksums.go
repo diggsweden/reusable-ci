@@ -6,8 +6,10 @@ package release
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // ChecksumsInput drives `reusable-ci release checksums`.
@@ -225,9 +228,20 @@ func checksumsFromAssembly(out io.Writer, in ChecksumsInput) (int, error) {
 // missing dir is silently treated as empty. skip lets the caller
 // exclude the output manifest itself.
 func checksumReleaseArtifacts(dir string, out io.Writer, write func(absPath, label string) error, skip func(string) bool) error {
-	entries, err := os.ReadDir(dir)
+	root, err := pathsafe.OpenRoot(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
 	if err != nil {
-		return nil //nolint:nilerr // missing dir → no entries (matches bash behaviour)
+		return err
+	}
+
+	defer func() { _ = root.Close() }()
+
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return err
 	}
 
 	_, _ = fmt.Fprintf(out, "→ Checksumming release artifacts from %s\n", dir)
@@ -254,29 +268,19 @@ func checksumReleaseArtifacts(dir string, out io.Writer, write func(absPath, lab
 // analyzed-container SBOM pattern. Missing dir → no-op. skip excludes
 // the output manifest when it lives inside the walked directory.
 func checksumContainerSBOMs(dir string, out io.Writer, write func(absPath, label string) error, skip func(string) bool) error {
-	entries, err := os.ReadDir(dir)
+	matches, err := globAll(dir, []string{domainrelease.AnalyzedContainerSBOMPattern})
 	if err != nil {
-		return nil //nolint:nilerr // missing dir → no entries
+		return err
 	}
 
 	_, _ = fmt.Fprintf(out, "→ Checksumming container SBOMs from %s\n", dir)
 
-	for _, e := range entries { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		if e.IsDir() {
-			continue
-		}
-
-		matched, err := filepath.Match(domainrelease.AnalyzedContainerSBOMPattern, e.Name())
-		if err != nil || !matched {
-			continue
-		}
-
-		path := filepath.Join(dir, e.Name())
+	for _, path := range matches {
 		if skip != nil && skip(path) {
 			continue
 		}
 
-		if err := write(path, e.Name()); err != nil {
+		if err := write(path, filepath.Base(path)); err != nil {
 			return err
 		}
 	}
@@ -295,25 +299,18 @@ func checksumWorkdirSBOMs(workdir string, out io.Writer, write func(absPath, lab
 
 	_, _ = fmt.Fprintln(out, "→ Checksumming all SBOM layers")
 
-	for _, pattern := range domainrelease.SBOMFilePatterns {
-		matches, err := filepath.Glob(filepath.Join(root, pattern))
-		if err != nil {
-			return fmt.Errorf("glob %q: %w", pattern, err)
+	matches, err := globAll(root, domainrelease.SBOMFilePatterns)
+	if err != nil {
+		return err
+	}
+
+	for _, m := range matches {
+		if skip != nil && skip(m) {
+			continue
 		}
 
-		for _, m := range matches { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-			info, statErr := os.Stat(m)
-			if statErr != nil || info.IsDir() {
-				continue
-			}
-
-			if skip != nil && skip(m) {
-				continue
-			}
-
-			if err := write(m, filepath.Base(m)); err != nil {
-				return err
-			}
+		if err := write(m, filepath.Base(m)); err != nil {
+			return err
 		}
 	}
 
@@ -321,15 +318,15 @@ func checksumWorkdirSBOMs(workdir string, out io.Writer, write func(absPath, lab
 }
 
 func sha256File(path string) (string, error) {
-	f, err := os.Open(path) //nolint:gosec,varnamelen // checksumming caller-supplied artifact path.
+	file, err := openReleaseFile(path)
 	if err != nil {
 		return "", fmt.Errorf("open %q: %w", path, err)
 	}
 
-	defer func() { _ = f.Close() }()
+	defer func() { _ = file.Close() }()
 
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := io.Copy(h, file); err != nil {
 		return "", fmt.Errorf("hash %q: %w", path, err)
 	}
 
@@ -361,7 +358,7 @@ func checksumAttachArtifacts(patterns string, out io.Writer, write func(absPath,
 		}
 
 		for _, m := range matches { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-			info, statErr := os.Stat(m)
+			info, statErr := os.Lstat(m)
 			if statErr != nil || info.IsDir() {
 				continue
 			}

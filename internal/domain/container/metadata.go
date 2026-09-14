@@ -97,12 +97,19 @@ func PrimaryVersion(applied []AppliedTag) string {
 }
 
 // FormatTags prefixes each AppliedTag with `image:` and returns the
-// declaration-order tag list. Empty AppliedTag (silently-skipped rule)
+// declaration-order tag list, keeping only the first exact formatted tag.
+// PrimaryVersion still considers every rule's priority. Empty AppliedTag (silently-skipped rule)
 // is filtered out by the caller before this point.
 func FormatTags(image string, applied []AppliedTag) []string {
 	out := make([]string, 0, len(applied))
+
+	seen := make(map[string]bool, len(applied))
 	for _, a := range applied {
-		out = append(out, image+":"+a.Tag)
+		tag := image + ":" + a.Tag
+		if !seen[tag] {
+			seen[tag] = true
+			out = append(out, tag)
+		}
 	}
 
 	return out

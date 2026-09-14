@@ -39,6 +39,7 @@ type fakeReleaseRequestGit struct {
 	fetches           int
 	verifiedTag       string
 	verifiedSigners   string
+	queries           int
 }
 
 func newFakeReleaseRequestGit() *fakeReleaseRequestGit {
@@ -51,6 +52,8 @@ func newFakeReleaseRequestGit() *fakeReleaseRequestGit {
 }
 
 func (f *fakeReleaseRequestGit) RevParse(_ context.Context, ref string) (string, error) {
+	f.queries++
+
 	if ref != "refs/tags/release-request/v1.2.3" {
 		return "", errUnexpectedRef
 	}
@@ -152,6 +155,49 @@ func TestVerifyReleaseRequest_Accepts(t *testing.T) {
 	}
 }
 
+func TestVerifyReleaseRequest_RejectsNonRegularSignersBeforeQueries(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []string{"directory", "leaf link", "parent link", "empty"} {
+		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
+			path := writeAllowedSigners(t, "fixture signer")
+
+			switch kind {
+			case "directory":
+				path = t.TempDir()
+			case "empty":
+				path = writeAllowedSigners(t, "")
+			case "leaf link":
+				link := filepath.Join(t.TempDir(), "alias")
+				if err := os.Symlink(path, link); err != nil {
+					t.Fatal(err)
+				}
+
+				path = link
+			case "parent link":
+				link := filepath.Join(t.TempDir(), "alias")
+				if err := os.Symlink(filepath.Dir(path), link); err != nil {
+					t.Fatal(err)
+				}
+
+				path = filepath.Join(link, filepath.Base(path))
+			}
+
+			git := newFakeReleaseRequestGit()
+
+			_, err := runVerifyReleaseRequest(t, git, path, "release-request/v1.2.3", "v1.2.3")
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Errorf("err=%v, want ErrValidation", err)
+			}
+
+			if git.queries != 0 || git.fetches != 0 || git.verifiedTag != "" {
+				t.Error("dependency called for invalid signer file")
+			}
+		})
+	}
+}
+
 func TestVerifyReleaseRequest_FetchesRequestTagWhenMissingLocally(t *testing.T) {
 	t.Parallel()
 
@@ -172,22 +218,30 @@ func TestVerifyReleaseRequest_RejectsShellRegressionModes(t *testing.T) {
 	t.Parallel()
 
 	signers := writeAllowedSigners(t, "release@example.test ssh-ed25519 AAAA\n")
-	cases := map[string]func(*fakeReleaseRequestGit){
-		"final_exists":  func(g *fakeReleaseRequestGit) { g.finalExists = true },
-		"mismatch":      func(g *fakeReleaseRequestGit) { g.localObject = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
-		"lightweight":   func(g *fakeReleaseRequestGit) { g.catType = "commit" },
-		"bad_signature": func(g *fakeReleaseRequestGit) { g.verifyErr = errs.ErrValidation },
+
+	// This gate decides whether a release publishes, so each refusal is
+	// pinned to its class rather than to "some error": a caller mapping
+	// them to exit codes has to be able to tell them apart, and a bare
+	// nil-check passes on a failure from anywhere in the chain.
+	cases := map[string]struct {
+		mutate func(*fakeReleaseRequestGit)
+		want   error
+	}{
+		"final_exists":  {mutate: func(g *fakeReleaseRequestGit) { g.finalExists = true }, want: errs.ErrValidation},
+		"mismatch":      {mutate: func(g *fakeReleaseRequestGit) { g.localObject = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }, want: errs.ErrValidation},
+		"lightweight":   {mutate: func(g *fakeReleaseRequestGit) { g.catType = "commit" }, want: errs.ErrValidation},
+		"bad_signature": {mutate: func(g *fakeReleaseRequestGit) { g.verifyErr = errs.ErrValidation }, want: errs.ErrValidation},
 	}
 
-	for name, mutate := range cases {
+	for name, testCase := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			git := newFakeReleaseRequestGit()
-			mutate(git)
+			testCase.mutate(git)
 
-			if _, err := runVerifyReleaseRequest(t, git, signers, "release-request/v1.2.3", "v1.2.3"); err == nil {
-				t.Fatal("expected rejection")
+			if _, err := runVerifyReleaseRequest(t, git, signers, "release-request/v1.2.3", "v1.2.3"); !errors.Is(err, testCase.want) {
+				t.Fatalf("err = %v, want %v", err, testCase.want)
 			}
 		})
 	}

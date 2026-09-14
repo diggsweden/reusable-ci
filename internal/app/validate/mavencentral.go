@@ -6,6 +6,7 @@ package validate
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -23,7 +24,7 @@ type MavenCentralCredentialsInput struct {
 // secret was missing; the error message includes the "Required for
 // publishing to Maven Central" hint.
 func MavenCentralCredentials(w, stderr io.Writer, annot output.Annotator, in MavenCentralCredentialsInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if in.Username == "" {
+	if strings.TrimSpace(in.Username) == "" {
 		annot.Errorf("Missing MAVEN_CENTRAL_USERNAME secret")
 
 		_, _ = fmt.Fprintln(w, "Required for publishing to Maven Central")
@@ -31,7 +32,7 @@ func MavenCentralCredentials(w, stderr io.Writer, annot output.Annotator, in Mav
 		return fmt.Errorf("missing MAVEN_CENTRAL_USERNAME secret: %w", errs.ErrPermissionDenied)
 	}
 
-	if in.Password == "" {
+	if strings.TrimSpace(in.Password) == "" {
 		annot.Errorf("Missing MAVEN_CENTRAL_PASSWORD secret")
 
 		_, _ = fmt.Fprintln(w, "Required for publishing to Maven Central")

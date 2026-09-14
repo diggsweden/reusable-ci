@@ -5,6 +5,7 @@ package imageledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,10 +14,25 @@ import (
 
 // DigestResolver resolves a registry reference (a tag ref or a
 // digest-pinned ref) to the sha256 digest the registry currently serves
-// for it. Implemented by a registry adapter; the domain depends only on
-// this port so the verify logic is fake-testable without a registry.
+// for it. A missing ref must wrap errs.ErrMissingInput so callers can
+// distinguish absence from an unavailable or unauthorized registry.
+// Implemented by a registry adapter; the domain depends only on this port
+// so the verify logic is fake-testable without a registry.
 type DigestResolver interface {
 	ResolveDigest(ctx context.Context, ref string) (string, error)
+}
+
+func resolveDigestIfPresent(ctx context.Context, resolver DigestResolver, ref string) (string, bool, error) {
+	digest, err := resolver.ResolveDigest(ctx, ref)
+	if err != nil {
+		if errors.Is(err, errs.ErrMissingInput) {
+			return "", false, nil
+		}
+
+		return "", false, fmt.Errorf("resolve %s: %w", ref, err)
+	}
+
+	return digest, true, nil
 }
 
 // Verify re-validates the ledger at the trust boundary and checks each

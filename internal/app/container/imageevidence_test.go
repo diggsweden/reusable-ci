@@ -4,17 +4,20 @@
 package container_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeImageEvidenceBuildah struct {
@@ -85,12 +88,25 @@ type fakeImageEvidenceTrivy struct {
 	calls    [][]string
 	jsonBody string
 	code     int
+	noOutput bool
+	// codes, when set, gives the exit code of each call in turn.
+	codes []int
 }
 
 func (f *fakeImageEvidenceTrivy) RunInherit(_ context.Context, _, _ io.Writer, args ...string) (int, error) {
 	f.args = append([]string{}, args...)
 
 	f.calls = append(f.calls, append([]string{}, args...))
+
+	code := f.code
+	if index := len(f.calls) - 1; index < len(f.codes) {
+		code = f.codes[index]
+	}
+
+	if f.noOutput {
+		return code, nil
+	}
+
 	for i, arg := range args {
 		if arg == "--output" && i+1 < len(args) {
 			body := f.jsonBody
@@ -104,13 +120,15 @@ func (f *fakeImageEvidenceTrivy) RunInherit(_ context.Context, _, _ io.Writer, a
 		}
 	}
 
-	return f.code, nil
+	return code, nil
 }
 
 type fakeImageEvidenceSyft struct {
-	target  string // the last target, for single-platform tests
-	targets []string
-	outputs map[string]string
+	target   string // the last target, for single-platform tests
+	targets  []string
+	outputs  map[string]string
+	noOutput bool
+	jsonBody string
 }
 
 func (f *fakeImageEvidenceSyft) Generate(_ context.Context, target string, outputs map[string]string, _ io.Writer) error {
@@ -118,8 +136,17 @@ func (f *fakeImageEvidenceSyft) Generate(_ context.Context, target string, outpu
 	f.targets = append(f.targets, target)
 
 	f.outputs = outputs
+	if f.noOutput {
+		return nil
+	}
+
 	for _, path := range outputs {
-		if err := os.WriteFile(path, []byte(`{"bomFormat":"CycloneDX"}`), 0o600); err != nil { //nolint:gosec,mnd // test fixture.
+		body := f.jsonBody
+		if body == "" {
+			body = `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1}`
+		}
+
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil { //nolint:gosec,mnd // test fixture.
 			return err
 		}
 	}
@@ -150,12 +177,17 @@ func TestImageEvidence_OCILayoutScansAndWritesOptionalSBOM(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wantArgs := []string{"image", "--input", layout, "--scanners", "vuln", "--skip-version-check", "--timeout", "7m", "--format", "json", "--output", trivyOut}
-	if !reflect.DeepEqual(trivy.args, wantArgs) {
+	stagedTrivy := trivyArg(t, trivy.args, "--output")
+	assertPrivateEvidenceOutput(t, stagedTrivy, trivyOut)
+
+	wantArgs := []string{"image", "--input", layout, "--scanners", "vuln", "--skip-version-check", "--timeout", "7m", "--format", "json", "--output", stagedTrivy}
+	if !slices.Equal(trivy.args, wantArgs) {
 		t.Fatalf("trivy args = %#v, want %#v", trivy.args, wantArgs)
 	}
 
-	if syft.target != "oci-dir:"+layout || syft.outputs["cyclonedx-json"] != sbomOut {
+	assertPrivateEvidenceOutput(t, syft.outputs["cyclonedx-json"], sbomOut)
+
+	if syft.target != "oci-dir:"+layout {
 		t.Fatalf("syft target=%q outputs=%v", syft.target, syft.outputs)
 	}
 }
@@ -191,21 +223,77 @@ func TestImageEvidence_LocalImageExportsTemporaryLayoutAndCleansUp(t *testing.T)
 	}
 }
 
-func TestImageEvidence_RejectsInvalidTrivyShape(t *testing.T) {
+func TestImageEvidence_ValidatesReportBeforePublication(t *testing.T) {
 	t.Parallel()
-	work := t.TempDir()
 
-	layout := filepath.Join(work, "layout")
-	if err := os.Mkdir(layout, 0o755); err != nil { //nolint:gosec,mnd // test fixture.
-		t.Fatal(err)
-	}
+	for _, tc := range []struct {
+		name, body string
+		valid      bool
+	}{
+		{"empty-object", `{}`, false},
+		{"unknown-only", `{"unexpected":true}`, false},
+		{"unnamed-null", `{"Results":null}`, false},
+		{"blank-name", `{"ArtifactName":" \t"}`, false},
+		{"typed-field", `{"Results":[{"Vulnerabilities":"invalid"}]}`, false},
+		{"syntax", `{"Results":[`, false},
+		{"empty-array", `{"Results":[],"Future":true}`, true},
+		{"named-omitted", `{"ArtifactName":"image"}`, true},
+		{"named-null", `{"ArtifactName":"image","Results":null}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
 
-	err := appcontainer.ImageEvidence(context.Background(), &fakeImageEvidenceBuildah{}, &fakeImageEvidenceSkopeo{}, &fakeImageEvidenceTrivy{jsonBody: `{"unexpected":true}`}, &fakeImageEvidenceSyft{}, io.Discard, io.Discard, appcontainer.ImageEvidenceInput{
-		OCILayout:   layout,
-		TrivyOutput: filepath.Join(work, "trivy.json"),
-	})
-	if !errors.Is(err, errs.ErrMalformedInput) {
-		t.Fatalf("err = %v, want ErrMalformedInput", err)
+			trivyPath, sbomPath := filepath.Join(root, "trivy.json"), filepath.Join(root, "sbom.json")
+			for _, path := range []string{trivyPath, sbomPath} {
+				require.NoError(t, os.WriteFile(path, []byte("OLD-CANARY"), 0o600))
+			}
+
+			before := snapshotContainerTree(t, root)
+			buildah := &fakeImageEvidenceBuildah{}
+			trivy, syft := &fakeImageEvidenceTrivy{jsonBody: tc.body}, &fakeImageEvidenceSyft{}
+
+			var out bytes.Buffer
+
+			err := appcontainer.ImageEvidence(t.Context(), buildah, nil, trivy, syft, &out, &out, appcontainer.ImageEvidenceInput{LocalImageRef: "localhost/app:test", TrivyOutput: trivyPath, SBOMOutput: sbomPath, TempDir: root})
+			require.Len(t, trivy.calls, 1)
+			require.NotEmpty(t, buildah.layout)
+			_, statErr := os.Stat(buildah.layout)
+			require.ErrorIs(t, statErr, os.ErrNotExist)
+			staged := trivyArg(t, trivy.args, "--output")
+			require.NotEqual(t, trivyPath, staged)
+			_, statErr = os.Stat(filepath.Dir(staged))
+			require.ErrorIs(t, statErr, os.ErrNotExist)
+
+			if tc.valid {
+				require.NoError(t, err)
+				require.Equal(t, []string{"oci-dir:" + buildah.layout}, syft.targets)
+
+				body, readErr := os.ReadFile(trivyPath)
+				require.NoError(t, readErr)
+				require.Equal(t, tc.body, string(body))
+				body, readErr = os.ReadFile(sbomPath)
+				require.NoError(t, readErr)
+				require.JSONEq(t, `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1}`, string(body))
+
+				entries, readErr := os.ReadDir(root)
+				require.NoError(t, readErr)
+				require.Len(t, entries, 2, "only published reports should remain")
+			} else {
+				require.ErrorIs(t, err, errs.ErrMalformedInput)
+				require.Empty(t, syft.targets)
+				require.Equal(t, before, snapshotContainerTree(t, root))
+			}
+
+			if tc.name == "typed-field" {
+				var cause *json.UnmarshalTypeError
+				require.ErrorAs(t, err, &cause)
+			}
+
+			if tc.name == "syntax" {
+				var cause *json.SyntaxError
+				require.ErrorAs(t, err, &cause)
+			}
+		})
 	}
 }
 
@@ -290,7 +378,7 @@ func TestImageEvidence_ScansEachPlatformFromItsOwnLayout(t *testing.T) {
 	err := appcontainer.ImageEvidence(context.Background(), buildah, skopeo, trivy, syft, io.Discard, io.Discard, appcontainer.ImageEvidenceInput{
 		LocalManifest:       "localhost/example:candidate",
 		RegistryRef:         "registry.example/owner/example:final",
-		Digest:              "sha256:reuse",
+		Digest:              "sha256:" + strings.Repeat("a", 64),
 		Platforms:           []string{"linux/amd64", "linux/arm64"},
 		TrivyOutputTemplate: filepath.Join(work, "trivy-{arch}.json"),
 		SBOMOutputTemplate:  filepath.Join(work, "sbom-{platform}.json"),
@@ -364,9 +452,7 @@ func assertPerPlatformScans(t *testing.T, trivy *fakeImageEvidenceTrivy, syft *f
 			t.Errorf("trivy scanned %q for %s, want that platform's layout %q", got, arch, layout)
 		}
 
-		if got := trivyArg(t, trivy.calls[i], "--output"); got != filepath.Join(work, "trivy-"+arch+".json") {
-			t.Errorf("trivy wrote %q for %s", got, arch)
-		}
+		assertPrivateEvidenceOutput(t, trivyArg(t, trivy.calls[i], "--output"), filepath.Join(work, "trivy-"+arch+".json"))
 
 		if want := "oci-dir:" + layout; syft.targets[i] != want {
 			t.Errorf("syft scanned %q for %s, want %q", syft.targets[i], arch, want)
@@ -431,7 +517,7 @@ func TestImageEvidence_MultiArchPrefersScanLayoutOverOtherSources(t *testing.T) 
 		ScanLayout:          scanLayout,
 		LocalManifest:       "localhost/ignored:candidate",
 		RegistryRef:         "registry.example/owner/example:final",
-		Digest:              "sha256:ignored",
+		Digest:              "sha256:" + strings.Repeat("a", 64),
 		Platforms:           []string{"linux/amd64"},
 		TrivyOutputTemplate: filepath.Join(work, "trivy-{arch}.json"),
 		TempDir:             work,
@@ -464,7 +550,7 @@ func TestImageEvidence_MultiArchRegistryDigestFallback(t *testing.T) {
 
 	err := appcontainer.ImageEvidence(context.Background(), &fakeImageEvidenceBuildah{}, skopeo, &fakeImageEvidenceTrivy{}, &fakeImageEvidenceSyft{}, io.Discard, io.Discard, appcontainer.ImageEvidenceInput{
 		RegistryRef:         "registry.example/owner/example:final",
-		Digest:              "sha256:reused",
+		Digest:              "sha256:" + strings.Repeat("a", 64),
 		Platforms:           []string{"linux/amd64"},
 		TrivyOutputTemplate: filepath.Join(work, "trivy-{platform}.json"),
 		TempDir:             work,
@@ -482,7 +568,7 @@ func TestImageEvidence_MultiArchRegistryDigestFallback(t *testing.T) {
 	}
 
 	copied := skopeo.registryCopies[0]
-	if copied.ref != "registry.example/owner/example:final" || copied.digest != "sha256:reused" || copied.osName != "linux" || copied.arch != "amd64" {
+	if copied.ref != "registry.example/owner/example:final" || copied.digest != "sha256:"+strings.Repeat("a", 64) || copied.osName != "linux" || copied.arch != "amd64" {
 		t.Fatalf("registry copy = %+v", copied)
 	}
 
@@ -544,17 +630,13 @@ func TestImageEvidence_ScansTheRegistryImageItPulled(t *testing.T) {
 		t.Errorf("trivy scanned %q, want the layout pulled for it %q", got, copied.destLayout)
 	}
 
-	if got := trivyArg(t, trivy.calls[0], "--output"); got != trivyOutput {
-		t.Errorf("trivy wrote %q, want %q", got, trivyOutput)
-	}
+	assertPrivateEvidenceOutput(t, trivyArg(t, trivy.calls[0], "--output"), trivyOutput)
 
-	if want := []string{"oci-dir:" + copied.destLayout}; !reflect.DeepEqual(syft.targets, want) {
+	if want := []string{"oci-dir:" + copied.destLayout}; !slices.Equal(syft.targets, want) {
 		t.Errorf("syft scanned %v, want %v", syft.targets, want)
 	}
 
-	if syft.outputs["cyclonedx-json"] != sbomOutput {
-		t.Errorf("syft outputs = %v, want the SBOM at %s", syft.outputs, sbomOutput)
-	}
+	assertPrivateEvidenceOutput(t, syft.outputs["cyclonedx-json"], sbomOutput)
 
 	// A whole image was unpacked to scan it; leaving it behind fills the
 	// runner's disk one release at a time.
@@ -602,4 +684,82 @@ func TestImageEvidence_RejectsInvalidMultiArchInputsBeforeTools(t *testing.T) {
 			assertNoEvidenceToolsRan(t, buildah, skopeo, trivy, syft)
 		})
 	}
+}
+
+// TestImageEvidence_OnePlatformFailingLeavesItsPeersAndNoLayouts covers a
+// multi-arch run in which scanning fails. A failed scan of one platform does
+// not stop the next: every platform is scanned, the first failure is the one
+// returned, only the platform that succeeded publishes evidence, and no
+// temporary layout survives either outcome. Failing to extract a platform
+// layout is different: it aborts the run before any scan, and still cleans up.
+func TestImageEvidence_OnePlatformFailingLeavesItsPeersAndNoLayouts(t *testing.T) {
+	t.Parallel()
+
+	input := func(work string) appcontainer.ImageEvidenceInput {
+		return appcontainer.ImageEvidenceInput{
+			LocalManifest:       "localhost/example:candidate",
+			Platforms:           []string{"linux/amd64", "linux/arm64", "linux/s390x"},
+			TrivyOutputTemplate: filepath.Join(work, "evidence", "trivy-{arch}.json"),
+			SBOMOutputTemplate:  filepath.Join(work, "evidence", "sbom-{arch}.json"),
+			TempDir:             filepath.Join(work, "tmp"),
+		}
+	}
+
+	prepare := func(t *testing.T) string {
+		t.Helper()
+
+		work := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(work, "evidence"), 0o750))
+		require.NoError(t, os.MkdirAll(filepath.Join(work, "tmp"), 0o750))
+
+		return work
+	}
+
+	t.Run("scan failures", func(t *testing.T) {
+		t.Parallel()
+
+		work := prepare(t)
+		skopeo := &fakeImageEvidenceSkopeo{}
+		trivy := &fakeImageEvidenceTrivy{codes: []int{3, 0, 5}}
+		syft := &fakeImageEvidenceSyft{}
+
+		err := appcontainer.ImageEvidence(context.Background(), &fakeImageEvidenceBuildah{}, skopeo, trivy, syft, io.Discard, io.Discard, input(work))
+		require.ErrorIs(t, err, errs.ErrDependencyUnavailable)
+		require.Contains(t, err.Error(), "exited with status 3")
+		require.NotContains(t, err.Error(), "status 5")
+
+		require.Len(t, trivy.calls, 3, "every platform is scanned")
+		require.Equal(t, []string{"oci-dir:" + skopeo.localCopies[1].destLayout}, syft.targets, "only the platform whose scan passed gets an SBOM")
+
+		entries, readErr := os.ReadDir(filepath.Join(work, "evidence"))
+		require.NoError(t, readErr)
+
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+
+		require.ElementsMatch(t, []string{"trivy-arm64.json", "sbom-arm64.json"}, names)
+
+		tmp, tmpErr := os.ReadDir(filepath.Join(work, "tmp"))
+		require.NoError(t, tmpErr)
+		require.Empty(t, tmp, "temporary layouts survived")
+	})
+
+	t.Run("layout extraction failure", func(t *testing.T) {
+		t.Parallel()
+
+		work := prepare(t)
+		skopeo := &fakeImageEvidenceSkopeo{fail: true}
+		trivy := &fakeImageEvidenceTrivy{}
+
+		err := appcontainer.ImageEvidence(context.Background(), &fakeImageEvidenceBuildah{}, skopeo, trivy, &fakeImageEvidenceSyft{}, io.Discard, io.Discard, input(work))
+		require.Error(t, err)
+		require.Len(t, skopeo.localCopies, 1, "extraction failure aborts before the next platform")
+		require.Empty(t, trivy.calls)
+
+		tmp, tmpErr := os.ReadDir(filepath.Join(work, "tmp"))
+		require.NoError(t, tmpErr)
+		require.Empty(t, tmp, "temporary layouts survived")
+	})
 }

@@ -4,8 +4,10 @@
 package container
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // ValidateArtifactsInput drives ValidateArtifacts.
@@ -34,7 +37,7 @@ type ValidateArtifactsInput struct {
 // the purpose of separate build steps).
 //
 //nolint:cyclop // validates each presence/exclusivity rule independently.
-func ValidateArtifacts(w, stderr io.Writer, annot output.Annotator, in ValidateArtifactsInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func ValidateArtifacts(w io.Writer, annot output.Annotator, in ValidateArtifactsInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if in.ProjectType == "" || in.ArtifactDir == "" {
 		return fmt.Errorf("usage: validate-artifacts <project-type> <artifact-dir> [containerfile-path]: %w", errs.ErrUsage)
 	}
@@ -69,16 +72,33 @@ func ValidateArtifacts(w, stderr io.Writer, annot output.Annotator, in ValidateA
 		return fmt.Errorf("unknown project type: %s: %w", in.ProjectType, errs.ErrUsage)
 	}
 
+	root, rootErr := pathsafe.OpenRoot(in.ArtifactDir)
+	if errors.Is(rootErr, fs.ErrNotExist) {
+		return fmt.Errorf("open artifact directory: %w: %w", rootErr, errs.ErrMissingInput)
+	}
+
+	if rootErr != nil {
+		return rootErr
+	}
+
+	if root != nil {
+		defer func() { _ = root.Close() }()
+	}
+
 	// Go + Cargo land binaries at dist/<goos>-<goarch>/<binary>-<goos>-<goarch>
 	// (nested), so recurse. JVM/NPM artifacts sit at the top level of the
 	// matrix-uploaded directory.
 	var hits []string
 
 	pt := projecttype.Type(in.ProjectType)
-	if pt == projecttype.Go || pt == projecttype.Cargo {
-		hits = listMatchingRecursive(in.ArtifactDir, matcher)
-	} else {
-		hits = listMatching(in.ArtifactDir, matcher)
+
+	if root != nil {
+		var err error
+
+		hits, err = listMatching(root, in.ArtifactDir, pt == projecttype.Go || pt == projecttype.Cargo, matcher)
+		if err != nil {
+			return err
+		}
 	}
 
 	if len(hits) == 0 {
@@ -91,17 +111,46 @@ func ValidateArtifacts(w, stderr io.Writer, annot output.Annotator, in ValidateA
 		return fmt.Errorf("no %s artifacts in %s: %w", typeLabel, in.ArtifactDir, errs.ErrValidation)
 	}
 
-	_, _ = fmt.Fprintf(w, "%s %s artifacts found:\n", clicolor.Check(w), typeLabel)
-
-	for _, h := range hits { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		info, _ := os.Stat(h)
-
-		size := int64(0)
-		if info != nil {
-			size = info.Size()
+	sizes := make([]int64, len(hits))
+	for index, hit := range hits {
+		rel, err := filepath.Rel(in.ArtifactDir, hit)
+		if err != nil {
+			return err
 		}
 
+		info, err := root.Lstat(rel)
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("artifact must be a confined regular file: %s: %w", hit, errs.ErrValidation)
+		}
+
+		sizes[index] = info.Size()
+	}
+
+	_, _ = fmt.Fprintf(w, "%s %s artifacts found:\n", clicolor.Check(w), typeLabel)
+
+	var largest int64
+
+	for index, h := range hits { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+		size := sizes[index]
+
+		largest = max(largest, size)
+
 		_, _ = fmt.Fprintf(w, "  %10d  %s\n", size, h)
+	}
+
+	// Every match is zero bytes. This verb exists so a container is never
+	// built around a missing artifact, and a truncated upload satisfies
+	// "a file is present" while shipping exactly the empty image the check
+	// is meant to prevent — the size was already being read and printed
+	// here, and passed anyway. Kept separate from the no-matches branch
+	// above: "nothing was uploaded" and "what was uploaded is empty" send
+	// the operator to different places.
+	if largest == 0 {
+		annot.Errorf("All %s artifacts in %s/ are empty (0 bytes)", typeLabel, in.ArtifactDir)
+
+		_, _ = fmt.Fprintf(w, "Expected %s with content — the upstream build job uploaded %d empty file(s).\n", expectLabel, len(hits))
+
+		return fmt.Errorf("all %s artifacts in %s are empty: %w", typeLabel, in.ArtifactDir, errs.ErrValidation)
 	}
 
 	checkContainerfileRebuilds(cf, w, annot)
@@ -128,55 +177,29 @@ func checkContainerfileRebuilds(cf string, w io.Writer, annot output.Annotator) 
 	_, _ = fmt.Fprintf(w, "See: %s\n", cf)
 }
 
-// listMatching returns top-level files in dir matched by predicate
-// (non-recursive). Returns nil when dir doesn't exist.
-func listMatching(dir string, predicate func(name string) bool) []string {
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return nil
-	}
-
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-
+// listMatching walks the checked directory handle without following links.
+func listMatching(root *os.Root, dir string, recursive bool, predicate func(string) bool) ([]string, error) {
 	var out []string
 
-	for _, e := range entries { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		if e.IsDir() {
-			continue
+	err := fs.WalkDir(root.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
 
-		if predicate(e.Name()) {
-			out = append(out, filepath.Join(dir, e.Name()))
-		}
-	}
+		if entry.IsDir() {
+			if path != "." && !recursive {
+				return fs.SkipDir
+			}
 
-	return out
-}
-
-func listMatchingRecursive(dir string, predicate func(name string) bool) []string {
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return nil
-	}
-
-	var out []string
-
-	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		// Skip per-entry errors (permissions, race-deleted files) and
-		// keep walking — the function returns the entries we could read.
-		if err != nil || d.IsDir() {
-			return nil //nolint:nilerr // skip unreadable entry, keep walking
+			return nil
 		}
 
-		if predicate(d.Name()) {
-			out = append(out, path)
+		if predicate(entry.Name()) {
+			out = append(out, filepath.Join(dir, path))
 		}
 
 		return nil
 	})
 
-	return out
+	return out, err
 }

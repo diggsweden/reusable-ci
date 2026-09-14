@@ -9,9 +9,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -96,7 +97,7 @@ func TestAndroidArtifactNames_EmitsFourNames(t *testing.T) {
 				t.Fatalf("AndroidArtifactNames: %v", err)
 			}
 
-			if got := sink.AllScalar(); !reflect.DeepEqual(got, tc.want) {
+			if got := sink.AllScalar(); !maps.Equal(got, tc.want) {
 				t.Errorf("outputs =\n%v\nwant\n%v", got, tc.want)
 			}
 		})
@@ -135,7 +136,7 @@ func TestAndroidVersionInfo_ReadsGradleProperties(t *testing.T) {
 	}
 
 	want := map[string]string{"version": "1.0.0-beta1", "version-code": "5"}
-	if got := sink.AllScalar(); !reflect.DeepEqual(got, want) {
+	if got := sink.AllScalar(); !maps.Equal(got, want) {
 		t.Errorf("outputs = %v, want %v", got, want)
 	}
 
@@ -159,7 +160,7 @@ func TestAndroidVersionInfo_MissingFileFallsBackToUnknown(t *testing.T) {
 	// Both outputs are still emitted, so a consumer always has something
 	// to read -- absence is a warning here, not a failure.
 	want := map[string]string{"version": "unknown", "version-code": "unknown"}
-	if got := sink.AllScalar(); !reflect.DeepEqual(got, want) {
+	if got := sink.AllScalar(); !maps.Equal(got, want) {
 		t.Errorf("outputs = %v, want %v", got, want)
 	}
 
@@ -168,20 +169,12 @@ func TestAndroidVersionInfo_MissingFileFallsBackToUnknown(t *testing.T) {
 	}
 }
 
-// TestAndroidVersionInfo_CRLFPropertiesFailOnARealSink pins a defect the
-// fake sink cannot see. ParseGradleVersionFromProperties splits on "\n"
-// only, so a CRLF gradle.properties leaves a carriage return in both
-// values, and every line-oriented sink refuses a scalar containing one.
-//
-// The result is that `android version-info` fails outright on a
-// CRLF-checked-out Android project, with a message about newlines and
-// SetMultiline that points nowhere near the cause. See
-// docs/open-questions.md.
-func TestAndroidVersionInfo_CRLFPropertiesFailOnARealSink(t *testing.T) {
+// TestAndroidVersionInfo_NormalizesCRLFForRealSink verifies that normalized
+// Gradle values satisfy the production sink's scalar contract.
+func TestAndroidVersionInfo_NormalizesCRLFForRealSink(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		body    string
-		wantErr error
 		wantOut string
 	}{
 		{
@@ -192,7 +185,7 @@ func TestAndroidVersionInfo_CRLFPropertiesFailOnARealSink(t *testing.T) {
 		{
 			name:    "CRLF",
 			body:    "versionName=1.2.3\r\nversionCode=42\r\n",
-			wantErr: errs.ErrValidation,
+			wantOut: "version=1.2.3\nversion-code=42\n",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -207,8 +200,8 @@ func TestAndroidVersionInfo_CRLFPropertiesFailOnARealSink(t *testing.T) {
 			t.Setenv("GITHUB_OUTPUT", outPath)
 
 			err := appbuild.AndroidVersionInfo(context.Background(), ghaoutput.NewFromEnv(), io.Discard, output.Annotator{}, appbuild.AndroidVersionInfoInput{Dir: fsys.Root})
-			if !errors.Is(err, tc.wantErr) {
-				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			if err != nil {
+				t.Fatalf("AndroidVersionInfo: %v", err)
 			}
 
 			body, readErr := os.ReadFile(outPath)
@@ -482,16 +475,11 @@ func TestAndroidWriteSecretsProperties_WritesDecodedFileAtMode0600(t *testing.T)
 // TestAndroidWriteSecretsProperties_NoSecretIsASkip covers the absent
 // secret. A project with no secrets.properties configured must still
 // build, so this is a skip rather than an error.
-//
-// Every whitespace-only value reaches the same branch, which is why the
-// function's later "decoded to zero bytes" guard cannot fire -- see
-// docs/open-questions.md.
 func TestAndroidWriteSecretsProperties_NoSecretIsASkip(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct{ name, base64 string }{
 		{name: "unset", base64: ""},
-		{name: "whitespace only", base64: " \n\t "},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -608,6 +596,17 @@ func TestAndroidResolveBuildTasks_UsesOverride(t *testing.T) {
 	}
 }
 
+func TestAndroidResolveBuildTasks_RejectsNonExactBuildType(t *testing.T) {
+	t.Parallel()
+
+	err := appbuild.AndroidResolveBuildTasks(context.Background(), fakeoutputsink.New(t), io.Discard, appbuild.AndroidResolveBuildTasksInput{
+		BuildTypes: "notdebug",
+	})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("non-exact build type error = %v, want ErrValidation", err)
+	}
+}
+
 func TestAndroidGradleBuild_WithSkipTests(t *testing.T) {
 	ops := &fakeGradle{}
 	if err := appbuild.AndroidGradleBuild(context.Background(), ops, io.Discard, io.Discard, appbuild.AndroidGradleBuildInput{
@@ -617,7 +616,7 @@ func TestAndroidGradleBuild_WithSkipTests(t *testing.T) {
 	}
 
 	want := []string{"assembleRelease", "app:bundleRelease", "-x", "test"} //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-	if !equalArgs(ops.args, want) {
+	if !slices.Equal(ops.args, want) {
 		t.Errorf("args = %v, want %v", ops.args, want)
 	}
 }
@@ -630,7 +629,7 @@ func TestAndroidGradleBuild_WithoutSkipTestsRunsTasksDirectly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !equalArgs(ops.args, []string{"assembleDebug"}) {
+	if !slices.Equal(ops.args, []string{"assembleDebug"}) {
 		t.Errorf("args = %v, want %v", ops.args, []string{"assembleDebug"})
 	}
 }

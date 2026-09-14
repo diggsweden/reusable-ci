@@ -38,6 +38,16 @@ func gpgGroup() *cli.Command {
 }
 
 func gpgImportCmd() *cli.Command {
+	return gpgImportCommand(func(ctx context.Context, cmd *cli.Command, in apprelease.GPGImportInput) error {
+		return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
+			_, err := apprelease.GPGImport(ctx, gpg.New(), openpgp.ReadMetadata, git.New(), d.OutputSink, in, os.Stderr)
+
+			return err
+		})
+	})
+}
+
+func gpgImportCommand(importKey func(context.Context, *cli.Command, apprelease.GPGImportInput) error) *cli.Command {
 	return &cli.Command{
 		Name:  "import",
 		Usage: "import a GPG private key, optionally cache the passphrase, optionally configure git signing",
@@ -75,18 +85,12 @@ func gpgImportCmd() *cli.Command {
 				return err
 			}
 
-			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
-				_, err := apprelease.GPGImport(ctx, gpg.New(), openpgp.ReadMetadata, git.New(), d.OutputSink,
-					apprelease.GPGImportInput{
-						PrivateKey:        privateKey,
-						Passphrase:        passphrase,
-						GitUserSigningKey: cmd.Bool("git-user-signingkey"),
-						GitCommitGPGSign:  cmd.Bool("git-commit-gpgsign"),
-						GitConfigGlobal:   cmd.Bool("git-config-global"),
-					},
-					os.Stderr)
-
-				return err
+			return importKey(ctx, cmd, apprelease.GPGImportInput{
+				PrivateKey:        privateKey,
+				Passphrase:        passphrase,
+				GitUserSigningKey: cmd.Bool("git-user-signingkey"),
+				GitCommitGPGSign:  cmd.Bool("git-commit-gpgsign"),
+				GitConfigGlobal:   cmd.Bool("git-config-global"),
 			})
 		},
 	}

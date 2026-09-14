@@ -222,3 +222,42 @@ func TestVerifyTagSignature_LightweightTagIsRefused(t *testing.T) {
 		t.Fatalf("err = %v, want ErrValidation naming the tag as not annotated", err)
 	}
 }
+
+// TestVerifyTagSignature_ARotatedKeyringVerifiesTheAppendedKey is key
+// rotation the way docs/verification.md describes it: the new public key is
+// appended to the keyring file as a second armor block. The adapter is the
+// piece that splits the blocks; the app-level rotation tests run against a
+// fake git and never exercise it. The tag is signed by the appended key, the
+// fingerprint reported is that key's, and the first block alone does not
+// verify it.
+func TestVerifyTagSignature_ARotatedKeyringVerifiesTheAppendedKey(t *testing.T) {
+	repo, current := signedTagRepo(t, "v2.0.0")
+
+	retired, err := gocrypto.NewEntity("Retired Bot", "", "old@example.invalid", nil)
+	if err != nil {
+		t.Fatalf("NewEntity: %v", err)
+	}
+
+	rotated := append(publicArmor(t, retired), publicArmor(t, current)...)
+
+	signer, fingerprint, ok, err := (&adaptergit.Repo{Dir: repo.Dir}).
+		VerifyTagSignature(context.Background(), "v2.0.0", rotated)
+	if err != nil {
+		t.Fatalf("VerifyTagSignature: %v", err)
+	}
+
+	if !ok {
+		t.Fatal("a tag signed by the appended key did not verify against the rotated keyring")
+	}
+
+	want := strings.ToUpper(hex.EncodeToString(current.PrimaryKey.Fingerprint))
+	if fingerprint != want || signer != "Release Bot <bot@example.invalid>" {
+		t.Errorf("signer %q fingerprint %q, want the appended key %q", signer, fingerprint, want)
+	}
+
+	_, _, ok, err = (&adaptergit.Repo{Dir: repo.Dir}).
+		VerifyTagSignature(context.Background(), "v2.0.0", publicArmor(t, retired))
+	if err != nil || ok {
+		t.Errorf("the retired block alone verified the tag (ok=%v err=%v); rotation would be untested", ok, err)
+	}
+}

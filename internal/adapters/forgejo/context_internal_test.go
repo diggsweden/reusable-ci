@@ -15,14 +15,14 @@ const (
 	refTypeBranch = "branch"
 )
 
-// TestClassifyRefType covers all seven branches; roughly a third were
+// TestClassifyRefType_ClassifiesRefsFromTheForgeEnvironment covers all seven branches; roughly a third were
 // exercised before.
 //
 // The precedence is the part that matters. A Forgejo runner reports
 // REF_TYPE=refTypeBranch during a pull_request event, so without the
 // event-name override every PR would classify as a branch push — and a
 // branch push is the trusted context that a PR deliberately is not.
-func TestClassifyRefType(t *testing.T) {
+func TestClassifyRefType_ClassifiesRefsFromTheForgeEnvironment(t *testing.T) {
 	t.Parallel()
 
 	env := func(kv map[string]string) func(string) string {

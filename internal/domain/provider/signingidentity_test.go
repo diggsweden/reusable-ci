@@ -37,7 +37,7 @@ func attested(t *testing.T, url string) runcontext.Attested {
 	return a
 }
 
-func TestAnchorIdentity(t *testing.T) {
+func TestAnchorIdentity_BuildsAnAnchoredRepoPattern(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {

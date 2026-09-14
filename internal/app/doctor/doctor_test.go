@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/app/doctor"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 // writeRepo lays out a minimal repo under root with the supplied
@@ -53,6 +54,8 @@ func findCheck(checks []doctor.Check, name string) *doctor.Check {
 }
 
 func TestRun_HappyPath_GPGDefault(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app
@@ -71,7 +74,33 @@ artifacts:
 	}
 }
 
+func TestRun_ReportsUnsupportedGitHubEnterpriseReleaseWorkflow(t *testing.T) {
+	t.Parallel()
+
+	root := writeRepo(t, `
+artifacts:
+  - name: my-app
+    project-type: meta
+`, nil)
+
+	checks, err := doctor.Run(doctor.Input{
+		Root:      root,
+		ForgeAPI:  provider.ForgeGitHub,
+		ServerURL: "https://github.example.test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	check := findCheck(checks, "release workflow provider support")
+	if check == nil || check.Severity != doctor.SeverityFail {
+		t.Fatalf("provider check = %#v, want fail", check)
+	}
+}
+
 func TestRun_MissingArtifactsYML_Fails(t *testing.T) {
+	t.Parallel()
+
 	root := t.TempDir() // no artifacts.yml
 
 	checks, err := doctor.Run(doctor.Input{Root: root})
@@ -81,7 +110,9 @@ func TestRun_MissingArtifactsYML_Fails(t *testing.T) {
 
 	c := findCheck(checks, "artifacts.yml present")
 	if c == nil || c.Severity != doctor.SeverityFail {
-		t.Errorf("missing artifacts.yml must produce a FAIL check; got %+v", c)
+		// Fatalf, not Errorf: the remediation check below dereferences c,
+		// so a missing check would panic instead of reporting.
+		t.Fatalf("missing artifacts.yml must produce a FAIL check; got %+v", c)
 	}
 
 	if !strings.Contains(c.Remediation, "examples/") {
@@ -89,7 +120,55 @@ func TestRun_MissingArtifactsYML_Fails(t *testing.T) {
 	}
 }
 
+func TestRun_MissingArtifactsYML_AutoDerivesSingleManifest(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/acme/widget\n\ngo 1.24\n"), 0o644); err != nil { //nolint:gosec // test fixture.
+		t.Fatal(err)
+	}
+
+	checks, err := doctor.Run(doctor.Input{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := findCheck(checks, "artifacts.yml present")
+	if c == nil || c.Severity != doctor.SeverityOK || !strings.Contains(c.Message, "auto-derived go artifact \"widget\"") {
+		t.Errorf("single manifest should auto-derive a usable config; got %+v", c)
+	}
+
+	if exit := doctor.ExitCode(checks); exit != 0 {
+		var buf bytes.Buffer
+		doctor.FormatText(&buf, checks)
+		t.Errorf("expected exit 0, got %d\n%s", exit, buf.String())
+	}
+}
+
+func TestRun_ExplicitMissingArtifactsPathDoesNotAutoDerive(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/acme/widget\n"), 0o644); err != nil { //nolint:gosec // test fixture.
+		t.Fatal(err)
+	}
+
+	missing := filepath.Join(root, "custom.yml")
+
+	checks, err := doctor.Run(doctor.Input{Root: root, ArtifactsPath: missing})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := findCheck(checks, "artifacts.yml present")
+	if c == nil || c.Severity != doctor.SeverityFail {
+		t.Errorf("an explicit missing path must not auto-derive; got %+v", c)
+	}
+}
+
 func TestRun_RequireAuthorizationWithoutAllowlist_Fails(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app
@@ -109,6 +188,8 @@ artifacts:
 }
 
 func TestRun_RequireAuthorizationWithAllowlist_Passes(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app
@@ -130,6 +211,8 @@ artifacts:
 }
 
 func TestRun_SigstoreWithoutIDTokenPermission_Fails(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app
@@ -147,7 +230,8 @@ sign:
 
 	c := findCheck(checks, "workflow id-token permission")
 	if c == nil || c.Severity != doctor.SeverityFail {
-		t.Errorf("sigstore + no id-token must fail; got %+v", c)
+		// Fatalf, not Errorf: the remediation check below dereferences c.
+		t.Fatalf("sigstore + no id-token must fail; got %+v", c)
 	}
 
 	if !strings.Contains(c.Remediation, "id-token: write") {
@@ -156,6 +240,8 @@ sign:
 }
 
 func TestRun_SigstoreWithIDTokenPermission_Passes(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app
@@ -181,6 +267,8 @@ sign:
 // .forgejo/workflows (it ignores `permissions: id-token: write`), so the
 // check must accept that convention too — not only GitHub's.
 func TestRun_SigstoreWithForgejoOpenIDConnect_Passes(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app
@@ -203,6 +291,8 @@ sign:
 }
 
 func TestRun_FloatingReusableCIRef_Warns(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app
@@ -228,6 +318,8 @@ artifacts:
 }
 
 func TestRun_KMSWithBadKey_FailsAtSignBlock(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app
@@ -252,6 +344,8 @@ sign:
 }
 
 func TestFormatText_RendersAllSeverities(t *testing.T) {
+	t.Parallel()
+
 	var buf bytes.Buffer
 
 	doctor.FormatText(&buf, []doctor.Check{
@@ -271,6 +365,8 @@ func TestFormatText_RendersAllSeverities(t *testing.T) {
 const recommendationCheck = "signing method recommendation"
 
 func TestRun_KeylessRecommendation_AppearsForGPGOnKeylessForge(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app
@@ -297,6 +393,8 @@ artifacts:
 }
 
 func TestRun_KeylessRecommendation_SilentWhenForgeLacksKeyless(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app
@@ -314,6 +412,8 @@ artifacts:
 }
 
 func TestRun_KeylessRecommendation_SilentForMavenCentral(t *testing.T) {
+	t.Parallel()
+
 	// Maven Central requires a PGP .asc, so gpg is correct — no nudge.
 	root := writeRepo(t, `
 artifacts:
@@ -333,6 +433,8 @@ artifacts:
 }
 
 func TestRun_KeylessRecommendation_SilentWhenAlreadySigstore(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app
@@ -354,6 +456,8 @@ sign:
 const sshAllowlistCheck = "ssh git-signing allowlist"
 
 func TestRun_SSHGitSigning_WarnsWhenAllowedSignersMissing(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app
@@ -374,6 +478,8 @@ git-signing:
 }
 
 func TestRun_SSHGitSigning_OKWhenAllowedSignersPresent(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app
@@ -396,6 +502,8 @@ git-signing:
 }
 
 func TestRun_GPGGitSigning_NoSSHAllowlistCheck(t *testing.T) {
+	t.Parallel()
+
 	root := writeRepo(t, `
 artifacts:
   - name: my-app

@@ -12,7 +12,7 @@
 //   - secrets.go       — `secret <gpg-public-key|maven-central>`
 //   - cargo.go         — cargo
 //   - jvmreproducibility.go — jvm-reproducibility
-//   - workflow.go      — `workflow <input-defaults|contract-residue>`
+//   - workflow.go      — `workflow input-defaults`
 //   - changelog.go     — changelog
 //   - event_context.go — refuse PR-context triggers on privileged workflows
 package validate
@@ -67,7 +67,7 @@ remote-reachability checks); that is intentional where the check cross-checks
 something rather than asserting a local fact.`,
 		Commands: slices.Concat(
 			cmdmeta.WithCategory("Release pre-flight gates",
-				prerequisitesCmd(), eventContextCmd(), isolationCmd(), jobGraphCmd(), pinReachabilityCmd(), tagGroup(), workflowGroup(), changelogCmd()),
+				prerequisitesCmd(), releaseProviderCmd(), eventContextCmd(), isolationCmd(), jobGraphCmd(), pinReachabilityCmd(), tagGroup(), workflowGroup(), changelogCmd()),
 			cmdmeta.WithCategory("Auth & secrets", authGroup()),
 			cmdmeta.WithCategory("Signature verification", artifactSignatureCmd(), containerSignatureCmd()),
 			cmdmeta.WithCategory("Ecosystem checks", cargoCmd(), jvmReproducibilityCmd()),

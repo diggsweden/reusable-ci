@@ -28,7 +28,8 @@ type PrepareNotesInput struct {
 //  1. SourceFile exists and non-empty → copy verbatim.
 //  2. ReleaseVersion set → write a fallback "# Release vX.Y.Z" header,
 //     plus "Release created from commit ABC" when ReleaseCommit is set.
-//  3. otherwise → touch the target file (empty body).
+//  3. otherwise → create the target file empty, truncating an existing one so
+//     it cannot carry a previous run's notes into this release.
 //
 //nolint:cyclop // notes generation: choose source (file/CHANGELOG/git-log) and format.
 func PrepareNotes(_ context.Context, out io.Writer, in PrepareNotesInput) error {
@@ -74,15 +75,15 @@ func PrepareNotes(_ context.Context, out io.Writer, in PrepareNotesInput) error 
 	}
 
 	_, _ = fmt.Fprintf(out, "No release notes generated\n")
-	// `touch <file>` semantics: create if missing, leave alone otherwise.
-	// Skipped when the caller asked for w: there is nothing to touch.
+	// Replace any existing target so this branch always leaves an empty body.
+	// Stdout has no target file to truncate.
 	if tgt == cliio.StdSentinel {
 		return nil
 	}
 
-	f, err := os.OpenFile(tgt, os.O_RDWR|os.O_CREATE, 0o644) //nolint:gosec // release notes file read by github release step.
+	f, err := os.OpenFile(tgt, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644) //nolint:gosec // release notes file read by github release step.
 	if err != nil {
-		return fmt.Errorf("touch target: %w", err)
+		return fmt.Errorf("truncate target: %w", err)
 	}
 
 	return f.Close()

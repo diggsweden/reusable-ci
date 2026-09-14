@@ -45,9 +45,9 @@ func Release(ctx context.Context, sink ci.OutputSink, summary ci.SummarySink, in
 		return nil, fmt.Errorf("config-plan-json is required: %w", errs.ErrUsage)
 	}
 
-	var configPlan pipeline.ConfigPlan
-	if err := json.Unmarshal([]byte(in.ConfigPlanJSON), &configPlan); err != nil {
-		return nil, fmt.Errorf("parse config-plan-json: %w: %w", err, errs.ErrInvalidConfig)
+	configPlan, err := pipeline.DecodeConfigPlan(in.ConfigPlanJSON)
+	if err != nil {
+		return nil, err
 	}
 
 	releasePlan, err := pipeline.NewReleasePlan(pipeline.ReleasePlanInput{
@@ -137,9 +137,9 @@ func SnapshotRelease(ctx context.Context, sink ci.OutputSink, in SnapshotRelease
 		return nil, fmt.Errorf("config-plan-json is required: %w", errs.ErrUsage)
 	}
 
-	var configPlan pipeline.ConfigPlan
-	if err := json.Unmarshal([]byte(in.ConfigPlanJSON), &configPlan); err != nil {
-		return nil, fmt.Errorf("parse config-plan-json: %w: %w", err, errs.ErrInvalidConfig)
+	configPlan, err := pipeline.DecodeConfigPlan(in.ConfigPlanJSON)
+	if err != nil {
+		return nil, err
 	}
 
 	devPlan, err := pipeline.NewSnapshotReleasePlan(pipeline.SnapshotReleasePlanInput{
@@ -245,7 +245,7 @@ type GetFilePatternInput struct {
 // GetFilePattern returns the pathspec for the project type's version-bump
 // commit. Custom override wins. Returns the resolved pattern + emits to
 // w (caller's writer) and optionally to the OutputSink.
-func GetFilePattern(ctx context.Context, sink ci.OutputSink, out io.Writer, in GetFilePatternInput) (string, error) {
+func GetFilePattern(ctx context.Context, sink ci.OutputSink, out io.Writer, in GetFilePatternInput) (string, error) { //nolint:cyclop // validate both output channels before the documented writer-then-sink commit order.
 	pattern, err := resolveFilePattern(in)
 	if err != nil {
 		return "", err
@@ -256,15 +256,22 @@ func GetFilePattern(ctx context.Context, sink ci.OutputSink, out io.Writer, in G
 		format = output.FormatText
 	}
 
+	format, err = output.Parse(string(format))
+	if err != nil {
+		return "", fmt.Errorf("file-pattern format: %w: %w", err, errs.ErrUsage)
+	}
+
+	if (in.WriteToOutput || format == output.FormatGitHub || format == output.FormatGitLab) && sink == nil {
+		return "", fmt.Errorf("output sink is required: %w", errs.ErrUsage)
+	}
+
+	// Human output commits first; only a successful write may publish the
+	// optional machine value. A sink failure cannot roll back an arbitrary writer.
 	if err := emitFilePattern(ctx, sink, out, pattern, format); err != nil {
 		return "", err
 	}
 
 	if in.WriteToOutput && format != output.FormatGitHub && format != output.FormatGitLab {
-		if sink == nil {
-			return "", fmt.Errorf("output sink is required: %w", errs.ErrUsage)
-		}
-
 		if err := sink.Set(ctx, "pattern", pattern); err != nil {
 			return "", err
 		}
@@ -304,18 +311,18 @@ func emitFilePattern(ctx context.Context, sink ci.OutputSink, out io.Writer, pat
 			return err
 		}
 
-		_, _ = fmt.Fprintln(out, string(body))
-	case output.FormatGitHub, output.FormatGitLab:
-		if sink == nil {
-			return fmt.Errorf("output sink is required for %s output: %w", format, errs.ErrUsage)
+		if _, err := fmt.Fprintln(out, string(body)); err != nil {
+			return err
 		}
-
+	case output.FormatGitHub, output.FormatGitLab:
 		if err := sink.Set(ctx, "pattern", pattern); err != nil {
 			return err
 		}
 	default:
 		if out != nil {
-			_, _ = fmt.Fprintln(out, pattern)
+			if _, err := fmt.Fprintln(out, pattern); err != nil {
+				return err
+			}
 		}
 	}
 

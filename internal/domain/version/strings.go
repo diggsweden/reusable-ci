@@ -41,5 +41,9 @@ func SanitizePathToken(in string) string {
 	out = strings.TrimLeft(out, "-")
 	out = strings.TrimRight(out, "-")
 
+	if out == "." || out == ".." {
+		return ""
+	}
+
 	return out
 }

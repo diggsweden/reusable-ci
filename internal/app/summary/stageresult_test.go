@@ -5,10 +5,12 @@ package summary_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	appsummary "github.com/diggsweden/reusable-ci/v3/internal/app/summary"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainsummary "github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakejobresultstore"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakemanifestsink"
@@ -65,8 +67,9 @@ func TestStageResult_EmitsJSONOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	got := out.Single("artifacts-json")
 	for _, want := range []string{`"npm_package_name":"pkg"`, `"npm_package_version":"1.2.3"`, `"npm_publish_status":"published"`} {
-		if got := out.Single("artifacts-json"); !strings.Contains(got, want) {
+		if !strings.Contains(got, want) {
 			t.Errorf("artifacts-json missing %q: %s", want, got)
 		}
 	}
@@ -75,6 +78,8 @@ func TestStageResult_EmitsJSONOutput(t *testing.T) {
 func TestStageResult_RejectsInvalidRunningResults(t *testing.T) {
 	t.Parallel()
 
+	// Both are the caller handing the verb a result it cannot act on, so both
+	// are ErrUsage (exit 2) rather than a stage verdict.
 	for _, tc := range []struct {
 		name   string
 		result string
@@ -93,8 +98,18 @@ func TestStageResult_RejectsInvalidRunningResults(t *testing.T) {
 				StagePlanJSON: `{"version":1,"stage":"build","targets":{"maven":{"runs":true}}}`,
 				Results:       []domainsummary.KeyValue{{Key: "maven", Value: tc.result}},
 			})
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("err = %v", err)
+			if !errors.Is(err, errs.ErrUsage) {
+				t.Fatalf("err = %v, want ErrUsage", err)
+			}
+
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.want)
+			}
+
+			// Nothing published: a rejected result set must not leave a stage
+			// verdict behind for the next job to read.
+			if got := out.Single("stage-result"); got != "" {
+				t.Errorf("published stage-result %q despite the refusal", got)
 			}
 		})
 	}
@@ -103,20 +118,26 @@ func TestStageResult_RejectsInvalidRunningResults(t *testing.T) {
 func TestStageResult_RejectsInvalidPlanAndKeys(t *testing.T) {
 	t.Parallel()
 
+	// The sentinel is the seam: a malformed *plan* came from an earlier step
+	// (ErrInvalidConfig), while a bad *key* came from this verb's own flags
+	// (ErrUsage). They exit differently and point at different culprits.
 	for _, tc := range []struct {
-		name string
-		in   appsummary.StageResultInput
-		want string
+		name    string
+		in      appsummary.StageResultInput
+		want    string
+		wantErr error
 	}{
 		{
-			name: "unsupported version",
-			in:   appsummary.StageResultInput{StagePlanJSON: `{"version":2,"stage":"build","targets":{"maven":{"runs":false}}}`},
-			want: "unsupported version 2",
+			name:    "unsupported version",
+			in:      appsummary.StageResultInput{StagePlanJSON: `{"version":2,"stage":"build","targets":{"maven":{"runs":false}}}`},
+			want:    "unsupported version 2",
+			wantErr: errs.ErrInvalidConfig,
 		},
 		{
-			name: "invalid stage",
-			in:   appsummary.StageResultInput{StagePlanJSON: `{"version":1,"stage":"../build","targets":{"maven":{"runs":false}}}`},
-			want: "invalid stage name",
+			name:    "invalid stage",
+			in:      appsummary.StageResultInput{StagePlanJSON: `{"version":1,"stage":"../build","targets":{"maven":{"runs":false}}}`},
+			want:    "invalid stage name",
+			wantErr: errs.ErrInvalidConfig,
 		},
 		{
 			name: "duplicate result",
@@ -127,7 +148,8 @@ func TestStageResult_RejectsInvalidPlanAndKeys(t *testing.T) {
 					{Key: "maven", Value: "failure"},
 				},
 			},
-			want: `duplicate result key "maven"`,
+			want:    `duplicate result key "maven"`,
+			wantErr: errs.ErrUsage,
 		},
 		{
 			name: "unknown result target",
@@ -135,7 +157,8 @@ func TestStageResult_RejectsInvalidPlanAndKeys(t *testing.T) {
 				StagePlanJSON: `{"version":1,"stage":"build","targets":{"maven":{"runs":false}}}`,
 				Results:       []domainsummary.KeyValue{{Key: "npm", Value: "success"}},
 			},
-			want: `result provided for unknown stage target "npm"`,
+			want:    `result provided for unknown stage target "npm"`,
+			wantErr: errs.ErrUsage,
 		},
 		{
 			name: "reserved extra",
@@ -143,7 +166,8 @@ func TestStageResult_RejectsInvalidPlanAndKeys(t *testing.T) {
 				StagePlanJSON: `{"version":1,"stage":"build","targets":{"maven":{"runs":false}}}`,
 				Extras:        []domainsummary.KeyValue{{Key: "result", Value: "success"}},
 			},
-			want: `extra key "result" is reserved`,
+			want:    `extra key "result" is reserved`,
+			wantErr: errs.ErrUsage,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -153,8 +177,12 @@ func TestStageResult_RejectsInvalidPlanAndKeys(t *testing.T) {
 			js := fakejobresultstore.New(t)
 
 			_, err := appsummary.StageResult(context.Background(), out, mf, js, tc.in)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("err = %v", err)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.want)
 			}
 		})
 	}
@@ -263,8 +291,13 @@ func TestStageResult_FromJobManifests_InvalidRecord(t *testing.T) {
 	_, err := appsummary.StageResult(context.Background(), out, mf, js, appsummary.StageResultInput{
 		StagePlanJSON: `{"version":1,"stage":"build","targets":{"maven":{"runs":true}}}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "job-result JSON") {
-		t.Fatalf("err = %v", err)
+	// The record came from another job, not from this verb's flags.
+	if !errors.Is(err, errs.ErrMalformedInput) {
+		t.Fatalf("err = %v, want ErrMalformedInput", err)
+	}
+
+	if !strings.Contains(err.Error(), "job-result JSON") {
+		t.Errorf("err = %v, want it to name the record it could not parse", err)
 	}
 }
 

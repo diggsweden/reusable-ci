@@ -4,7 +4,9 @@
 package baseimages
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -27,7 +29,7 @@ type verifiedBaseImage struct {
 // requested flavors. Missing tags are reported as cache misses, matching the
 // previous workflow behavior; a tag that exists must verify with signature, SBOM
 // attestation, and SLSA lineage before it is returned.
-func VerifyExistingBaseImages(ctx context.Context, resolver baseImageRegistry, verifier imageEvidenceVerifier, out io.Writer, in BaseImageVerifyExistingInput) (BaseImageVerifyExistingResult, error) {
+func VerifyExistingBaseImages(ctx context.Context, resolver baseImageRegistry, verifier imageEvidenceVerifier, out io.Writer, in BaseImageVerifyExistingInput) (BaseImageVerifyExistingResult, error) { //nolint:cyclop // complete input, resolution and evidence phases precede publication.
 	if err := validateVerifyExistingBaseInput(resolver, verifier, in); err != nil {
 		return BaseImageVerifyExistingResult{}, err
 	}
@@ -37,30 +39,52 @@ func VerifyExistingBaseImages(ctx context.Context, resolver baseImageRegistry, v
 		return BaseImageVerifyExistingResult{}, err
 	}
 
-	allFound := true
+	seen := make(map[string]bool, len(in.Flavors))
+	for idx, flavor := range in.Flavors {
+		if seen[flavor] {
+			return BaseImageVerifyExistingResult{}, fmt.Errorf("base images verify: duplicate flavor at entry %d: %w", idx, errs.ErrValidation)
+		}
+
+		if _, idErr := existingBaseInputID(baseInputs, flavor, in.BaseInputID); idErr != nil {
+			return BaseImageVerifyExistingResult{}, fmt.Errorf("base images verify: entry %d: %w", idx, idErr)
+		}
+
+		seen[flavor] = true
+	}
+
+	var progress bytes.Buffer
+
 	existing := make([]verifiedBaseImage, 0, len(in.Flavors))
 	missing := make([]string, 0)
 
 	for _, flavor := range in.Flavors {
-		baseInputID, idErr := existingBaseInputID(baseInputs, flavor, in.BaseInputID)
-		if idErr != nil {
-			return BaseImageVerifyExistingResult{}, idErr
-		}
+		baseInputID, _ := existingBaseInputID(baseInputs, flavor, in.BaseInputID)
+		tag := fmt.Sprintf("%s:%s-%s", in.ExpectedRepository, baseInputID, flavor)
 
-		image, found, verifyErr := verifyOneExistingBaseImage(ctx, resolver, verifier, out, in, flavor, baseInputID)
-		if verifyErr != nil {
-			return BaseImageVerifyExistingResult{}, verifyErr
-		}
-
-		if !found {
-			allFound = false
-
+		digest, resolveErr := resolver.ResolveDigest(ctx, tag)
+		if errors.Is(resolveErr, errs.ErrMissingInput) {
 			missing = append(missing, flavor)
+
+			fmt.Fprintf(&progress, "Base image missing and will be built if needed: %s\n", tag)
 
 			continue
 		}
 
-		existing = append(existing, image)
+		if resolveErr != nil {
+			return BaseImageVerifyExistingResult{}, fmt.Errorf("resolve base image %s: %w", tag, resolveErr)
+		}
+
+		if !domaincontainer.ValidDigest(digest) {
+			return BaseImageVerifyExistingResult{}, fmt.Errorf("base image resolver returned an invalid digest: %w", errs.ErrValidation)
+		}
+
+		existing = append(existing, verifiedBaseImage{Flavor: flavor, Tag: tag, Ref: in.ExpectedRepository + "@" + digest, BaseInputID: baseInputID})
+	}
+	// Finish resolution before any evidence check or success diagnostic.
+	for _, image := range existing {
+		if verifyErr := verifyOneExistingBaseImage(ctx, verifier, &progress, in, image); verifyErr != nil {
+			return BaseImageVerifyExistingResult{}, verifyErr
+		}
 	}
 
 	allImagesJSON, err := marshalSortedBaseImages(existing)
@@ -75,7 +99,11 @@ func VerifyExistingBaseImages(ctx context.Context, resolver baseImageRegistry, v
 		return BaseImageVerifyExistingResult{}, err
 	}
 
-	return BaseImageVerifyExistingResult{AllFound: allFound, AllImagesJSON: allImagesJSON, MissingFlavorsJSON: missingJSON}, nil
+	if _, err := io.Copy(out, &progress); err != nil {
+		return BaseImageVerifyExistingResult{}, err
+	}
+
+	return BaseImageVerifyExistingResult{AllFound: len(missing) == 0, AllImagesJSON: allImagesJSON, MissingFlavorsJSON: missingJSON}, nil
 }
 
 func validateVerifyExistingBaseInput(resolver baseImageRegistry, verifier imageEvidenceVerifier, in BaseImageVerifyExistingInput) error {
@@ -117,40 +145,31 @@ func existingBaseInputID(baseInputs map[string]string, flavor, fallback string) 
 	return baseInputID, nil
 }
 
-// verifyOneExistingBaseImage resolves one flavor's final tag and verifies its
-// evidence. A missing tag is a cache miss (found=false), not an error.
-func verifyOneExistingBaseImage(ctx context.Context, resolver baseImageRegistry, verifier imageEvidenceVerifier, out io.Writer, in BaseImageVerifyExistingInput, flavor, baseInputID string) (verifiedBaseImage, bool, error) {
-	tag := fmt.Sprintf("%s:%s-%s", in.ExpectedRepository, baseInputID, flavor)
-
-	digest, err := resolver.ResolveDigest(ctx, tag)
-	if err != nil {
-		_, _ = fmt.Fprintf(out, "Base image missing and will be built if needed: %s\n", tag)
-
-		return verifiedBaseImage{}, false, nil //nolint:nilerr // missing final tag is a cache miss (found=false), not an error.
-	}
-
-	ref := in.ExpectedRepository + "@" + digest
-	if err := verifyBaseImageEvidence(ctx, verifier, out, ref, in.CosignPublicKey, baseImageLineageExpectation{
-		Source: in.ExpectedSource, Workflow: in.ExpectedWorkflow, Flavor: flavor, BaseInputID: baseInputID,
+// verifyOneExistingBaseImage verifies evidence after all tag lookups succeeded.
+func verifyOneExistingBaseImage(ctx context.Context, verifier imageEvidenceVerifier, out io.Writer, in BaseImageVerifyExistingInput, image verifiedBaseImage) error {
+	if err := verifyBaseImageEvidence(ctx, verifier, out, image.Ref, in.CosignPublicKey, baseImageLineageExpectation{
+		Source: in.ExpectedSource, Workflow: in.ExpectedWorkflow, Flavor: image.Flavor, BaseInputID: image.BaseInputID,
 	}, 1); err != nil {
-		return verifiedBaseImage{}, false, fmt.Errorf("base images verify: final base tag exists but does not have the expected signature and attestation: %s: %w", tag, err)
+		return fmt.Errorf("base images verify: final base tag exists but does not have the expected signature and attestation: %s: %w", image.Tag, err)
 	}
 
-	_, _ = fmt.Fprintf(out, "Base image already exists and verifies: %s\n", ref)
+	_, _ = fmt.Fprintf(out, "Base image already exists and verifies: %s\n", image.Ref)
 
-	return verifiedBaseImage{Flavor: flavor, Tag: tag, Ref: ref, CandidateTag: "", CandidateRef: "", BaseInputID: baseInputID}, true, nil
+	return nil
 }
 
 func baseInputIDByFlavor(inputs []BaseInput) (map[string]string, error) {
 	byFlavor := make(map[string]string, len(inputs))
 	for idx, input := range inputs {
-		if input.Flavor == "" || !domaincontainer.ValidSHA256Hex(input.BaseInputID) {
+		if !baseImageFlavorRE.MatchString(input.Flavor) || !domaincontainer.ValidSHA256Hex(input.BaseInputID) {
 			return nil, fmt.Errorf("base images verify: base-inputs-json entry %d must include flavor and sha256 base_input_id: %w", idx, errs.ErrValidation)
 		}
 
-		if _, exists := byFlavor[input.Flavor]; !exists {
-			byFlavor[input.Flavor] = input.BaseInputID
+		if _, exists := byFlavor[input.Flavor]; exists {
+			return nil, fmt.Errorf("base images verify: duplicate base-input flavor at entry %d: %w", idx, errs.ErrValidation)
 		}
+
+		byFlavor[input.Flavor] = input.BaseInputID
 	}
 
 	return byFlavor, nil

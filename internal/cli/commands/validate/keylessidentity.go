@@ -3,7 +3,23 @@
 
 package validate
 
-import "github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+import (
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
+	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
+)
+
+// verificationIdentity is the identity both signature validators verify
+// against: KMS verification (an explicit --key, or --method kms) keeps the
+// operator's values untouched, because an injected identity regexp would flip
+// method auto-detection from kms to sigstore; everything else is filled from
+// the detected forge where the operator left a constraint empty.
+func verificationIdentity(method domainrelease.SignMethod, keyRef, identityRegexp, oidcIssuer string) (string, string) {
+	if keyRef != "" || method == domainrelease.SignMethodKMS {
+		return identityRegexp, oidcIssuer
+	}
+
+	return keylessVerifyIdentity(identityRegexp, oidcIssuer)
+}
 
 // keylessVerifyIdentity fills empty cert-identity-regexp / cert-oidc-issuer
 // from the detected forge's keyless signing identity, so verifying a sigstore

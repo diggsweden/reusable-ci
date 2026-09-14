@@ -42,7 +42,7 @@ func TestDefaultOIDCIssuer_NilDescriberIsEmpty(t *testing.T) {
 	}
 }
 
-func TestKeylessNeedsIssuer(t *testing.T) {
+func TestKeylessNeedsIssuer_OnlyWhenTheForgePublishesNone(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {

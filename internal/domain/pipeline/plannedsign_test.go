@@ -51,3 +51,30 @@ func TestPlanSign_PrecomputedFlags(t *testing.T) {
 		})
 	}
 }
+
+// TestPlanSign_SigstoreEgressFollowsTheTransparencyChoice pins the egress
+// flag the workflows use to decide whether a run may reach the public
+// Sigstore services. kms with transparency none signs against the KMS alone
+// and needs no egress; kms publishing to the log and keyless both do.
+func TestPlanSign_SigstoreEgressFollowsTheTransparencyChoice(t *testing.T) {
+	t.Parallel()
+
+	for name, testCase := range map[string]struct {
+		sign config.SignConfig
+		want bool
+	}{
+		"kms none":    {sign: config.SignConfig{Method: domainrelease.SignMethodKMS, Transparency: domainrelease.TransparencyNone}, want: false},
+		"kms public":  {sign: config.SignConfig{Method: domainrelease.SignMethodKMS, Transparency: domainrelease.TransparencyPublic}, want: true},
+		"sigstore":    {sign: config.SignConfig{Method: domainrelease.SignMethodSigstore}, want: true},
+		"gpg default": {sign: config.SignConfig{}, want: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			plan := pipeline.NewConfigPlan(&config.Config{Sign: testCase.sign})
+			if plan.Sign.RequiresSigstoreEgress != testCase.want {
+				t.Errorf("RequiresSigstoreEgress = %v, want %v (%+v)", plan.Sign.RequiresSigstoreEgress, testCase.want, plan.Sign)
+			}
+		})
+	}
+}

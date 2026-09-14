@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -38,12 +39,12 @@ func writeVerbs() []signWrite {
 		}},
 		{"sign", func(a *cosign.Adapter) error {
 			return a.SignImage(context.Background(), cosign.SignImageInput{
-				ImageRef: "reg/app@sha256:" + hex64, KeyRef: "k.key",
+				ImageRef: "registry.example/app@sha256:" + hex64, KeyRef: "k.key",
 			}, nil)
 		}},
 		{"attest", func(a *cosign.Adapter) error {
 			return a.AttestImage(context.Background(), cosign.AttestImageInput{
-				ImageRef: "reg/app@sha256:" + hex64, KeyRef: "k.key",
+				ImageRef: "registry.example/app@sha256:" + hex64, KeyRef: "k.key",
 				PredicateType: "slsaprovenance1", PredicatePath: "p.json",
 			}, nil)
 		}},
@@ -173,22 +174,10 @@ func TestEveryWriteVerbStaysOffline(t *testing.T) {
 	}
 }
 
-// TestWriteVerbCountIsPinned trips when the adapter grows a signature-writing
-// subcommand that writeVerbs() does not cover. Without it, a new verb would
-// silently default to the public Rekor log and every test here would stay green.
-func TestWriteVerbCountIsPinned(t *testing.T) {
-	const known = 3 // sign-blob, sign, attest
-
-	if got := len(writeVerbs()); got != known {
-		t.Fatalf("writeVerbs() has %d entries, expected %d — if the adapter gained a "+
-			"signature-writing subcommand, cover it here and bump this count", got, known)
-	}
-}
-
-// TestSigningConfigDoesNotOutliveTheCall pins the cleanup. The config is
+// TestSigningConfig_DoesNotOutliveTheCall pins the cleanup. The config is
 // written per call; a leaked temp file per signature would accumulate in the
 // runner's temp dir across a release that signs many artifacts.
-func TestSigningConfigDoesNotOutliveTheCall(t *testing.T) {
+func TestSigningConfig_DoesNotOutliveTheCall(t *testing.T) {
 	bins, _ := captureSigningConfig(t)
 
 	a := &cosign.Adapter{Bin: bins.Path("cosign"), Transparency: domainrelease.TransparencyNone}
@@ -259,10 +248,10 @@ func TestZeroValueAdapterPublishes(t *testing.T) {
 	}
 }
 
-// TestNewResolvesTransparencyFromEnv pins the mechanism that makes this
+// TestNew_ResolvesTransparencyFromEnv pins the mechanism that makes this
 // unforgettable: the adapter is built at ~16 call sites, and both constructors
 // must pick the setting up so no signing path can opt out by omission.
-func TestNewResolvesTransparencyFromEnv(t *testing.T) {
+func TestNew_ResolvesTransparencyFromEnv(t *testing.T) {
 	t.Setenv(cosign.EnvTransparency, string(domainrelease.TransparencyNone))
 
 	if got := cosign.New().Transparency; got != domainrelease.TransparencyNone {
@@ -280,7 +269,7 @@ func TestNewResolvesTransparencyFromEnv(t *testing.T) {
 // transparency log cannot be verified without --insecure-ignore-tlog, so a verb
 // that ignores it fails with cosign's "not enough verified log entries".
 func verifyVerbs() []signWrite {
-	const digest = "reg/app@sha256:" + hex64
+	const digest = "registry.example/app@sha256:" + hex64
 
 	return []signWrite{
 		{"verify-blob", func(a *cosign.Adapter) error {
@@ -344,18 +333,6 @@ func TestTlogPolicyDefaultsToFullyChecked(t *testing.T) {
 				t.Errorf("%s skips transparency-log verification by default\nargv: %v", verb.name, args)
 			}
 		})
-	}
-}
-
-// TestVerifyVerbCountIsPinned is the tripwire for the verify surface, matching
-// the write-verb one: a new verify subcommand that this file does not know
-// about would silently keep its own tlog policy.
-func TestVerifyVerbCountIsPinned(t *testing.T) {
-	const known = 3 // verify-blob, verify, verify-attestation
-
-	if got := len(verifyVerbs()); got != known {
-		t.Fatalf("verifyVerbs() has %d entries, expected %d — if the adapter gained a "+
-			"verifying subcommand, cover it here and bump this count", got, known)
 	}
 }
 
@@ -467,5 +444,121 @@ func TestBuildSigningConfig_NamesSelfHostedServices(t *testing.T) {
 	// cosign would then try to honour.
 	if len(doc.RekorTlogUrls) != 0 {
 		t.Errorf("a transparency log was named when none was configured")
+	}
+}
+
+// TestEverySigningVerbOnTheAdapterIsCovered derives the surface from the
+// adapter instead of counting the tables in this file.
+//
+// This replaces two "count is pinned" tests that could not do what they said.
+// Each asserted len(writeVerbs()) == 3 or len(verifyVerbs()) == 3 against a
+// table maintained HERE, so the only edit either could detect was someone
+// changing that table — which is the edit that would already have been made
+// deliberately. A new Sign/Verify method on the ADAPTER, the case both comments
+// described, left them green.
+//
+// Reflection over the adapter's method set is what makes the claim true. Every
+// method whose name begins with Sign, Attest or Verify either uploads to the
+// public Rekor log or demands a proof from it, so each one has to honour the
+// transparency setting — and a Rekor entry is permanent, public and
+// append-only, which is why the guard is worth having at all rather than
+// trusting the next author to remember.
+func TestEverySigningVerbOnTheAdapterIsCovered(t *testing.T) {
+	t.Parallel()
+
+	covered := map[string]bool{}
+	for _, verb := range writeVerbs() {
+		covered[verb.name] = true
+	}
+
+	for _, verb := range verifyVerbs() {
+		covered[verb.name] = true
+	}
+
+	// The adapter method name for each covered subcommand. Stated here so a
+	// renamed method is a compile-time or assertion failure rather than a
+	// silent gap.
+	methodToVerb := map[string]string{
+		"SignBlob":                "sign-blob",
+		"SignImage":               "sign",
+		"AttestImage":             "attest",
+		"VerifyBlob":              "verify-blob",
+		"VerifyImage":             "verify",
+		"VerifyAttestation":       "verify-attestation",
+		"VerifyAttestationOutput": "verify-attestation",
+	}
+
+	adapterType := reflect.TypeOf(&cosign.Adapter{})
+
+	var uncovered []string
+
+	for i := range adapterType.NumMethod() {
+		name := adapterType.Method(i).Name
+		if !strings.HasPrefix(name, "Sign") && !strings.HasPrefix(name, "Verify") && !strings.HasPrefix(name, "Attest") {
+			continue
+		}
+
+		verb, known := methodToVerb[name]
+		if !known {
+			uncovered = append(uncovered, name+" (no subcommand mapping in this file)")
+
+			continue
+		}
+
+		if !covered[verb] {
+			uncovered = append(uncovered, name+" → "+verb+" (not in writeVerbs/verifyVerbs)")
+		}
+	}
+
+	if len(uncovered) != 0 {
+		t.Errorf("the adapter has signing verbs this file does not exercise:\n  %s\n"+
+			"each uploads to or reads from the public Rekor log, so it must honour the transparency setting",
+			strings.Join(uncovered, "\n  "))
+	}
+}
+
+// TestBuildSigningConfig_EveryServiceStartsAtValidFrom decodes the start of
+// each self-hosted service. The tests above pass the Unix epoch in UTC, so a
+// builder that ignored validFrom and wrote the epoch, or wrote the local zone
+// offset instead of UTC, rendered what they expected. cosign selects services
+// by that window: a start in the future leaves the service unusable.
+func TestBuildSigningConfig_EveryServiceStartsAtValidFrom(t *testing.T) {
+	t.Parallel()
+
+	validFrom := time.Date(2026, 3, 4, 6, 7, 8, 0, time.FixedZone("UTC+2", 2*60*60))
+
+	got, err := cosign.BuildSigningConfigForTest(cosign.SigningConfigInputForTest{
+		FulcioURL:  "https://fulcio.example.internal",
+		OIDCIssuer: "https://gitlab.example.internal",
+		RekorURL:   "https://rekor.example.internal",
+	}, true, validFrom)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type service struct {
+		URL      string `json:"url"`
+		ValidFor struct {
+			Start string `json:"start"`
+		} `json:"validFor"`
+	}
+
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("generated config is not valid JSON: %v\n%s", err, got)
+	}
+
+	for _, key := range []string{"caUrls", "oidcUrls", "rekorTlogUrls"} {
+		var services []service
+		if err := json.Unmarshal(doc[key], &services); err != nil || len(services) != 1 {
+			t.Errorf("%s = %s, want one service (err %v)", key, doc[key], err)
+
+			continue
+		}
+
+		start, err := time.Parse(time.RFC3339, services[0].ValidFor.Start)
+		if err != nil || !start.Equal(validFrom) || services[0].ValidFor.Start != "2026-03-04T04:07:08Z" {
+			t.Errorf("%s start = %q (err %v), want validFrom %s in UTC", key, services[0].ValidFor.Start, err, validFrom)
+		}
 	}
 }

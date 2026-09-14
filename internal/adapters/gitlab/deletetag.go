@@ -119,21 +119,40 @@ func (p *Provider) resolveRegistryRepository(
 func (p *Provider) listRegistryRepositories(
 	ctx context.Context, apiBase string, headers map[string]string, project string,
 ) ([]registryRepository, error) {
-	endpoint := projectEndpoint(apiBase, project) + "/registry/repositories?per_page=100"
+	var repositories []registryRepository
 
-	body, err := getJSON(ctx, p.HTTPClient, endpoint, headers)
-	if err != nil {
-		if errors.Is(err, errs.ErrMissingInput) {
-			return nil, nil
+	seen := make(map[int64]bool)
+
+	for page := 1; ; page++ {
+		endpoint := fmt.Sprintf("%s/registry/repositories?per_page=%d&page=%d", projectEndpoint(apiBase, project), gitlabPageSize, page)
+
+		body, err := getJSON(ctx, p.HTTPClient, endpoint, headers)
+		if err != nil {
+			if errors.Is(err, errs.ErrMissingInput) {
+				return repositories, nil
+			}
+
+			return nil, fmt.Errorf("list registry repositories for %s: %w", project, err)
 		}
 
-		return nil, fmt.Errorf("list registry repositories for %s: %w", project, err)
-	}
+		var batch []registryRepository
+		if err := json.Unmarshal(body, &batch); err != nil {
+			return nil, fmt.Errorf("decode registry repositories for %s: %w: %w", project, err, errs.ErrMalformedInput)
+		}
 
-	var repositories []registryRepository
-	if err := json.Unmarshal(body, &repositories); err != nil {
-		return nil, fmt.Errorf("decode registry repositories for %s: %w: %w", project, err, errs.ErrMalformedInput)
-	}
+		// A page-ignoring server repeats its first page; a repository seen
+		// before ends the listing as malformed rather than growing it.
+		for _, repository := range batch {
+			if seen[repository.ID] {
+				return nil, fmt.Errorf("list registry repositories for %s: page %d repeats repository %d: %w", project, page, repository.ID, errs.ErrMalformedInput)
+			}
 
-	return repositories, nil
+			seen[repository.ID] = true
+		}
+
+		repositories = append(repositories, batch...)
+		if len(batch) < gitlabPageSize {
+			return repositories, nil
+		}
+	}
 }

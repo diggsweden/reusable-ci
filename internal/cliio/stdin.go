@@ -3,7 +3,13 @@
 
 package cliio
 
-import "os"
+import (
+	"fmt"
+	"io/fs"
+	"os"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+)
 
 // StdinIsCharDevice reports whether os.Stdin is a character device
 // (a TTY or /dev/null), as opposed to a pipe or regular file.
@@ -18,4 +24,22 @@ func StdinIsCharDevice() bool {
 	}
 
 	return info.Mode()&os.ModeCharDevice != 0
+}
+
+func readStdin(stdin fs.File) ([]byte, error) {
+	info, err := stdin.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("stat stdin: %w", err)
+	}
+
+	if info.Mode()&os.ModeCharDevice != 0 {
+		return nil, fmt.Errorf("%q expects piped or redirected input, not a terminal: %w", StdSentinel, errs.ErrUsage)
+	}
+
+	body, err := readBounded(stdin)
+	if err != nil {
+		return nil, fmt.Errorf("read from stdin: %w", err)
+	}
+
+	return body, nil
 }

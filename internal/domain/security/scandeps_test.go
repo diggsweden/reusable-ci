@@ -4,13 +4,23 @@
 package security_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
 )
 
-func TestMapTrivyFailSeverity(t *testing.T) {
+// TestParseDepSeverity_TrivyFilterWidensByBandAndDefaultsToCritical: each band
+// includes everything above it, and anything unrecognised narrows to CRITICAL
+// rather than opening the gate.
+//
+// Named for MapTrivyFailSeverity until now, which has not existed for some
+// time -- so the only thing a grep for the real subject found was the
+// implementation, never its test.
+func TestParseDepSeverity_TrivyFilterWidensByBandAndDefaultsToCritical(t *testing.T) {
+	t.Parallel()
+
 	cases := map[string]string{
 		"critical": "CRITICAL",                 //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		"HIGH":     "CRITICAL,HIGH",            //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
@@ -39,7 +49,11 @@ func TestMapTrivyFailSeverity(t *testing.T) {
 	}
 }
 
-func TestIsKnownTrivyFailSeverity(t *testing.T) {
+// TestParseDepSeverity_IsKnownAcceptsBandsAndRejectsLists: surrounding space
+// and mixed case are accepted, a comma-separated list is not -- that grammar
+// belongs to the container scanner's flag of the same name, and silently
+// accepting it here would narrow the gate instead of failing.
+func TestParseDepSeverity_IsKnownAcceptsBandsAndRejectsLists(t *testing.T) {
 	t.Parallel()
 
 	for _, level := range []string{"critical", " HIGH ", "Moderate", "low", "medium", " Medium "} {
@@ -55,7 +69,12 @@ func TestIsKnownTrivyFailSeverity(t *testing.T) {
 	}
 }
 
-func TestExtractTrivyVulnIDs(t *testing.T) {
+// TestExtractTrivyVulnIDs_DedupesAndSorts: the same CVE reported by two
+// results is one id, and the order is stable so a diff against a base scan
+// compares like with like.
+func TestExtractTrivyVulnIDs_DedupesAndSorts(t *testing.T) {
+	t.Parallel()
+
 	body := []byte(`{
   "Results": [
     {"Vulnerabilities": [
@@ -75,18 +94,14 @@ func TestExtractTrivyVulnIDs(t *testing.T) {
 	}
 
 	want := []string{"CVE-2024-1", "CVE-2024-2", "CVE-2024-3"}
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
-	}
-
-	for i := range got {
-		if got[i] != want[i] {
-			t.Errorf("at %d: %q, want %q", i, got[i], want[i])
-		}
+	if !slices.Equal(got, want) {
+		t.Errorf("ids = %v, want %v", got, want)
 	}
 }
 
 func TestExtractTrivyVulnIDs_EmptyBody(t *testing.T) {
+	t.Parallel()
+
 	got, err := security.ExtractTrivyVulnIDs(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -97,54 +112,87 @@ func TestExtractTrivyVulnIDs_EmptyBody(t *testing.T) {
 	}
 }
 
-func TestDiffNewIDs(t *testing.T) {
-	base := []string{"CVE-1", "CVE-2", "CVE-3"} //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-	head := []string{"CVE-2", "CVE-3", "CVE-4", "CVE-5"}
-	got := security.DiffNewIDs(base, head)
+// TestDiffNewFindings_ComparesPackageAndTargetNotJustTheID covers the gate
+// itself. It compared bare IDs, so a pull request adding a second package
+// affected by a CVE the base already had elsewhere -- in another package, or
+// in another lockfile of the same repository -- reported nothing new and
+// passed. Pre-existing findings still are not the author's to fix, and an
+// upgrade that stays affected by the same CVE is not new either.
+func TestDiffNewFindings_ComparesPackageAndTargetNotJustTheID(t *testing.T) {
+	t.Parallel()
 
-	want := []string{"CVE-4", "CVE-5"}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Errorf("got %v, want %v", got, want)
-	}
-}
+	base := []byte(`{"Results":[
+{"Target":"service-a/package-lock.json","Vulnerabilities":[
+  {"VulnerabilityID":"CVE-1","PkgName":"lodash","InstalledVersion":"4.17.0"},
+  {"VulnerabilityID":"CVE-2","PkgName":"minimist","InstalledVersion":"1.0.0"}]}]}`)
+	head := []byte(`{"Results":[
+{"Target":"service-a/package-lock.json","Vulnerabilities":[
+  {"VulnerabilityID":"CVE-1","PkgName":"lodash","InstalledVersion":"4.17.1"},
+  {"VulnerabilityID":"CVE-1","PkgName":"lodash-es","InstalledVersion":"4.17.0"},
+  {"VulnerabilityID":"CVE-2","PkgName":"minimist","InstalledVersion":"1.0.0"}]},
+{"Target":"service-b/package-lock.json","Vulnerabilities":[
+  {"VulnerabilityID":"CVE-1","PkgName":"lodash","InstalledVersion":"4.17.0"},
+  {"VulnerabilityID":"CVE-3","PkgName":"axios","InstalledVersion":"0.1.0"},
+  {"VulnerabilityID":"","PkgName":"unnamed","InstalledVersion":"0.0.1"}]}]}`)
 
-func TestDiffNewIDs_EmptyBaseReturnsAllHead(t *testing.T) {
-	got := security.DiffNewIDs(nil, []string{"CVE-1"})
-	if len(got) != 1 || got[0] != "CVE-1" {
-		t.Errorf("got %v", got)
-	}
-}
-
-func TestFilterVulnRowsByID(t *testing.T) {
-	body := []byte(`{
-  "Results": [{
-    "Vulnerabilities": [
-      {"VulnerabilityID":"CVE-1","Severity":"HIGH","PkgName":"foo","InstalledVersion":"1.0","FixedVersion":"1.1"},
-      {"VulnerabilityID":"CVE-2","Severity":"CRITICAL","PkgName":"bar","InstalledVersion":"2.0"},
-      {"VulnerabilityID":"CVE-3","Severity":"LOW","PkgName":"baz","InstalledVersion":"3.0","FixedVersion":"3.1"}
-    ]
-  }]
-}`)
-
-	got, err := security.FilterVulnRowsByID(body, []string{"CVE-1", "CVE-2"})
+	baseFindings, err := security.ExtractTrivyFindings(base)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(got) != 2 {
-		t.Fatalf("got %d rows, want 2", len(got))
+	headFindings, err := security.ExtractTrivyFindings(head)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if got[0].ID != "CVE-1" || got[0].Fixed != "1.1" {
-		t.Errorf("row 0 = %+v", got[0])
+	want := []security.VulnFinding{
+		{Target: "service-a/package-lock.json", Package: "lodash-es", ID: "CVE-1"},
+		{Target: "service-b/package-lock.json", Package: "axios", ID: "CVE-3"},
+		{Target: "service-b/package-lock.json", Package: "lodash", ID: "CVE-1"},
+	}
+	if got := security.DiffNewFindings(baseFindings, headFindings); !slices.Equal(got, want) {
+		t.Errorf("new findings =\n%+v\nwant\n%+v", got, want)
 	}
 
-	if got[1].ID != "CVE-2" || got[1].Fixed != "—" {
-		t.Errorf("row 1 = %+v (FixedVersion empty should render as em-dash)", got[1])
+	if got := security.DiffNewFindings(nil, headFindings); !slices.Equal(got, headFindings) {
+		t.Errorf("with no base, new findings = %+v, want every head finding %+v", got, headFindings)
+	}
+}
+
+// TestFilterVulnRows_KeepsRowsForTheRequestedFindings: the summary shows a
+// row for each requested finding, including every installed version of it,
+// and nothing for the same ID in a package that was not requested. A missing
+// fixed version renders as an em-dash rather than an empty cell.
+func TestFilterVulnRows_KeepsRowsForTheRequestedFindings(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"Results":[{"Target":"go.mod","Vulnerabilities":[
+  {"VulnerabilityID":"CVE-1","Severity":"HIGH","PkgName":"foo","InstalledVersion":"1.0","FixedVersion":"1.1"},
+  {"VulnerabilityID":"CVE-1","Severity":"HIGH","PkgName":"foo","InstalledVersion":"1.2","FixedVersion":"1.3"},
+  {"VulnerabilityID":"CVE-1","Severity":"HIGH","PkgName":"other","InstalledVersion":"9.0"},
+  {"VulnerabilityID":"CVE-2","Severity":"CRITICAL","PkgName":"bar","InstalledVersion":"2.0"}]}]}`)
+
+	got, err := security.FilterVulnRows(body, []security.VulnFinding{
+		{Target: "go.mod", Package: "foo", ID: "CVE-1"},
+		{Target: "go.mod", Package: "bar", ID: "CVE-2"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []security.VulnRow{
+		{ID: "CVE-1", Severity: "HIGH", Package: "foo", Installed: "1.0", Fixed: "1.1"},
+		{ID: "CVE-1", Severity: "HIGH", Package: "foo", Installed: "1.2", Fixed: "1.3"},
+		{ID: "CVE-2", Severity: "CRITICAL", Package: "bar", Installed: "2.0", Fixed: "—"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("rows =\n%+v\nwant\n%+v", got, want)
 	}
 }
 
 func TestRenderScanDepsSummary_WithFindings(t *testing.T) {
+	t.Parallel()
+
 	got := security.RenderScanDepsSummary(security.ScanDepsSummaryInput{
 		Mode:           "diff",
 		FailOnSeverity: "high",
@@ -171,6 +219,8 @@ func TestRenderScanDepsSummary_WithFindings(t *testing.T) {
 }
 
 func TestRenderScanDepsSummary_ClearReport(t *testing.T) {
+	t.Parallel()
+
 	got := security.RenderScanDepsSummary(security.ScanDepsSummaryInput{
 		Mode:           "full",
 		FailOnSeverity: "critical",

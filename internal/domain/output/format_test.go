@@ -74,7 +74,7 @@ func TestParse_RejectsEmpty(t *testing.T) {
 	require.Contains(t, err.Error(), "empty")
 }
 
-func TestResolve(t *testing.T) {
+func TestResolve_PassesConcreteFormatsThroughAndPicksByRunner(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {

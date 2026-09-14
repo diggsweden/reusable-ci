@@ -83,11 +83,13 @@
   "interfaces": {
     "credential_cleanup": {
       "command": "/home/garga/.local/state/forge-lab/target-cleanup-run-neutral-fixture/cleanup",
-      "contract_file": "/tmp/neutral-targets.run-neutral-fixture.recovery-v2.env"
+      "command_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "contract_file": "/tmp/neutral-targets.run-neutral-fixture.recovery.env"
     },
     "extended_fixture_producer": {
       "command": "/opt/forge-lab/scripts/shape.sh",
-      "protocol": "shape-v2"
+      "command_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "protocol": "shape"
     }
   }
 }

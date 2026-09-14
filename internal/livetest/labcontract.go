@@ -7,12 +7,14 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,10 +27,11 @@ import (
 )
 
 const (
-	contractVersion     = 2
-	maxContractBytes    = 64 * 1024
-	endpointKindForgejo = "forgejo"
-	endpointKindGitea   = "gitea"
+	contractVersion         = 2
+	maxContractBytes        = 64 * 1024
+	endpointKindForgejo     = "forgejo"
+	endpointKindGitea       = "gitea"
+	extendedFixtureProtocol = "shape"
 )
 
 type requiredNullable[T any] struct {
@@ -89,13 +92,15 @@ type labInterfaces struct {
 }
 
 type labCommandInterface struct {
-	Command      string `json:"command"`
-	ContractFile string `json:"contract_file"`
+	Command       string  `json:"command"`
+	CommandSHA256 *string `json:"command_sha256"`
+	ContractFile  string  `json:"contract_file"`
 }
 
 type labFixtureInterface struct {
-	Command  string `json:"command"`
-	Protocol string `json:"protocol"`
+	Command       string  `json:"command"`
+	CommandSHA256 *string `json:"command_sha256"`
+	Protocol      string  `json:"protocol"`
 }
 
 type labEndpoint struct {
@@ -170,12 +175,16 @@ func readPrivateContract(path string) ([]byte, error) {
 }
 
 func decodeLabContract(body []byte) (labContract, error) {
+	if len(body) == 0 {
+		return labContract{}, fmt.Errorf("live-target contract is empty: %w", errs.ErrMalformedInput)
+	}
+
 	if !utf8.Valid(body) {
 		return labContract{}, fmt.Errorf("live-target contract is not valid UTF-8: %w", errs.ErrMalformedInput)
 	}
 
 	if err := rejectDuplicateObjectKeys(body); err != nil {
-		return labContract{}, fmt.Errorf("decode live-target contract: %w: %w", err, errs.ErrMalformedInput)
+		return labContract{}, malformedContract("decode live-target contract", err)
 	}
 
 	if err := validateExactContractShape(body); err != nil {
@@ -187,19 +196,31 @@ func decodeLabContract(body []byte) (labContract, error) {
 
 	var contract labContract
 	if err := decoder.Decode(&contract); err != nil {
-		return labContract{}, fmt.Errorf("decode live-target contract: %w: %w", err, errs.ErrMalformedInput)
+		return labContract{}, malformedContract("decode live-target contract", err)
 	}
 
 	if err := requireJSONEOF(decoder); err != nil {
-		return labContract{}, fmt.Errorf("live-target contract has trailing data: %w: %w", err, errs.ErrMalformedInput)
+		return labContract{}, malformedContract("live-target contract has trailing data", err)
 	}
 
 	if err := contract.validateWire(); err != nil {
 		return labContract{}, err
 	}
+
 	contract.normalizeCapabilities()
 
 	return contract, nil
+}
+
+// malformedContract classifies a decode failure as malformed input once: the
+// JSON grammar checks already carry the sentinel, the standard decoder's
+// errors do not.
+func malformedContract(context string, err error) error {
+	if errors.Is(err, errs.ErrMalformedInput) {
+		return fmt.Errorf("%s: %w", context, err)
+	}
+
+	return fmt.Errorf("%s: %w: %w", context, err, errs.ErrMalformedInput)
 }
 
 //nolint:cyclop,gocyclo,gocognit,goconst,nestif,govet // One explicit branch per exact wire object boundary is intentional.
@@ -345,7 +366,8 @@ func validateExactContractShape(body []byte) error {
 			return cleanupErr
 		}
 
-		if cleanupErr = exactKeys(cleanup, "interfaces.credential_cleanup", []string{"command", "contract_file"}, nil); cleanupErr != nil {
+		if cleanupErr = exactKeys(cleanup, "interfaces.credential_cleanup",
+			[]string{"command", "contract_file"}, []string{"command_sha256"}); cleanupErr != nil {
 			return cleanupErr
 		}
 	}
@@ -356,7 +378,8 @@ func validateExactContractShape(body []byte) error {
 			return fixtureErr
 		}
 
-		if fixtureErr = exactKeys(fixture, "interfaces.extended_fixture_producer", []string{"command", "protocol"}, nil); fixtureErr != nil {
+		if fixtureErr = exactKeys(fixture, "interfaces.extended_fixture_producer",
+			[]string{"command", "protocol"}, []string{"command_sha256"}); fixtureErr != nil {
 			return fixtureErr
 		}
 	}
@@ -437,6 +460,7 @@ func readPrivateContractBound(path string) ([]byte, string, error) { //nolint:go
 	if err != nil {
 		return nil, "", fmt.Errorf("read live-target contract: %w", err)
 	}
+
 	defer func() { _ = file.Close() }()
 
 	opened, err := file.Stat()
@@ -710,22 +734,14 @@ func (endpoint labEndpoint) validateWire(generationID string) error { //nolint:c
 	return nil
 }
 
+// normalizeCapabilities makes each endpoint's capabilities a canonical set:
+// sorted with duplicates removed, so two contracts listing the same set
+// project the same frozen snapshot whatever order the producer wrote.
 func (contract *labContract) normalizeCapabilities() {
 	for index := range contract.Endpoints {
-		capabilities := contract.Endpoints[index].Capabilities
-		unique := make([]string, 0, len(capabilities))
-		seen := make(map[string]struct{}, len(capabilities))
-
-		for _, capability := range capabilities {
-			if _, duplicate := seen[capability]; duplicate {
-				continue
-			}
-
-			seen[capability] = struct{}{}
-			unique = append(unique, capability)
-		}
-
-		contract.Endpoints[index].Capabilities = unique
+		capabilities := slices.Clone(contract.Endpoints[index].Capabilities)
+		slices.Sort(capabilities)
+		contract.Endpoints[index].Capabilities = slices.Compact(capabilities)
 	}
 }
 
@@ -761,9 +777,13 @@ func (fulcio labFulcio) validateWire(endpointNames map[string]struct{}) error {
 	return nil
 }
 
-func (contract labContract) validateInterfaces() error {
+func (contract labContract) validateInterfaces() error { //nolint:cyclop // One explicit validation branch per optional interface field.
 	if contract.Interfaces == nil {
 		return nil
+	}
+
+	if contract.Interfaces.CredentialCleanup == nil && contract.Interfaces.ExtendedFixtureProducer == nil {
+		return fmt.Errorf("interfaces must advertise at least one interface; use null or omit it when absent: %w", errs.ErrValidation)
 	}
 
 	if cleanup := contract.Interfaces.CredentialCleanup; cleanup != nil {
@@ -774,6 +794,10 @@ func (contract labContract) validateInterfaces() error {
 		if err := validateAbsoluteDataPath("credential_cleanup.contract_file", cleanup.ContractFile); err != nil {
 			return err
 		}
+
+		if err := validateOptionalSHA256("credential_cleanup.command_sha256", cleanup.CommandSHA256); err != nil {
+			return err
+		}
 	}
 
 	if fixture := contract.Interfaces.ExtendedFixtureProducer; fixture != nil {
@@ -781,9 +805,25 @@ func (contract labContract) validateInterfaces() error {
 			return err
 		}
 
-		if fixture.Protocol == "" {
-			return fmt.Errorf("extended_fixture_producer.protocol is empty: %w", errs.ErrValidation)
+		if err := validateOptionalSHA256("extended_fixture_producer.command_sha256", fixture.CommandSHA256); err != nil {
+			return err
 		}
+
+		if fixture.Protocol != extendedFixtureProtocol {
+			return fmt.Errorf("extended_fixture_producer.protocol must equal %q: %w", extendedFixtureProtocol, errs.ErrValidation)
+		}
+	}
+
+	return nil
+}
+
+func validateOptionalSHA256(label string, value *string) error {
+	if value == nil {
+		return nil
+	}
+
+	if matched, _ := regexp.MatchString(`^[a-f0-9]{64}$`, *value); !matched {
+		return fmt.Errorf("%s must be 64 lowercase hexadecimal characters: %w", label, errs.ErrValidation)
 	}
 
 	return nil
@@ -865,6 +905,10 @@ func validateExpiryValue(value string) error {
 	return nil
 }
 
+// errNoEndpoint marks the one endpointFor outcome that is a clean skip
+// rather than a broken contract: the forge simply is not in this contract.
+var errNoEndpoint = errors.New("no such endpoint")
+
 func (contract labContract) endpointFor(kind, name string) (labEndpoint, error) {
 	var found []labEndpoint
 
@@ -877,10 +921,10 @@ func (contract labContract) endpointFor(kind, name string) (labEndpoint, error) 
 	switch len(found) {
 	case 0:
 		if name != "" {
-			return labEndpoint{}, fmt.Errorf("contract selects no %s endpoint named %q: %w", kind, name, errs.ErrValidation)
+			return labEndpoint{}, fmt.Errorf("contract selects no %s endpoint named %q: %w: %w", kind, name, errNoEndpoint, errs.ErrValidation)
 		}
 
-		return labEndpoint{}, fmt.Errorf("contract selects no %s endpoint: %w", kind, errs.ErrValidation)
+		return labEndpoint{}, fmt.Errorf("contract selects no %s endpoint: %w: %w", kind, errNoEndpoint, errs.ErrValidation)
 	case 1:
 		return found[0], nil
 	default:
@@ -1033,9 +1077,17 @@ func (contract labContract) cleanupPair() (string, string) {
 	return cleanup.Command, cleanup.ContractFile
 }
 
+func (contract labContract) cleanupCommandSHA256() *string {
+	if contract.Interfaces == nil || contract.Interfaces.CredentialCleanup == nil {
+		return nil
+	}
+
+	return contract.Interfaces.CredentialCleanup.CommandSHA256
+}
+
 type contractCacheEntry struct {
-	digest   [sha256.Size]byte
-	contract labContract
+	digest [sha256.Size]byte
+	body   string
 }
 
 var activeContracts = struct { //nolint:gochecknoglobals // Process cache detects mutation after the first accepted contract read.
@@ -1066,7 +1118,8 @@ func currentLabContract() (labContract, error) {
 			return labContract{}, fmt.Errorf("live-target contract changed after first load: %w", errs.ErrValidation)
 		}
 
-		return cached.contract, nil
+		// Decode immutable validated bytes so callers own every nested value.
+		return decodeLabContract([]byte(cached.body))
 	}
 
 	contract, err := decodeLabContract(body)
@@ -1074,7 +1127,7 @@ func currentLabContract() (labContract, error) {
 		return labContract{}, err
 	}
 
-	activeContracts.byPath[path] = contractCacheEntry{digest: digest, contract: contract}
+	activeContracts.byPath[path] = contractCacheEntry{digest: digest, body: string(body)}
 
 	return contract, nil
 }

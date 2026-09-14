@@ -8,9 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	buildcmd "github.com/diggsweden/reusable-ci/v3/internal/cli/commands/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/ghaenv"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
+	"github.com/stretchr/testify/require"
 )
 
 func TestXcodeIOSVersionInfoCmd_WritesOutputs(t *testing.T) {
@@ -18,9 +20,10 @@ func TestXcodeIOSVersionInfoCmd_WritesOutputs(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
 	project := fsys.WriteFile("MyApp.xcodeproj/project.pbxproj", []byte("MARKETING_VERSION = 2.1.0;\nCURRENT_PROJECT_VERSION = 15;\n"))
+	fsys.WriteFile("Other.xcodeproj/project.pbxproj", []byte("MARKETING_VERSION = 9.0.0;\nCURRENT_PROJECT_VERSION = 99;\n"))
 
-	cmd := buildcmd.New()
-	if err := cmd.Run(context.Background(), []string{"build", "xcode-ios", "metadata", strings.TrimSuffix(project, "/project.pbxproj")}); err != nil { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+	cmd := cli.New(cli.BuildInfo{Version: "test"})
+	if err := cmd.Run(context.Background(), []string{"reusable-ci", "build", "xcode-ios", "metadata", "--project", strings.TrimSuffix(project, "/project.pbxproj")}); err != nil { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		t.Fatal(err)
 	}
 
@@ -31,4 +34,7 @@ func TestXcodeIOSVersionInfoCmd_WritesOutputs(t *testing.T) {
 	if got := env.Output("build"); got != "15" {
 		t.Errorf("build = %q", got)
 	}
+
+	err := cli.New(cli.BuildInfo{Version: "test"}).Run(t.Context(), []string{"reusable-ci", "build", "xcode-ios", "metadata", strings.TrimSuffix(project, "/project.pbxproj")})
+	require.ErrorIs(t, err, errs.ErrUsage)
 }

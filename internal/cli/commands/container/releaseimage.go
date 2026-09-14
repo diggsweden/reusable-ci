@@ -21,6 +21,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // releaseImagesVerifyCmd is the `container release-images verify` verb: it
@@ -87,7 +88,7 @@ func validateReleaseImageCLIInput(cmd *cli.Command) error {
 		return err
 	}
 
-	if workflow := cmd.String("expected-workflow"); unsafeWorkflowPath(workflow) {
+	if workflow := cmd.String("expected-workflow"); !pathsafe.Relative(workflow) {
 		return fmt.Errorf("release image verify: unsafe expected-workflow path: %s: %w", workflow, errs.ErrUsage)
 	}
 
@@ -98,6 +99,12 @@ func validateReleaseImagePublicKey(path, want string) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return fmt.Errorf("release image verify: cosign-public-key-path is required: %w", errs.ErrUsage)
+	}
+
+	// The same relative-to-the-checkout rule the base-image verbs apply to this
+	// flag; the release verb used to accept an absolute or climbing path.
+	if !pathsafe.Relative(path) {
+		return fmt.Errorf("release image verify: unsafe Cosign public key path: %s: %w", path, errs.ErrUsage)
 	}
 
 	want = strings.TrimSpace(want)

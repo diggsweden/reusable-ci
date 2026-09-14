@@ -18,7 +18,7 @@ import (
 // CleanupStagingBaseImages deletes promoted staging base tags through the forge
 // package-version API, verifies final tags before and after deletion, and sweeps
 // stale staging versions that are still present in the package registry.
-func CleanupStagingBaseImages(ctx context.Context, registry imageDigestResolver, cleaner baseImagePackageAPI, out io.Writer, in BaseImageCleanupStagingInput) error {
+func CleanupStagingBaseImages(ctx context.Context, registry imageDigestResolver, cleaner baseImagePackageAPI, out io.Writer, in BaseImageCleanupStagingInput) error { //nolint:cyclop // separate metadata and final-tag preflight passes precede the destructive pass.
 	if registry == nil {
 		return fmt.Errorf("base images cleanup: registry resolver is required: %w", errs.ErrUsage)
 	}
@@ -35,18 +35,40 @@ func CleanupStagingBaseImages(ctx context.Context, registry imageDigestResolver,
 	if err != nil {
 		return err
 	}
+	// Validate the whole supplied set before any tag is removed or reported.
+	for idx, image := range in.Images {
+		if _, _, _, normalizeErr := normalizeCleanupStagingImage(image, in.ExpectedRepository, idx); normalizeErr != nil {
+			return normalizeErr
+		}
+	}
+
+	for idx, image := range in.Images {
+		item, digest, skip, _ := normalizeCleanupStagingImage(image, in.ExpectedRepository, idx)
+		if skip {
+			continue
+		}
+
+		actual, resolveErr := registry.ResolveDigest(ctx, item.Tag)
+		if resolveErr != nil {
+			return fmt.Errorf("base images cleanup: preserve candidate while final is unreadable: %w", resolveErr)
+		}
+
+		if actual != digest {
+			return fmt.Errorf("base images cleanup: final base tag does not point to the promoted digest: %w", errs.ErrValidation)
+		}
+	}
 
 	cleanupError, err := cleanupPromotedStagingImages(ctx, registry, cleaner, out, in, archFinalTags)
 	if err != nil {
 		return err
 	}
 
-	if err := sweepStaleStagingVersions(ctx, registry, cleaner, out, in.ExpectedRepository, archFinalTags); err != nil {
-		return err
-	}
-
 	if cleanupError {
 		return fmt.Errorf("base images cleanup: staging cleanup safety check failed: %w", errs.ErrValidation)
+	}
+
+	if err := sweepStaleStagingVersions(ctx, registry, cleaner, out, in.ExpectedRepository, archFinalTags); err != nil {
+		return err
 	}
 
 	return nil
@@ -119,9 +141,7 @@ func normalizeCleanupStagingImage(image BaseImageMetadata, expectedRepository st
 func cleanupOnePromotedStagingImage(ctx context.Context, registry imageDigestResolver, cleaner baseImagePackageAPI, out io.Writer, expectedRepository string, archFinalTags map[string]string, item BaseImageMetadata, digest string) (bool, error) {
 	finalDigest, err := registry.ResolveDigest(ctx, item.Tag)
 	if err != nil {
-		_, _ = fmt.Fprintf(out, "Final base tag is absent before staging cleanup; stale sweep will remove the candidate if it still exists: %s\n", item.Tag)
-
-		return false, nil //nolint:nilerr // absent final tag defers cleanup to the stale sweep; not a failure.
+		return false, fmt.Errorf("base images cleanup: preserve candidate while final is unreadable: %w", err)
 	}
 
 	if finalDigest != digest {
@@ -208,13 +228,36 @@ func reusableBaseArchFinalTags(expectedRepository string, inputs []BaseInput) (m
 	return finalTags, nil
 }
 
-func deleteStagingBaseVersion(ctx context.Context, registry imageDigestResolver, cleaner baseImagePackageAPI, out io.Writer, expectedRepository string, archFinalTags map[string]string, stagingVersion, stagingLabel string) error {
-	if isBaseArchStagingVersion(stagingVersion) && !shouldDeleteArchStagingVersion(ctx, registry, out, archFinalTags, stagingVersion, stagingLabel) {
-		return nil
-	}
-
+func deleteStagingBaseVersion(ctx context.Context, registry imageDigestResolver, cleaner baseImagePackageAPI, out io.Writer, expectedRepository string, archFinalTags map[string]string, stagingVersion, stagingLabel string) error { //nolint:cyclop,nestif // architecture reuse and manifest candidates have distinct final-tag safety checks.
 	if !validBaseStagingVersion(stagingVersion) {
 		return fmt.Errorf("base images cleanup: refusing to delete unexpected staging version: %s: %w", stagingVersion, errs.ErrValidation)
+	}
+
+	if isBaseArchStagingVersion(stagingVersion) { //nolint:nestif // architecture and manifest candidates require different positive final-tag evidence.
+		allowed, err := shouldDeleteArchStagingVersion(ctx, registry, out, archFinalTags, stagingVersion, stagingLabel)
+		if err != nil || !allowed {
+			return err
+		}
+	} else {
+		finalTag := expectedRepository + ":" + strings.TrimPrefix(stagingVersion, "staging-")
+
+		finalDigest, err := registry.ResolveDigest(ctx, finalTag)
+		if errors.Is(err, errs.ErrMissingInput) {
+			return nil
+		}
+
+		if err != nil {
+			return fmt.Errorf("resolve final before staging cleanup: %w", err)
+		}
+
+		candidateDigest, err := registry.ResolveDigest(ctx, expectedRepository+":"+stagingVersion)
+		if err != nil {
+			return fmt.Errorf("resolve candidate before staging cleanup: %w", err)
+		}
+
+		if !domaincontainer.ValidDigest(finalDigest) || finalDigest != candidateDigest {
+			return fmt.Errorf("preserve staging candidate: final digest is invalid or differs: %w", errs.ErrValidation)
+		}
 	}
 
 	stagingTag := expectedRepository + ":" + stagingVersion
@@ -224,7 +267,9 @@ func deleteStagingBaseVersion(ctx context.Context, registry imageDigestResolver,
 		if errors.Is(err, errs.ErrPermissionDenied) {
 			_, _ = fmt.Fprintf(out, "Registry refused staging base tag deletion; preserving: %s\n", stagingLabel)
 
-			return cleanupOrphanBaseSignatureVersions(ctx, registry, out, expectedRepository, stagingVersion, stagingDigest)
+			reportBaseSignatureRetention(ctx, registry, out, expectedRepository, stagingVersion, stagingDigest)
+
+			return nil
 		}
 
 		return fmt.Errorf("base images cleanup: failed to delete staging base tag: %s: %w", stagingLabel, err)
@@ -232,46 +277,57 @@ func deleteStagingBaseVersion(ctx context.Context, registry imageDigestResolver,
 
 	_, _ = fmt.Fprintf(out, "Deleted staging base tag: %s\n", stagingLabel)
 
-	return cleanupOrphanBaseSignatureVersions(ctx, registry, out, expectedRepository, stagingVersion, stagingDigest)
+	reportBaseSignatureRetention(ctx, registry, out, expectedRepository, stagingVersion, stagingDigest)
+
+	return nil
 }
 
-// shouldDeleteArchStagingVersion decides whether a per-arch staging tag may
-// be deleted: only after its expected final tag resolves, or when no final
-// tag is expected for it at all (a stale leftover).
-func shouldDeleteArchStagingVersion(ctx context.Context, registry imageDigestResolver, out io.Writer, archFinalTags map[string]string, stagingVersion, stagingLabel string) bool {
+// Per-arch candidates are reusable until their known final resolves. Unknown
+// final mappings are uncertainty, not evidence that deletion is safe.
+func shouldDeleteArchStagingVersion(ctx context.Context, registry imageDigestResolver, out io.Writer, archFinalTags map[string]string, stagingVersion, stagingLabel string) (bool, error) {
 	finalTag := archFinalTags[stagingVersion]
 	if finalTag == "" {
-		_, _ = fmt.Fprintf(out, "Deleting stale architecture base tag: %s\n", stagingLabel)
-
-		return true
+		return false, nil
 	}
 
-	if _, err := registry.ResolveDigest(ctx, finalTag); err != nil {
+	digest, err := registry.ResolveDigest(ctx, finalTag)
+	if errors.Is(err, errs.ErrMissingInput) {
 		_, _ = fmt.Fprintf(out, "Preserving reusable architecture base tag until final exists: %s\n", stagingLabel)
 
-		return false
+		return false, nil
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("resolve architecture final before staging cleanup: %w", err)
+	}
+
+	if !domaincontainer.ValidDigest(digest) {
+		return false, fmt.Errorf("architecture final digest is invalid: %w", errs.ErrValidation)
 	}
 
 	_, _ = fmt.Fprintf(out, "Deleting reusable architecture base tag after final promotion: %s\n", stagingLabel)
 
-	return true
+	return true, nil
 }
 
-func cleanupOrphanBaseSignatureVersions(ctx context.Context, registry imageDigestResolver, out io.Writer, expectedRepository, stagingVersion, digest string) error {
+// reportBaseSignatureRetention says why the cosign signature versions beside a
+// staging tag stay in place. They are never deleted here: staging and final
+// tags share one manifest, so the signature attached to the digest is the
+// promoted image's signature too. Reporting only — the former name promised a
+// cleanup that never happened.
+func reportBaseSignatureRetention(ctx context.Context, registry imageDigestResolver, out io.Writer, expectedRepository, stagingVersion, digest string) {
 	if digest == "" || isBaseArchStagingVersion(stagingVersion) {
-		return nil
+		return
 	}
 
 	finalTag := expectedRepository + ":" + strings.TrimPrefix(stagingVersion, "staging-")
 	if finalDigest, err := registry.ResolveDigest(ctx, finalTag); err == nil && finalDigest == digest {
 		_, _ = fmt.Fprintf(out, "Preserving base signature artifacts for promoted digest: %s\n", digest)
 
-		return nil
+		return
 	}
 
 	_, _ = fmt.Fprintf(out, "Preserving base signature artifacts because promoted final tag is not currently readable as this digest: %s\n", finalTag)
-
-	return nil
 }
 
 func validBaseStagingVersion(version string) bool {

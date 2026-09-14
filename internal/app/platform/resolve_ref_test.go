@@ -7,12 +7,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	appplatform "github.com/diggsweden/reusable-ci/v3/internal/app/platform"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
+
+// Named so the propagation test asserts identity rather than a message.
+var errRefLookupOffline = errors.New("ls-remote: offline")
 
 type fakeRefGit struct {
 	out string
@@ -27,12 +31,14 @@ func TestResolveRef_UsesRemoteSHAWhenFound(t *testing.T) {
 
 	var out bytes.Buffer
 
-	got, err := appplatform.ResolveRef(context.Background(), fakeRefGit{out: "abc123\trefs/tags/v1"}, sink, &out, appplatform.ResolveRefInput{RemoteURL: "https://example.com/o/r", Ref: "v1"})
+	sha := strings.Repeat("a", 40)
+
+	got, err := appplatform.ResolveRef(context.Background(), fakeRefGit{out: sha + "\trefs/tags/v1"}, sink, &out, appplatform.ResolveRefInput{RemoteURL: "https://example.com/o/r", Ref: "v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got != "abc123" || sink.Single("sha") != "abc123" {
+	if got != sha || sink.Single("sha") != sha {
 		t.Errorf("got %q output %q", got, sink.Single("sha"))
 	}
 }
@@ -51,12 +57,14 @@ func TestResolveRef_UsesPeeledTagSHAWhenFound(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
 
-	got, err := appplatform.ResolveRef(context.Background(), fakeRefGit{out: "tagsha\trefs/tags/v1\ncommitsha\trefs/tags/v1^{}"}, sink, nil, appplatform.ResolveRefInput{RemoteURL: "https://example.com/o/r", Ref: "v1"})
+	sha := strings.Repeat("b", 40)
+
+	got, err := appplatform.ResolveRef(context.Background(), fakeRefGit{out: strings.Repeat("a", 40) + "\trefs/tags/v1\n" + sha + "\trefs/tags/v1^{}"}, sink, nil, appplatform.ResolveRefInput{RemoteURL: "https://example.com/o/r", Ref: "v1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got != "commitsha" || sink.Single("sha") != "commitsha" {
+	if got != sha || sink.Single("sha") != sha {
 		t.Errorf("got %q output %q", got, sink.Single("sha"))
 	}
 }
@@ -80,9 +88,11 @@ func TestResolveRef_FailsShortSHAWhenNoRemoteRow(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
 
+	// A short SHA cannot be fetched and is not a name the remote knows, so
+	// it is refused rather than passed through like a full one.
 	_, err := appplatform.ResolveRef(context.Background(), fakeRefGit{}, sink, nil, appplatform.ResolveRefInput{RemoteURL: "https://example.com/o/r", Ref: "deadbeef"})
-	if err == nil {
-		t.Fatal("expected error")
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
 	}
 }
 
@@ -90,9 +100,9 @@ func TestResolveRef_FailsWhenLookupErrors(t *testing.T) {
 	t.Parallel()
 	sink := fakeoutputsink.New(t)
 
-	_, err := appplatform.ResolveRef(context.Background(), fakeRefGit{err: errors.New("offline")}, sink, nil, appplatform.ResolveRefInput{RemoteURL: "https://example.com/o/r", Ref: "v1"}) //nolint:err113 // test mock error
-	if err == nil {
-		t.Fatal("expected error")
+	_, err := appplatform.ResolveRef(context.Background(), fakeRefGit{err: errRefLookupOffline}, sink, nil, appplatform.ResolveRefInput{RemoteURL: "https://example.com/o/r", Ref: "v1"})
+	if !errors.Is(err, errRefLookupOffline) {
+		t.Fatalf("err = %v, want git's own failure to survive wrapping", err)
 	}
 }
 
@@ -101,8 +111,8 @@ func TestResolveRef_FailsWhenNamedRefNotFound(t *testing.T) {
 	sink := fakeoutputsink.New(t)
 
 	_, err := appplatform.ResolveRef(context.Background(), fakeRefGit{}, sink, nil, appplatform.ResolveRefInput{RemoteURL: "https://example.com/o/r", Ref: "v1"})
-	if err == nil {
-		t.Fatal("expected error")
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig — the ref names nothing on the remote", err)
 	}
 }
 
@@ -115,7 +125,14 @@ func TestResolveRef_RejectsUnsafeOutputKey(t *testing.T) {
 		Ref:       "v1",
 		OutputKey: "bad\nkey",
 	})
-	if err == nil {
-		t.Fatal("expected error")
+
+	// The key reaches a line-oriented output file, so a newline in it would
+	// forge a further output.
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
+	}
+
+	if got := sink.Keys(); len(got) != 0 {
+		t.Errorf("emitted %q under an unusable key", got)
 	}
 }

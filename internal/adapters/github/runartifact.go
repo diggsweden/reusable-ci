@@ -11,12 +11,14 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	domainartifact "github.com/diggsweden/reusable-ci/v3/internal/domain/artifact"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -102,7 +104,7 @@ func (p *Provider) UploadRunArtifact(ctx context.Context, in provider.RunArtifac
 		return provider.RunArtifactInfo{}, fmt.Errorf("artifact zip is %d bytes, over the %d single-PUT limit: %w", archive.zipSize, maxUploadZipBytes, errs.ErrUnsupported)
 	}
 
-	artifactID, err := p.runV4Upload(ctx, rt, in.Name, archive)
+	artifactID, err := p.runV4Upload(ctx, rt, in.Name, in.RetentionDays, archive)
 	if err != nil {
 		return provider.RunArtifactInfo{}, err
 	}
@@ -143,8 +145,8 @@ func (p *Provider) resolveUploadContext() (uploadContext, error) {
 
 // runV4Upload performs the three protocol stages: create → blob PUT →
 // finalize, returning the artifact id.
-func (p *Provider) runV4Upload(ctx context.Context, rt uploadContext, name string, archive zipArchive) (string, error) {
-	signedURL, err := p.createArtifact(ctx, rt, name)
+func (p *Provider) runV4Upload(ctx context.Context, rt uploadContext, name string, retentionDays int, archive zipArchive) (string, error) {
+	signedURL, err := p.createArtifact(ctx, rt, name, p.artifactExpiry(retentionDays, time.Now()))
 	if err != nil {
 		return "", err
 	}
@@ -215,6 +217,14 @@ func zipEntries(entries []domainartifact.UploadEntry) (zipArchive, error) {
 
 	out := zipArchive{path: tmp.Name(), fileCount: len(entries)}
 
+	complete := false
+	defer func() {
+		if !complete {
+			_ = tmp.Close()
+			_ = os.Remove(out.path)
+		}
+	}()
+
 	zw := zip.NewWriter(tmp)
 
 	for _, entry := range entries {
@@ -243,13 +253,15 @@ func zipEntries(entries []domainartifact.UploadEntry) (zipArchive, error) {
 		return zipArchive{}, err
 	}
 
+	complete = true
+
 	return out, nil
 }
 
 func writeZipEntry(zw *zip.Writer, entry domainartifact.UploadEntry) (int64, error) {
-	src, err := os.Open(entry.Abs) //nolint:gosec // entry.Abs comes from a caller-provided dir/file list.
+	src, err := domainartifact.OpenUploadEntry(entry)
 	if err != nil {
-		return 0, fmt.Errorf("open %q: %w", entry.Abs, err)
+		return 0, err
 	}
 
 	defer func() { _ = src.Close() }()
@@ -259,8 +271,8 @@ func writeZipEntry(zw *zip.Writer, entry domainartifact.UploadEntry) (int64, err
 		return 0, fmt.Errorf("zip entry %q: %w", entry.RelPath, err)
 	}
 
-	written, copyErr := io.CopyN(dst, src, domainartifact.MaxFileBytes)
-	if copyErr != nil && !errors.Is(copyErr, io.EOF) {
+	written, copyErr := domainartifact.CopyAtMost(dst, src, domainartifact.MaxFileBytes)
+	if copyErr != nil {
 		return 0, fmt.Errorf("zip %q: %w", entry.RelPath, copyErr)
 	}
 
@@ -295,12 +307,29 @@ type backendIDs struct {
 	WorkflowJobRunBackendID string `json:"workflowJobRunBackendId"`
 }
 
-func (p *Provider) createArtifact(ctx context.Context, rt uploadContext, name string) (string, error) {
+// artifactExpiry turns a requested retention into the CreateArtifact
+// expiresAt timestamp, as actions/upload-artifact does: zero leaves the
+// repository default, and a request beyond the repository's
+// $GITHUB_RETENTION_DAYS is capped to it rather than refused.
+func (p *Provider) artifactExpiry(retentionDays int, now time.Time) string {
+	if retentionDays <= 0 {
+		return ""
+	}
+
+	if maxDays, err := strconv.Atoi(p.envFunc()("GITHUB_RETENTION_DAYS")); err == nil && maxDays > 0 && retentionDays > maxDays {
+		retentionDays = maxDays
+	}
+
+	return now.UTC().AddDate(0, 0, retentionDays).Format(time.RFC3339)
+}
+
+func (p *Provider) createArtifact(ctx context.Context, rt uploadContext, name, expiresAt string) (string, error) {
 	req := struct {
 		backendIDs
-		Name    string `json:"name"`
-		Version int    `json:"version"`
-	}{backendIDs{rt.runID, rt.jobID}, name, 4}
+		Name      string `json:"name"`
+		Version   int    `json:"version"`
+		ExpiresAt string `json:"expiresAt,omitempty"`
+	}{backendIDs{rt.runID, rt.jobID}, name, 4, expiresAt}
 
 	var resp struct {
 		OK              bool   `json:"ok"`
@@ -311,11 +340,33 @@ func (p *Provider) createArtifact(ctx context.Context, rt uploadContext, name st
 		return "", err
 	}
 
-	if !strings.HasPrefix(resp.SignedUploadURL, "http://") && !strings.HasPrefix(resp.SignedUploadURL, "https://") {
+	if !usableSignedUploadURL(resp.SignedUploadURL, rt.resultsURL) {
 		return "", fmt.Errorf("CreateArtifact returned no usable upload URL: %w", errs.ErrValidation)
 	}
 
 	return resp.SignedUploadURL, nil
+}
+
+// usableSignedUploadURL accepts the blob URL CreateArtifact hands back only if
+// it is an absolute URL with a host and no embedded credentials, and does not
+// downgrade the transport: a results service reached over HTTPS may not send
+// the artifact over plain HTTP. A results URL that is itself HTTP (a
+// self-hosted runner on a private network) allows an HTTP blob URL. The blob
+// PUT never carries the runtime token; the signature is in the URL.
+func usableSignedUploadURL(signedURL, resultsURL string) bool {
+	parsed, err := url.Parse(signedURL)
+	if err != nil || parsed.Host == "" || parsed.User != nil {
+		return false
+	}
+
+	switch parsed.Scheme {
+	case "https":
+		return true
+	case "http":
+		return strings.HasPrefix(resultsURL, "http://")
+	default:
+		return false
+	}
 }
 
 func (p *Provider) finalizeArtifact(ctx context.Context, rt uploadContext, name string, archive zipArchive) (string, error) {
@@ -333,6 +384,10 @@ func (p *Provider) finalizeArtifact(ctx context.Context, rt uploadContext, name 
 
 	if err := p.twirpPOST(ctx, rt.resultsURL, twirpFinalizeArtifact, rt.token, req, &resp); err != nil {
 		return "", err
+	}
+
+	if !resp.OK || strings.TrimSpace(resp.ArtifactID) == "" {
+		return "", fmt.Errorf("FinalizeArtifact did not confirm success with an artifact id: %w", errs.ErrMalformedInput)
 	}
 
 	return resp.ArtifactID, nil

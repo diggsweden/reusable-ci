@@ -8,16 +8,43 @@ import (
 	"bytes"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 var (
-	jobGraphNeedsOutput = regexp.MustCompile(`needs\.([A-Za-z0-9_-]+)\.outputs`)
-	jobGraphJobHeader   = regexp.MustCompile(`^  ([A-Za-z0-9_-]+):[ \t]*$`)
-	jobGraphReusable    = regexp.MustCompile(`\.ya?ml(@|$)`)
+	jobGraphReusable = regexp.MustCompile(`\.ya?ml(@|$)`)
+
+	// The annotation, and the reason that makes it count. They are separate
+	// patterns so an annotation WITHOUT a usable reason can be reported as
+	// such: silently not applying it would leave the operator reading the
+	// generic masking error while looking straight at the override they
+	// thought they had written.
+	//
+	// A reason may be quoted or bare; what it may not be is empty. The point
+	// of the annotation is the record of WHY an edge is provably safe, and a
+	// bare `allow` records nothing.
+	jobGraphGuardAllow  = regexp.MustCompile(`#\s*job-graph-guard:\s*allow\b`)
+	jobGraphGuardReason = regexp.MustCompile(`\breason\s*=\s*(?:"\s*([^"]*?)\s*"|'\s*([^']*?)\s*'|(\S+))`)
 )
+
+// guardReasonGiven reports whether line carries a non-empty reason= value.
+func guardReasonGiven(line string) bool {
+	m := jobGraphGuardReason.FindStringSubmatch(line)
+	if m == nil {
+		return false
+	}
+
+	for _, group := range m[1:] {
+		if strings.TrimSpace(group) != "" {
+			return true
+		}
+	}
+
+	return false
+}
 
 // JobGraphViolation is one masking-risk edge, located for annotation.
 type JobGraphViolation struct {
@@ -36,16 +63,23 @@ type JobGraphViolation struct {
 // A provably-safe edge is acknowledged by a `# job-graph-guard: allow reason=…`
 // comment anywhere in the consumer job's block. Pure: caller supplies the YAML
 // and owns IO/annotation.
-func CheckJobGraph(workflowYAML []byte) ([]JobGraphViolation, error) {
+func CheckJobGraph(workflowYAML []byte) ([]JobGraphViolation, error) { //nolint:cyclop // jobs, effective scalar input references and exemptions have separate refusal paths.
 	var doc struct {
-		Jobs map[string]yaml.Node `yaml:"jobs"`
+		Jobs yaml.Node `yaml:"jobs"`
 	}
 
 	if err := yaml.Unmarshal(workflowYAML, &doc); err != nil {
 		return nil, fmt.Errorf("parse workflow yaml: %w", err)
 	}
 
-	allowed := jobGraphAllowSet(workflowYAML)
+	jobs := map[string]yaml.Node{}
+	if doc.Jobs.Kind != 0 {
+		if err := doc.Jobs.Decode(&jobs); err != nil {
+			return nil, fmt.Errorf("parse workflow jobs: %w", err)
+		}
+	}
+
+	allowed, unreasoned := jobGraphAllowSet(workflowYAML, &doc.Jobs)
 
 	type jobShape struct {
 		Uses string    `yaml:"uses"`
@@ -53,9 +87,9 @@ func CheckJobGraph(workflowYAML []byte) ([]JobGraphViolation, error) {
 		With yaml.Node `yaml:"with"`
 	}
 
-	skippable := make(map[string]bool, len(doc.Jobs))
+	skippable := make(map[string]bool, len(jobs))
 
-	for name, node := range doc.Jobs {
+	for name, node := range jobs {
 		var shape jobShape
 
 		_ = node.Decode(&shape)
@@ -64,8 +98,8 @@ func CheckJobGraph(workflowYAML []byte) ([]JobGraphViolation, error) {
 
 	var violations []JobGraphViolation
 
-	for _, name := range sortedKeys(doc.Jobs) {
-		node := doc.Jobs[name]
+	for _, name := range sortedKeys(jobs) {
+		node := jobs[name]
 
 		var shape jobShape
 		if err := node.Decode(&shape); err != nil {
@@ -76,10 +110,40 @@ func CheckJobGraph(workflowYAML []byte) ([]JobGraphViolation, error) {
 			continue // only reusable-call consumers can mask
 		}
 
-		refs := producersIn(shape.If)
+		refs := producersIn(shape.If, true)
 		if strings.Contains(shape.If, "always()") {
-			withText, _ := yaml.Marshal(&shape.With)
-			refs = append(refs, producersIn(string(withText))...)
+			pending := []*yaml.Node{&shape.With}
+			seen := map[*yaml.Node]bool{}
+
+			for len(pending) > 0 {
+				node := resolveAlias(pending[len(pending)-1])
+				pending = pending[:len(pending)-1]
+
+				if node == nil || seen[node] {
+					continue
+				}
+
+				seen[node] = true
+				if node.Kind == yaml.ScalarNode {
+					refs = append(refs, producersIn(node.Value, false)...)
+				}
+
+				for index := len(node.Content) - 1; index >= 0; index-- {
+					pending = append(pending, node.Content[index])
+				}
+			}
+		}
+
+		// An override that records no reason is reported in its own right,
+		// rather than being dropped so the job falls back to the generic
+		// masking error. The operator wrote an annotation; tell them why it
+		// did not take effect.
+		if unreasoned[name] {
+			violations = append(violations, JobGraphViolation{
+				Line: node.Line,
+				Msg: fmt.Sprintf("job %q carries '# job-graph-guard: allow' with no reason; the annotation waives a masking check, "+
+					"so it must record WHY the edge is provably safe — write '# job-graph-guard: allow reason=\"…\"'", name),
+			})
 		}
 
 		violations = appendMaskingViolations(violations, name, node.Line, refs, skippable, allowed)
@@ -126,45 +190,93 @@ func isSkippableIf(ifExpr string) bool {
 	}
 }
 
-func producersIn(text string) []string {
-	matches := jobGraphNeedsOutput.FindAllStringSubmatch(text, -1)
-	out := make([]string, 0, len(matches))
+func producersIn(text string, bare bool) []string {
+	var out []string
 
-	for _, m := range matches {
-		out = append(out, m[1])
+	for _, ref := range expressionReferences(text, "needs", bare) {
+		if len(ref.members) >= 2 && ref.members[1] == "outputs" {
+			out = append(out, ref.members[0])
+		}
 	}
 
 	return out
 }
 
 // jobGraphAllowSet returns the set of jobs carrying a `# job-graph-guard: allow`
-// comment anywhere in their block. yaml.v3 comment attachment is unreliable for
-// comments between flow keys, so scan by indentation: job headers are at two
-// spaces; a deeper line belongs to the current job until the next header.
-func jobGraphAllowSet(src []byte) map[string]bool {
+// comment anywhere in their block, and the set whose annotation recorded no
+// reason. yaml.v3 does not attach comments reliably, so the source is scanned
+// line by line; which job a line belongs to comes from the parsed job headers
+// (their line and column), not from an assumed indentation. A job's block runs
+// from its own header line, trailing comment included, to the next header; a
+// non-comment line indented less than the headers ends the jobs mapping.
+func jobGraphAllowSet(src []byte, jobs *yaml.Node) (map[string]bool, map[string]bool) {
 	allowed := map[string]bool{}
+	unreasoned := map[string]bool{}
+
+	headers := jobHeaders(jobs)
+
 	scanner := bufio.NewScanner(bytes.NewReader(src))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-	current := ""
+	current, column, lineNo := "", 0, 0
 
 	for scanner.Scan() {
+		lineNo++
 		line := scanner.Text()
 
-		if m := jobGraphJobHeader.FindStringSubmatch(line); m != nil {
-			current = m[1]
+		for len(headers) > 0 && headers[0].line <= lineNo {
+			current, column = headers[0].name, headers[0].column
+			headers = headers[1:]
+		}
 
+		if current != "" && shallowerThan(line, column) {
+			current = "" // a shallower key: the jobs mapping has ended
+		}
+
+		if current == "" || !jobGraphGuardAllow.MatchString(line) {
 			continue
 		}
 
-		if len(line) > 0 && line[0] != ' ' && line[0] != '\t' && line[0] != '#' {
-			current = "" // left the jobs/section indentation
-		}
-
-		if current != "" && strings.Contains(line, "job-graph-guard: allow") {
+		if guardReasonGiven(line) {
 			allowed[current] = true
+		} else {
+			unreasoned[current] = true
 		}
 	}
 
-	return allowed
+	// An annotation with a reason wins over one without, so a job carrying
+	// both spellings is allowed rather than reported.
+	for name := range allowed {
+		delete(unreasoned, name)
+	}
+
+	return allowed, unreasoned
+}
+
+// jobHeader is one job's key in the jobs mapping: its name and where the
+// key sits, so the source lines below it can be attributed to that job.
+type jobHeader struct {
+	name         string
+	line, column int
+}
+
+func jobHeaders(jobs *yaml.Node) []jobHeader {
+	var headers []jobHeader
+
+	for index := 0; jobs != nil && index+1 < len(jobs.Content); index += 2 {
+		key := jobs.Content[index]
+		headers = append(headers, jobHeader{name: key.Value, line: key.Line, column: key.Column})
+	}
+
+	sort.Slice(headers, func(i, j int) bool { return headers[i].line < headers[j].line })
+
+	return headers
+}
+
+// shallowerThan reports whether a non-blank, non-comment line is indented
+// less than the job key at column, which ends that job's block.
+func shallowerThan(line string, column int) bool {
+	trimmed := strings.TrimLeft(line, " \t")
+
+	return trimmed != "" && !strings.HasPrefix(trimmed, "#") && len(line)-len(trimmed)+1 < column
 }

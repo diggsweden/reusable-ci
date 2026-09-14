@@ -9,6 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 // AppStoreUploadInput drives RenderAppStoreUploadSummary.
@@ -55,7 +59,10 @@ func ParseAppStoreUploadRequestID(body []byte) (string, error) {
 		SuccessMessage string `json:"success-message"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return "", fmt.Errorf("parse App Store upload result: %w", err)
+		// altool's output is data from an external tool. Malformed output is
+		// EX_DATAERR (65), not the unclassified EX_SOFTWARE (70) that tells
+		// the operator to file a bug against reusable-ci.
+		return "", fmt.Errorf("parse App Store upload result: %w: %w", err, errs.ErrMalformedInput)
 	}
 
 	for _, productErr := range result.ProductErrors {
@@ -81,8 +88,8 @@ func RenderAppStoreUploadSummary(in AppStoreUploadInput, now time.Time) string {
 	_, _ = fmt.Fprintf(&b, "### Upload Details\n")
 	_, _ = fmt.Fprintf(&b, "| Property | Value |\n")
 	_, _ = fmt.Fprintf(&b, "|----------|-------|\n")
-	_, _ = fmt.Fprintf(&b, "| **IPA File** | `%s` |\n", filepath.Base(in.IPAFile))
-	_, _ = fmt.Fprintf(&b, "| **Platform** | %s |\n", in.Platform)
+	_, _ = fmt.Fprintf(&b, "| **IPA File** | %s |\n", summary.InlineCode(filepath.Base(in.IPAFile)))
+	_, _ = fmt.Fprintf(&b, "| **Platform** | %s |\n", summary.LiteralText(in.Platform))
 
 	if in.SkipValidation {
 		_, _ = fmt.Fprintf(&b, "| **Validation** | ⊘ Skipped |\n")
@@ -93,7 +100,10 @@ func RenderAppStoreUploadSummary(in AppStoreUploadInput, now time.Time) string {
 	_, _ = fmt.Fprintf(&b, "| **Status** | ✓ Uploaded |\n")
 
 	if in.RequestID != "" {
-		_, _ = fmt.Fprintf(&b, "| **Request ID** | `%s` |\n", in.RequestID)
+		// The request ID comes from altool's JSON, and when no product error
+		// carries one it is altool's free-text success message, so it is
+		// rendered through InlineCode like every other external value here.
+		_, _ = fmt.Fprintf(&b, "| **Request ID** | %s |\n", summary.InlineCode(in.RequestID))
 	}
 
 	_, _ = fmt.Fprintf(&b, "\n### Next Steps\n")

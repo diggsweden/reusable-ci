@@ -10,6 +10,10 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
 
+// SBOMsNone is the sboms input spelling for "no SBOM layers": what an empty
+// effective intersection resolves to, and the snapshot default.
+const SBOMsNone = "none"
+
 // releasePolicyInputs is the typed envelope of everything the policy
 // resolver reads from. Unexported: it is an internal helper input shape
 // for resolveReleasePolicy; public callers use ReleasePlanInput.
@@ -81,7 +85,7 @@ func isDraftRelease(refName string) bool {
 		return true
 	}
 
-	if !validate.SemverTagPattern.MatchString(refName) {
+	if _, err := validate.ParseTagFormat(refName); err != nil {
 		return true
 	}
 
@@ -123,17 +127,18 @@ func computeEffectiveSBOMs(releaseSBOMs, pipelineSBOMs string) (string, *Release
 
 	if len(parts) == 0 {
 		var conflict *ReleaseSBOMConflict
-		// Surface a conflict only when both sides were non-"none" — a
-		// missing-overlap when either side is "none" is the operator's
-		// explicit choice, not a misconfig.
-		if releaseSBOMs != "none" && pipelineSBOMs != "none" { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		// Surface a conflict only when both sides selected layers: a missing
+		// overlap when either side is "none" is the operator's explicit
+		// choice, not a misconfig. The expanded sets decide, so " none" and
+		// "none\n" are the same choice as "none".
+		if len(releaseSet) > 0 && len(pipelineSet) > 0 {
 			conflict = &ReleaseSBOMConflict{
 				ReleaseSBOMs:  releaseSBOMs,
 				PipelineSBOMs: pipelineSBOMs,
 			}
 		}
 
-		return "none", conflict, nil
+		return SBOMsNone, conflict, nil
 	}
 
 	return strings.Join(parts, ","), nil, nil

@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/forgejo"
@@ -19,7 +18,7 @@ func TestDeleteTag_DeletesContainerPackageVersion(t *testing.T) {
 
 	var deletedPath string
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			deletedPath = r.URL.Path
 
@@ -29,13 +28,12 @@ func TestDeleteTag_DeletesContainerPackageVersion(t *testing.T) {
 		}
 
 		http.Error(w, "unexpected "+r.Method, http.StatusNotFound)
-	}))
-	defer srv.Close()
+	})
 
 	p := &forgejo.Provider{
 		Env:             envMap(map[string]string{"FORGEJO_TOKEN": "tok"}),
-		HTTPClient:      srv.Client(),
-		APIBaseOverride: srv.URL,
+		HTTPClient:      inMemoryClient(handler),
+		APIBaseOverride: "https://forgejo.invalid",
 	}
 
 	// A fully-qualified ref; the package API targets owner/name/version,
@@ -53,7 +51,7 @@ func TestDeleteTag_DeletesContainerPackageVersion(t *testing.T) {
 func TestDeleteTag_TreatsMissingPackageVersionAsAlreadyAbsent(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
 			http.Error(w, "not found", http.StatusNotFound)
 
@@ -61,13 +59,12 @@ func TestDeleteTag_TreatsMissingPackageVersionAsAlreadyAbsent(t *testing.T) {
 		}
 
 		http.Error(w, "unexpected "+r.Method, http.StatusNotFound)
-	}))
-	defer srv.Close()
+	})
 
 	p := &forgejo.Provider{
 		Env:             envMap(map[string]string{"FORGEJO_TOKEN": "tok"}),
-		HTTPClient:      srv.Client(),
-		APIBaseOverride: srv.URL,
+		HTTPClient:      inMemoryClient(handler),
+		APIBaseOverride: "https://forgejo.invalid",
 	}
 
 	if err := p.DeleteTag(context.Background(), "codeberg.org/itiquette/gommitlint:staging-v1.2.3"); err != nil {

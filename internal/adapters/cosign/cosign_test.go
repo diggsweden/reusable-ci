@@ -19,6 +19,28 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 )
 
+// refusingAdapter is the adapter for tests whose request must be refused
+// before cosign runs. Its cosign is a recording stand-in, and the test fails if
+// anything invoked it. These tests used cosign.New(), which runs whatever cosign
+// is on PATH and reads the transparency setting from the environment, so a
+// check that stopped refusing ran the host's cosign instead of failing -- and
+// the errors.Is assertion alone could still pass on the error that run
+// produced.
+func refusingAdapter(t *testing.T) *cosign.Adapter {
+	t.Helper()
+
+	bins := mockbinary.New(t)
+	bins.Add("cosign", ":")
+
+	t.Cleanup(func() {
+		if invs := bins.Invocations("cosign"); len(invs) != 0 {
+			t.Errorf("cosign ran %d time(s) for a request that must be refused first: %+v", len(invs), invs)
+		}
+	})
+
+	return &cosign.Adapter{Bin: bins.Path("cosign")}
+}
+
 func TestSignBlob_KeylessArgvShape(t *testing.T) {
 	bins := mockbinary.New(t)
 	bins.Add("cosign", ":")
@@ -74,7 +96,7 @@ func TestCopyImage_ArgvShape(t *testing.T) {
 }
 
 func TestCopyImage_RejectsEmptyRefs(t *testing.T) {
-	a := cosign.New()
+	a := refusingAdapter(t)
 
 	if err := a.CopyImage(context.Background(), cosign.CopyImageInput{Dest: "ghcr.io/o/r:release"}, nil); err == nil {
 		t.Error("empty source must be rejected")
@@ -134,7 +156,7 @@ func TestSignBlob_KMSArgvShape(t *testing.T) {
 }
 
 func TestSignBlob_RejectsKeylessWithKey(t *testing.T) {
-	a := cosign.New()
+	a := refusingAdapter(t)
 
 	err := a.SignBlob(context.Background(), cosign.SignBlobInput{
 		Artifact:   "app.tgz",
@@ -148,7 +170,7 @@ func TestSignBlob_RejectsKeylessWithKey(t *testing.T) {
 }
 
 func TestSignBlob_RejectsNonKeylessWithoutKey(t *testing.T) {
-	a := cosign.New()
+	a := refusingAdapter(t)
 
 	err := a.SignBlob(context.Background(), cosign.SignBlobInput{
 		Artifact:   "app.tgz",
@@ -160,7 +182,7 @@ func TestSignBlob_RejectsNonKeylessWithoutKey(t *testing.T) {
 }
 
 func TestSignBlob_RejectsIssuerInKMSMode(t *testing.T) {
-	a := cosign.New()
+	a := refusingAdapter(t)
 
 	err := a.SignBlob(context.Background(), cosign.SignBlobInput{
 		Artifact:   "app.tgz",
@@ -361,7 +383,7 @@ func TestSignImage_NonRecursiveOmitsFlag(t *testing.T) {
 }
 
 func TestSignImage_RejectsMutableTag(t *testing.T) {
-	a := cosign.New()
+	a := refusingAdapter(t)
 
 	err := a.SignImage(context.Background(), cosign.SignImageInput{
 		ImageRef: "ghcr.io/diggsweden/app:latest", // tag, not digest
@@ -373,7 +395,7 @@ func TestSignImage_RejectsMutableTag(t *testing.T) {
 }
 
 func TestSignImage_RejectsKeylessWithKey(t *testing.T) {
-	a := cosign.New()
+	a := refusingAdapter(t)
 
 	err := a.SignImage(context.Background(), cosign.SignImageInput{
 		ImageRef: testImageDigest,
@@ -386,7 +408,7 @@ func TestSignImage_RejectsKeylessWithKey(t *testing.T) {
 }
 
 func TestSignImage_RejectsNonKeylessWithoutKey(t *testing.T) {
-	a := cosign.New()
+	a := refusingAdapter(t)
 
 	err := a.SignImage(context.Background(), cosign.SignImageInput{
 		ImageRef: testImageDigest,
@@ -452,7 +474,7 @@ func TestVerifyImage_KMSArgvShape(t *testing.T) {
 }
 
 func TestVerifyImage_RejectsMutableTag(t *testing.T) {
-	a := cosign.New()
+	a := refusingAdapter(t)
 
 	err := a.VerifyImage(context.Background(), cosign.VerifyImageInput{
 		ImageRef: "ghcr.io/diggsweden/app:v1.0.0",
@@ -464,7 +486,7 @@ func TestVerifyImage_RejectsMutableTag(t *testing.T) {
 }
 
 func TestVerifyBlob_RejectsKeylessWithoutIdentity(t *testing.T) {
-	a := cosign.New()
+	a := refusingAdapter(t)
 
 	err := a.VerifyBlob(context.Background(), cosign.VerifyBlobInput{
 		Artifact:   "app.tgz",

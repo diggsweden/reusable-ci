@@ -1,42 +1,46 @@
 # Forgejo quick start
 
-How `reusable-ci` runs on Forgejo (hosted or self-hosted). For the
-per-forge maturity table see [`providers.md`](providers.md) — the forgejo
-adapter is fully implemented and unit-tested, with live-instance
-validation tracked as the remaining integration step.
+How `reusable-ci` runs on Forgejo (hosted or self-hosted). The authoritative
+implementation, test, and live-evidence status is maintained in
+[`providers.md`](providers.md).
 
 ## Detection and overrides
 
 The CLI probes **Forgejo before GitHub**, because Forgejo runners also set
-`GITHUB_ACTIONS=true`: any of `FORGEJO_ACTIONS`, `GITEA_ACTIONS`,
-`FORGEJO_SERVER_URL`, `FORGEJO_REPOSITORY`, or `FORGEJO_OUTPUT` selects the
-forgejo platform and runner conventions. Nothing to configure in the
+`GITHUB_ACTIONS=true`: `FORGEJO_ACTIONS`, `GITEA_ACTIONS` or `FORGEJO_OUTPUT`
+identifies a Forgejo runner and selects the forgejo platform and runner
+conventions. On any runner that sets `GITHUB_ACTIONS=true`, `FORGEJO_SERVER_URL`
+or `FORGEJO_REPOSITORY` selects Forgejo as the forge to talk to (a GitHub-hosted
+workflow publishing to Forgejo) without changing the runner conventions; on
+GitLab or a laptop those two variables change nothing. Nothing to configure in the
 common case; `--provider forgejo` / `--runner forgejo` (or
 `REUSABLE_CI_PROVIDER` / `REUSABLE_CI_RUNNER`) force it when a job's env is
 ambiguous.
 
 ## Installing the binary in a job
 
-Use the bootstrap installer — the same one macOS jobs use:
+Runtime-container jobs already include the binary. On a plain runner that
+supports remote composite actions, use the canonical installer and pin its
+implementation to an immutable commit:
 
 ```yaml
 - name: Install reusable-ci
-  run: |
-    source scripts/bootstrap/install-reusable-ci.sh
-    REUSABLE_CI_BINARY_SHA256="<pinned sha256>" \
-      install_reusable_ci v3.0.0
+  uses: diggsweden/reusable-ci/.github/actions/install-reusable-ci@<full-commit-sha>
+  with:
+    ref: v3.0.0
 ```
 
 Verification is fail-closed: the release's `checksums.txt` must carry a valid
 Sigstore bundle from the pinned publisher identity. A missing asset, checksum
-mismatch, or missing/invalid signature terminates installation;
-`REUSABLE_CI_BINARY_SHA256` additionally pins the exact binary hash (the same
-variable the forgejo-ci signer toolchain asserts).
+mismatch, missing cosign binary, or missing/invalid signature terminates
+installation. The action commit pins the installer code independently from the
+binary version selected by `ref`.
 
-In practice most Forgejo consumers do not call the binary directly: the
-[release-ci](https://codefloe.com/itiquette/release-ci) actions library
-wraps the verbs in composite actions pinned by commit SHA, and versions
-the binary pin together with the action set.
+The action requires the Forgejo runner to support remote composite actions. If
+it does not, use a prebuilt runtime image or vendor the reusable-ci bootstrap
+directory at a reviewed commit. Do not assume that
+`scripts/bootstrap/install-reusable-ci.sh` exists in the consumer repository.
+See the installation contract in [`providers.md`](providers.md#installing-reusable-ci).
 
 ## Runner conventions the adapter handles for you
 
@@ -46,7 +50,7 @@ the binary pin together with the action set.
 - **Annotations**: no `::error::` dialect; plain `Error:` prefixes.
 - **Run artifacts**: `artifact upload/download/digest` speak Forgejo's
   actions-artifact protocol (v1 upload quirks included). The adapter
-  accepts only current-run artifacts by design — keep producing and
+  accepts only current-run artifacts by design, so keep producing and
   consuming jobs `needs:`-chained inside one workflow run.
 
 ## Signing caveat

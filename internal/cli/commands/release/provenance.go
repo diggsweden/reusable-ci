@@ -41,11 +41,9 @@ const flagExternalParametersJSON = "external-parameters-json"
 // checksums file, emitting the JSON only; signing (cosign sign-blob) is a
 // separate step.
 //
-// The predicate is forge-neutral — the same shape the container path emits via
-// `container attest` — and uses no forge attestation API, so it works on any
-// forge whose provider can resolve the event context (repository, ref, commit)
-// and degrades on none. --profile selects the statement's builder identity:
-// generic by default, forgejo-actions to reproduce forgejo-ci's shipped shape.
+// Generic provenance uses the same runner-attested source and identity as
+// `container attest`, without a forge attestation API. The forgejo-actions
+// profile preserves forgejo-ci's shipped provider-derived source/builder shape.
 func provenanceCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "provenance",
@@ -53,10 +51,12 @@ func provenanceCmd() *cli.Command {
 		Description: `Reads GoReleaser-format checksums and emits a signed-ready in-toto
 Statement (SLSA Provenance v1.0). Sign the output with cosign sign-blob.
 
-Context (repository, ref, commit) is read from the active provider; the
-workflow, run id, and build timestamp come from flags/env. The build
-timestamp defaults to $SOURCE_DATE_EPOCH for reproducibility. Every flag
-may also be fed from the $REUSABLE_CI_PLAN plan file under the
+Generic context (repository, ref, commit, builder and run) comes from the
+active runner's attested environment, independently of --provider. Unknown
+local identity is not inferred; generation requires a CI source and builder.
+The forgejo-actions profile preserves provider-derived legacy source/builder
+identity. Build timestamps come from flags or $SOURCE_DATE_EPOCH.
+Every flag may also be fed from the $REUSABLE_CI_PLAN plan file under the
 "release provenance" scope (flag > plan > env > default).
 
 EXAMPLE:
@@ -93,9 +93,21 @@ EXAMPLE:
 					return fmt.Errorf("provenance: --%s: %w", flagExternalParametersJSON, err)
 				}
 
-				evt, err := d.Provider.ResolveContext(ctx)
-				if err != nil {
-					return err
+				repoURL, ref, sha := cienv.ProvenanceSource()
+				builderID := cienv.ProvenanceBuilderID()
+
+				if profile == apprelease.ProvenanceProfileForgejoActions {
+					// Preserve the explicitly selected compatibility profile;
+					// target metadata must not feed the generic trust identity.
+					evt, contextErr := d.Provider.ResolveContext(ctx)
+					if contextErr != nil {
+						return contextErr
+					}
+
+					repoURL, ref, sha = evt.RepoURL, evt.RefName, evt.SHA
+					builderID = forgejoActionsBuilderID(repoURL, ref, cmd.String("workflow"))
+				} else if repoURL == "" {
+					return fmt.Errorf("provenance: runner repository URL is unknown: %w", errs.ErrMissingInput)
 				}
 
 				startedOn, err := resolveStartedOn(ctx, git.New(), cmd.String("started-on"), cmd.String("started-on-commit"))
@@ -108,20 +120,15 @@ EXAMPLE:
 					return err
 				}
 
-				builderID := cienv.ProvenanceBuilderID()
-				if profile == apprelease.ProvenanceProfileForgejoActions {
-					builderID = forgejoActionsBuilderID(evt.RepoURL, evt.RefName, cmd.String("workflow"))
-				}
-
 				out, err := apprelease.GenerateProvenance(apprelease.ProvenanceInput{
 					Checksums:     bytes.NewReader(checksums),
 					GoSum:         openGoSum(cmd.String("go-sum")),
-					RepositoryURL: evt.RepoURL,
-					Ref:           evt.RefName,
-					SHA:           evt.SHA,
+					RepositoryURL: repoURL,
+					Ref:           ref,
+					SHA:           sha,
 					// Generic provenance uses the same forge-neutral builder /
 					// invocation identity as containers. The forgejo-actions profile
-					// overrides builderID above to match forgejo-ci's shipped shape.
+					// overrides builderID above to match the provider-specific legacy shape.
 					BuilderID:          builderID,
 					InvocationID:       cienv.ProvenanceInvocationID(),
 					StartedOn:          startedOn,
@@ -144,6 +151,7 @@ EXAMPLE:
 					keyRef:     cmd.String("key"),
 					oidcIssuer: cmd.String("oidc-issuer"),
 					bundle:     cmd.String("bundle"),
+					endpoints:  signflags.ReadEndpoints(cmd),
 				})
 			})
 		},
@@ -158,6 +166,11 @@ type signProvenanceInput struct {
 	keyRef     string
 	oidcIssuer string
 	bundle     string
+	// endpoints are the self-hosted Sigstore overrides signflags.Cosign
+	// declares (--fulcio-url / --rekor-url / --trusted-root). They were
+	// declared here and read nowhere, so a self-hosted operator's provenance
+	// was silently signed against the public CA and log.
+	endpoints signflags.Endpoints
 }
 
 // signProvenance signs the written provenance statement with cosign
@@ -193,18 +206,15 @@ func signProvenance(ctx context.Context, in signProvenanceInput) error {
 		return err
 	}
 
-	adapter := cosign.New()
-	if allow := provenanceSignAllow(in.keyRef); allow != nil {
-		adapter = cosign.NewIsolated(allow...)
-	}
-
-	return adapter.SignBlob(ctx, blob, os.Stderr)
+	return cosign.ForKeyRef(in.keyRef).SignBlob(ctx, blob, os.Stderr)
 }
 
 // provenanceSignBlobInput maps the method/key decision onto a cosign
 // SignBlobInput. A bare --key with no --method is treated as kms
 // (cosign --key) for backward compatibility. gpg is rejected — OpenPGP
-// signs differently and is not a cosign blob backend.
+// signs differently and is not a cosign blob backend. The Sigstore
+// endpoints ride along for keyless signing and, as the `release sign`
+// signer already enforces, --fulcio-url / --rekor-url are refused for kms.
 func provenanceSignBlobInput(in signProvenanceInput, bundle string) (cosign.SignBlobInput, error) {
 	blob := cosign.SignBlobInput{Artifact: in.output, BundlePath: bundle}
 
@@ -223,36 +233,26 @@ func provenanceSignBlobInput(in signProvenanceInput, bundle string) (cosign.Sign
 	case domainrelease.SignMethodSigstore:
 		blob.Keyless = true
 		blob.OIDCIssuer = in.oidcIssuer
+		blob.FulcioURL = in.endpoints.FulcioURL
+		blob.RekorURL = in.endpoints.RekorURL
+		blob.TrustedRootPath = in.endpoints.TrustedRootPath
 	case domainrelease.SignMethodKMS:
 		if in.keyRef == "" {
 			return blob, fmt.Errorf("provenance: --method=kms requires --key: %w", errs.ErrUsage)
 		}
 
+		if in.endpoints.FulcioURL != "" || in.endpoints.RekorURL != "" {
+			return blob, fmt.Errorf("provenance: --fulcio-url and --rekor-url are forbidden for --method=kms: %w", errs.ErrUsage)
+		}
+
 		blob.KeyRef = in.keyRef
+		blob.TrustedRootPath = in.endpoints.TrustedRootPath
 	default: // gpg or any non-cosign-blob backend
 		return blob, fmt.Errorf("provenance: --method %q cannot sign a blob with cosign (use sigstore or kms): %w", in.method, errs.ErrUsage)
 	}
 
 	return blob, nil
 }
-
-// provenanceSignAllow returns the secret env vars cosign may read when
-// signing with keyRef, or nil when no isolation applies. For an
-// env://VAR key, only that var and COSIGN_PASSWORD are allowed; KMS,
-// file, and keyless refs return nil (they need their own credential env,
-// so isolating them would break signing).
-func provenanceSignAllow(keyRef string) []string {
-	v, ok := strings.CutPrefix(keyRef, "env://")
-	if !ok || v == "" {
-		return nil
-	}
-
-	return []string{v, cosignPasswordEnv}
-}
-
-// cosignPasswordEnv is the env var cosign reads for the signing-key
-// passphrase; always allowed alongside an env:// signing key.
-const cosignPasswordEnv = "COSIGN_PASSWORD"
 
 type commitUnixTimer interface {
 	CommitUnixTime(ctx context.Context, ref string) (string, error)

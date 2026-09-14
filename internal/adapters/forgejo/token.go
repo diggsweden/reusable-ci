@@ -6,7 +6,6 @@ package forgejo
 import (
 	"context"
 	"fmt"
-	"sync"
 
 	"code.gitea.io/sdk/gitea"
 
@@ -66,33 +65,21 @@ func (p *Provider) ValidateBotPermissions(ctx context.Context, repo string) (*pr
 		return nil, err
 	}
 
-	var (
-		bp provider.BotPermissions
-		wg sync.WaitGroup
+	return provider.ProbeBotPermissions(
+		func() error {
+			_, resp, err := client.GetMyUserInfo()
+
+			return classifyErr(resp, err)
+		},
+		func() error {
+			_, resp, err := client.GetRepo(owner, name)
+
+			return classifyErr(resp, err)
+		},
+		func() error {
+			_, resp, err := client.ListRepoBranches(owner, name, gitea.ListRepoBranchesOptions{})
+
+			return classifyErr(resp, err)
+		},
 	)
-
-	wg.Add(3)
-
-	go func() {
-		defer wg.Done()
-
-		_, _, e := client.GetMyUserInfo()
-		bp.UserAccessible = e == nil
-	}()
-	go func() {
-		defer wg.Done()
-
-		_, _, e := client.GetRepo(owner, name)
-		bp.RepoAccessible = e == nil
-	}()
-	go func() {
-		defer wg.Done()
-
-		_, _, e := client.ListRepoBranches(owner, name, gitea.ListRepoBranchesOptions{})
-		bp.BranchesAccessible = e == nil
-	}()
-
-	wg.Wait()
-
-	return &bp, nil
 }

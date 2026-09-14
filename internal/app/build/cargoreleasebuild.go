@@ -5,6 +5,7 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -20,6 +21,7 @@ type CargoReleaseBuildInput struct {
 	BinaryName string
 	Version    string
 	RefName    string
+	Commit     string
 	Platforms  string
 }
 
@@ -41,8 +43,8 @@ func CargoBuildSBOM(ctx context.Context, tool CargoTool, w, stderr io.Writer, di
 //
 // It is the Cargo sibling of GoReleaseBuild — the binary-owned build sequence
 // (Design Rule 1). Metadata is threaded in-process (no $CI_OUTPUT round-trip);
-// the SBOM is best-effort (a failure warns + reports failure status but does not
-// fail the build), mirroring the workflow's `if: always()` status step.
+// enabled Build SBOM generation is mandatory: failures are summarized and
+// returned so the release fails closed.
 //
 //nolint:varnamelen // idiomatic short names (w/in) — testing/http/io conventions, matching the sibling build funcs.
 func CargoReleaseBuild(ctx context.Context, summarySink ci.SummarySink, tool CargoTool, w, stderr io.Writer, in CargoReleaseBuildInput) error {
@@ -71,19 +73,29 @@ func CargoReleaseBuild(ctx context.Context, summarySink ci.SummarySink, tool Car
 
 	outcome := outcomeSkipped
 
+	var generationErr error
+
 	if in.EnableBuildSBOM {
 		outcome = outcomeSuccess
 		if err := CargoBuildSBOM(ctx, tool, w, stderr, in.Dir); err != nil {
 			outcome = outcomeFailure
-			_, _ = fmt.Fprintf(stderr, "WARN: cargo Build SBOM generation failed (continuing): %v\n", err)
+			generationErr = fmt.Errorf("cargo Build SBOM generation failed: %w", err)
 		}
 	}
 
+	if generationErr != nil {
+		return errors.Join(generationErr, appsummary.SBOMCountStatus(ctx, summarySink, appsummary.SBOMCountStatusInput{
+			Kind: "cargo", Outcome: outcome, WorkDir: defaultCargoDir(in.Dir),
+		}))
+	}
+
 	if err := CargoBuildBinaries(ctx, tool, w, stderr, CargoBuildBinariesInput{
-		Dir:        in.Dir,
-		BinaryName: meta.binaryName,
-		Platforms:  in.Platforms,
-		Version:    meta.version,
+		Dir:             in.Dir,
+		BinaryName:      meta.binaryName,
+		CrateBinaryName: meta.crateBinaryName,
+		Platforms:       in.Platforms,
+		Version:         meta.version,
+		Commit:          in.Commit,
 	}); err != nil {
 		return fmt.Errorf("build binaries: %w", err)
 	}

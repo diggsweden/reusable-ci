@@ -7,12 +7,17 @@ package git_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	gocrypto "github.com/ProtonMail/go-crypto/openpgp"
+
 	adaptergit "github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domaingit "github.com/diggsweden/reusable-ci/v3/internal/domain/git"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/isolatedgit"
@@ -25,14 +30,16 @@ func newRepo(t *testing.T) (*adaptergit.Repo, *isolatedgit.Repo) {
 	return &adaptergit.Repo{Dir: ig.Dir}, ig
 }
 
-func TestNewAndRunStdin(t *testing.T) {
+func TestRunStdin_PipesInputToGit(t *testing.T) {
 	r := adaptergit.New()
 	out, err := r.RunStdin(context.Background(), "hello", "hash-object", "--stdin")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out) != 40 {
-		t.Errorf("hash length = %d, want 40 (%q)", len(out), out)
+	// The blob sha of exactly "hello". A length check would also pass if
+	// stdin never reached git and it hashed an empty object.
+	if want := "b6fc4c620b67d95f953a5c1c1230aaab5db5a1b0"; out != want {
+		t.Errorf("hash-object --stdin = %q, want %q (the blob sha of %q)", out, want, "hello")
 	}
 }
 
@@ -46,7 +53,7 @@ func TestConfig_WritesLocalConfig(t *testing.T) {
 	}
 }
 
-func TestAddPathspecsAndHasStagedChanges(t *testing.T) {
+func TestAddPathspecsAndHasStagedChanges_ReflectTheIndex(t *testing.T) {
 	r, ig := newRepo(t)
 	ctx := context.Background()
 
@@ -73,7 +80,7 @@ func TestAddPathspecsAndHasStagedChanges(t *testing.T) {
 	}
 }
 
-func TestCommitAndCommitInfo(t *testing.T) {
+func TestCommitAndCommitInfo_RoundTripAuthorMessageAndSignoff(t *testing.T) {
 	r, ig := newRepo(t)
 	ctx := context.Background()
 
@@ -105,7 +112,27 @@ func TestCommitAndCommitInfo(t *testing.T) {
 	}
 }
 
-func TestRefTagAndPushHelpers(t *testing.T) {
+// TestCreateTag_RefusesToMoveAnExistingTag pins the create-once rule. The
+// adapter never passes -f, so re-tagging is an error rather than a silent
+// move: a released tag that changes what it points at invalidates every
+// signature and attestation already made against it.
+//
+// Extracted from the helper smoke test below, where it was one assertion among
+// a dozen and any earlier failure would have skipped it.
+func TestCreateTag_RefusesToMoveAnExistingTag(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := context.Background()
+
+	if err := r.CreateTag(ctx, "v1.1.0", "HEAD", false); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.CreateTag(ctx, "v1.1.0", "HEAD", false); err == nil {
+		t.Error("CreateTag of an existing tag must error; a tag is never moved")
+	}
+}
+
+func TestRefTagAndPushHelpers_AgreeAfterATagAndPush(t *testing.T) {
 	r, ig := newRepo(t)
 	ctx := context.Background()
 
@@ -113,14 +140,8 @@ func TestRefTagAndPushHelpers(t *testing.T) {
 	ig.AddTag("v1.0.0", "release")
 	second := ig.AddCommit("second commit")
 
-	// CreateTag is create-once at the given ref (HEAD here).
 	if err := r.CreateTag(ctx, "v1.1.0", "HEAD", false); err != nil {
 		t.Fatal(err)
-	}
-
-	// Creating the same tag again must error — no -f, a tag is never moved.
-	if err := r.CreateTag(ctx, "v1.1.0", "HEAD", false); err == nil {
-		t.Fatal("CreateTag of an existing tag must error (create-once)")
 	}
 
 	if got, err := r.TagExists(ctx, "v1.1.0"); err != nil || !got {
@@ -160,15 +181,22 @@ func TestRefTagAndPushHelpers(t *testing.T) {
 	if err := r.PushTagNoForce(ctx, "v1.1.0", runcontext.Credential{}); err != nil {
 		t.Fatal(err)
 	}
-	remoteTag := ig.Git("ls-remote", "--tags", "origin", "v1.1.0")
-	if remoteTag == "" || strings.Contains(remoteTag, first) {
-		t.Errorf("remote tag output = %q", remoteTag)
+	// Unpatterned, so the peeled line is listed too: the annotated tag
+	// object's own sha says nothing about which commit was published, and
+	// only the "^{}" entry does.
+	remoteTag := ig.Git("ls-remote", "--tags", "origin")
+	if !strings.Contains(remoteTag, second+"\trefs/tags/v1.1.0^{}") {
+		t.Errorf("remote tag does not peel to the tagged commit %q:\n%s", second, remoteTag)
+	}
+
+	if strings.Contains(remoteTag, first+"\trefs/tags/v1.1.0") {
+		t.Errorf("remote v1.1.0 names the first commit:\n%s", remoteTag)
 	}
 }
 
-// TestRemoteURL returns origin's configured URL, which Push scopes its
+// TestRemoteURL_ReturnsOriginsConfiguredURL returns origin's configured URL, which Push scopes its
 // transient auth header to.
-func TestRemoteURL(t *testing.T) {
+func TestRemoteURL_ReturnsOriginsConfiguredURL(t *testing.T) {
 	ctx := context.Background()
 
 	r, ig := newRepo(t)
@@ -221,22 +249,30 @@ func TestTagsPointingAt_FindsCollision(t *testing.T) {
 	r, ig := newRepo(t)
 	sha := ig.HeadSHA()
 	ig.AddTag("v1.0.0", "release v1.0.0")
-	ig.AddTag("v1.0.0-alias", "alias")
+	ig.Git("tag", "v1.0.0-alias")
 
 	tags, err := r.TagsPointingAt(context.Background(), sha)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantSet := map[string]bool{"v1.0.0": false, "v1.0.0-alias": false}
-	for _, tag := range tags {
-		if _, ok := wantSet[tag]; ok {
-			wantSet[tag] = true
+	for _, want := range []string{"v1.0.0", "v1.0.0-alias"} {
+		if !slices.Contains(tags, want) {
+			t.Errorf("missing tag %q in %v", want, tags)
 		}
 	}
-	for tag, found := range wantSet {
-		if !found {
-			t.Errorf("missing tag %q in %v", tag, tags)
-		}
+}
+
+func TestTagsPointingAt_IncludesAnnotatedReleaseRequestTag(t *testing.T) {
+	r, ig := newRepo(t)
+	sha := ig.HeadSHA()
+	ig.AddTag("release-request/v1.2.3", "authorise v1.2.3")
+
+	tags, err := r.TagsPointingAt(context.Background(), sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(tags, "release-request/v1.2.3") {
+		t.Fatalf("annotated release request missing from %v", tags)
 	}
 }
 
@@ -355,7 +391,7 @@ func TestCatFileTag_BodyContainsMessage(t *testing.T) {
 	}
 }
 
-func TestTaggerInfo(t *testing.T) {
+func TestTaggerInfo_ReturnsTheTaggerAndDate(t *testing.T) {
 	r, ig := newRepo(t)
 	ig.AddTag("v1.0.0", "release")
 	info, err := r.TaggerInfo(context.Background(), "v1.0.0")
@@ -399,26 +435,109 @@ func TestVerifyTagSignature_NoArmorReturnsNotOk(t *testing.T) {
 	}
 }
 
+// validPublicArmor is a well-formed public keyring, so the verification
+// outcome under test is reached instead of the keyring parse refusing first.
+func validPublicArmor(t *testing.T) []byte {
+	t.Helper()
+
+	entity, err := gocrypto.NewEntity("Release Bot", "ci", "bot@example.invalid", nil)
+	if err != nil {
+		t.Fatalf("NewEntity: %v", err)
+	}
+
+	return publicArmor(t, entity)
+}
+
+// TestVerifyTagSignature_UnsignedTagReturnsNotOk: an annotated but unsigned
+// tag verifies as not ok without an error. These two cases used a junk keyring
+// and had been failing on the keyring refusal since keyrings were validated
+// first, so neither outcome was being tested.
 func TestVerifyTagSignature_UnsignedTagReturnsNotOk(t *testing.T) {
 	r, ig := newRepo(t)
 	ig.AddTag("v1.0.0", "annotated, unsigned")
-	armor := []byte(`-----BEGIN PGP PUBLIC KEY BLOCK-----
 
-xj0EZGZGZBYJKwYBBAHaRw8BAQdAv/` + `/junk
------END PGP PUBLIC KEY BLOCK-----`)
-	_, _, ok, err := r.VerifyTagSignature(context.Background(), "v1.0.0", armor)
+	signer, fingerprint, ok, err := r.VerifyTagSignature(context.Background(), "v1.0.0", validPublicArmor(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok {
-		t.Errorf("unsigned tag should not verify; got ok=true")
+
+	if ok || signer != "" || fingerprint != "" {
+		t.Errorf("unsigned tag verified as (%v, %q, %q), want not ok", ok, signer, fingerprint)
 	}
 }
 
 func TestVerifyTagSignature_NonExistentTagErrors(t *testing.T) {
 	r, _ := newRepo(t)
-	_, _, _, err := r.VerifyTagSignature(context.Background(), "nope", []byte("anything"))
-	if err == nil {
-		t.Error("expected error for missing tag")
+
+	signer, fingerprint, ok, err := r.VerifyTagSignature(context.Background(), "nope", validPublicArmor(t))
+	if !errors.Is(err, errs.ErrValidation) || ok || signer != "" || fingerprint != "" {
+		t.Errorf("got (%v, %q, %q, %v), want not ok with ErrValidation for a tag that does not exist", ok, signer, fingerprint, err)
+	}
+}
+
+// TestVerifyTagSignature_MalformedKeyringIsMalformedInput keeps the refusal
+// the two tests above used to trip over by accident, as its own case.
+func TestVerifyTagSignature_MalformedKeyringIsMalformedInput(t *testing.T) {
+	r, ig := newRepo(t)
+	ig.AddTag("v1.0.0", "annotated, unsigned")
+
+	signer, fingerprint, ok, err := r.VerifyTagSignature(context.Background(), "v1.0.0", []byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\n\njunk\n-----END PGP PUBLIC KEY BLOCK-----"))
+	if !errors.Is(err, errs.ErrMalformedInput) || ok || signer != "" || fingerprint != "" {
+		t.Errorf("got (%v, %q, %q, %v), want not ok with ErrMalformedInput", ok, signer, fingerprint, err)
+	}
+}
+
+// TestTagMetadata_ExactMessagesTaggersAndTagSets pins the values the tag
+// readers return, which the tests above only probed with Contains and
+// non-empty checks: a multi-line annotation must come back line for line, the
+// tagger as name and address with a date taken from the fixed committer date
+// (a lightweight tag has neither), and the tag lists must hold exactly the
+// matching names -- a pattern excludes other tags, and a tag on another commit
+// is not "pointing at" this one.
+func TestTagMetadata_ExactMessagesTaggersAndTagSets(t *testing.T) {
+	r, ig := newRepo(t)
+	ctx := context.Background()
+
+	old := ig.HeadSHA()
+	ig.Git("tag", "v0.9.0")
+
+	head := ig.AddCommit("second")
+
+	t.Setenv("GIT_COMMITTER_DATE", "2026-03-04T05:06:07+02:00")
+	ig.AddTag("v1.0.0", "Release 1.0.0\n\nfirst paragraph line\n  indented line")
+	ig.AddTag("release-request/v1.0.0", "authorise")
+	ig.Git("tag", "v1.0.0-alias")
+
+	msg, err := r.TagMessage(ctx, "v1.0.0")
+	if err != nil || msg != "Release 1.0.0\n\nfirst paragraph line\n  indented line" {
+		t.Errorf("message = %q (err %v)", msg, err)
+	}
+
+	info, err := r.TaggerInfo(ctx, "v1.0.0")
+	if err != nil || info.Tagger != "Test Bot <bot@example.invalid>" || info.Date != "2026-03-04 05:06:07 +0200" {
+		t.Errorf("tagger = %+v (err %v)", info, err)
+	}
+
+	if light, lightErr := r.TaggerInfo(ctx, "v1.0.0-alias"); lightErr != nil || light != (domaingit.TaggerInfo{}) {
+		t.Errorf("lightweight tagger = %+v (err %v), want empty", light, lightErr)
+	}
+
+	if tags, listErr := r.ListTags(ctx, "v1*"); listErr != nil || !slices.Equal(tags, []string{"v1.0.0", "v1.0.0-alias"}) {
+		t.Errorf("ListTags(v1*) = %q (err %v)", tags, listErr)
+	}
+
+	pointing, err := r.TagsPointingAt(ctx, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	slices.Sort(pointing)
+
+	if want := []string{"release-request/v1.0.0", "v1.0.0", "v1.0.0-alias"}; !slices.Equal(pointing, want) {
+		t.Errorf("TagsPointingAt(head) = %q, want %q", pointing, want)
+	}
+
+	if older, olderErr := r.TagsPointingAt(ctx, old); olderErr != nil || !slices.Equal(older, []string{"v0.9.0"}) {
+		t.Errorf("TagsPointingAt(old) = %q (err %v)", older, olderErr)
 	}
 }

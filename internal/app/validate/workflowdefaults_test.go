@@ -18,6 +18,7 @@ import (
 func TestWorkflowInputDefaults_Success(t *testing.T) {
 	mem := testfs.NewMemory(t)
 	mem.WriteFile(".github/workflows/ok.yml", []byte("name: test\non:\n  workflow_call:\n    inputs:\n      foo:\n        default: literal\n"))
+	mem.WriteFile(".github/workflows/unrelated.yaml", []byte("on:\n  workflow_dispatch:\n    inputs:\n      foo:\n        default: ${{ github.ref_name }}\njobs:\n  test:\n    env:\n      default: ${{ secrets.BAD }}\n"))
 	mem.WriteFile(".github/workflows/nested/ignored.yml", []byte("      default: ${{ secrets.BAD }}\n"))
 
 	var out bytes.Buffer
@@ -56,5 +57,31 @@ func TestWorkflowInputDefaults_ReportsExpressions(t *testing.T) {
 
 	if !strings.Contains(text, "default: ${{ github.ref_name }}") {
 		t.Errorf("missing offending line in:\n%s", text)
+	}
+}
+
+func TestWorkflowInputDefaults_ScansYAMLAndMultilineDefaults(t *testing.T) {
+	mem := testfs.NewMemory(t)
+	body := strings.Join([]string{
+		"on:",
+		"  workflow_call:",
+		"    inputs:",
+		"      foo:",
+		"        description: ${{ github.ref_name }}",
+		"        default: >-",
+		"          prefix-${{ github.ref_name }}",
+	}, "\n") + "\n"
+	mem.WriteFile(".github/workflows/bad.yaml", []byte(body))
+
+	var out bytes.Buffer
+
+	err := appvalidate.WorkflowInputDefaults(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.WorkflowInputDefaultsInput{Root: ".", FS: mem.FS()})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+
+	if text := out.String(); !strings.Contains(text, "file=.github/workflows/bad.yaml,line=6") ||
+		!strings.Contains(text, "default: >-") {
+		t.Errorf("missing multiline .yaml annotation in:\n%s", text)
 	}
 }

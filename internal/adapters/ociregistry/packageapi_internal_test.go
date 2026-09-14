@@ -4,16 +4,24 @@
 package ociregistry
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/crane"
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
 	"github.com/google/go-containerregistry/pkg/v1/random"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
@@ -54,10 +62,10 @@ func localRepo(t *testing.T) (string, string, string) {
 	return host + "/owner", "project-base", host + "/owner/project-base"
 }
 
-// TestListContainerPackageVersions proves the lister answers from a plain OCI
+// TestListContainerPackageVersions_ReturnsEveryTagInTheRepository proves the lister answers from a plain OCI
 // registry, so a local registry can serve the same base-image lifecycle a
 // forge package API does.
-func TestListContainerPackageVersions(t *testing.T) {
+func TestListContainerPackageVersions_ReturnsEveryTagInTheRepository(t *testing.T) {
 	t.Parallel()
 
 	owner, name, repo := localRepo(t)
@@ -77,9 +85,9 @@ func TestListContainerPackageVersions(t *testing.T) {
 	}
 }
 
-// TestDeleteTagRemovesOnlyTheNamedTag: the ordinary retention case, where each
+// TestDeleteTag_RemovesOnlyTheNamedTag: the ordinary retention case, where each
 // content-addressed base tag has its own manifest.
-func TestDeleteTagRemovesOnlyTheNamedTag(t *testing.T) {
+func TestDeleteTag_RemovesOnlyTheNamedTag(t *testing.T) {
 	t.Parallel()
 
 	owner, name, repo := localRepo(t)
@@ -103,16 +111,16 @@ func TestDeleteTagRemovesOnlyTheNamedTag(t *testing.T) {
 	}
 }
 
-// TestDeleteTagRefusesSharedManifest is the reason this adapter exists in this
-// shape. The distribution spec has no delete-tag: DELETE removes the manifest
-// and every tag on it. A forge package API deletes one version and leaves its
-// siblings, so the same call is safe there and destructive here — and staging
-// plus final tags routinely share a manifest.
+// TestDeleteTag_RefusesSharedManifest is the reason this adapter exists in this
+// shape. A forge package API deletes one version and leaves its siblings, but
+// registries differ on DELETE by tag: some remove only the tag, some refuse it
+// and some remove the manifest and every tag on it. Staging plus final tags
+// routinely share a manifest, so the known shared state is refused.
 //
 // Refusing is the safe direction: a base-image tag is content-addressed and
 // has no siblings, so a shared manifest means the caller is not pruning what
 // it thinks it is.
-func TestDeleteTagRefusesSharedManifest(t *testing.T) {
+func TestDeleteTag_RefusesSharedManifest(t *testing.T) {
 	t.Parallel()
 
 	owner, name, repo := localRepo(t)
@@ -150,26 +158,125 @@ func TestDeleteTagRefusesSharedManifest(t *testing.T) {
 	}
 }
 
-// TestDeleteTagIsIdempotent: retention runs repeatedly, and an already-absent
-// tag is the desired state rather than an error.
-func TestDeleteTagIsIdempotent(t *testing.T) {
+// TestDeleteTag_ASiblingPublishedAfterThePreflightSurvives interleaves a
+// publication between the shared-manifest preflight and the deletion: the
+// registry tags the same manifest as "sibling" just before it serves the
+// DELETE. The preflight cannot see that tag, so what keeps it is the request
+// itself naming the tag. Exactly one DELETE is sent and it addresses
+// manifests/prune, never the digest both tags now serve, and the sibling still
+// resolves to that manifest afterwards.
+func TestDeleteTag_ASiblingPublishedAfterThePreflightSurvives(t *testing.T) {
 	t.Parallel()
 
-	_, _, repo := localRepo(t)
+	var (
+		mu        sync.Mutex
+		deletes   []string
+		manifest  []byte
+		mediaType string
+	)
+
+	inner := registry.New()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			mu.Lock()
+
+			deletes = append(deletes, r.URL.Path)
+			body, contentType := manifest, mediaType
+			mu.Unlock()
+
+			put := httptest.NewRequestWithContext(r.Context(), http.MethodPut, "/v2/owner/project-base/manifests/sibling", bytes.NewReader(body))
+			put.Header.Set("Content-Type", contentType)
+
+			published := httptest.NewRecorder()
+			inner.ServeHTTP(published, put)
+
+			if published.Code != http.StatusCreated {
+				t.Errorf("publishing the sibling: status %d: %s", published.Code, published.Body)
+			}
+		}
+
+		inner.ServeHTTP(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	repo := strings.TrimPrefix(srv.URL, "http://") + "/owner/project-base"
+	digest := pushRandomImage(t, repo, "prune")
+
+	raw, err := crane.Manifest(repo+":prune", crane.Insecure)
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+
+	head, err := crane.Head(repo+":prune", crane.Insecure)
+	if err != nil {
+		t.Fatalf("head manifest: %v", err)
+	}
+
+	mu.Lock()
+	manifest, mediaType = raw, string(head.MediaType)
+	mu.Unlock()
+
+	if err := New().DeleteTag(context.Background(), repo+":prune"); err != nil {
+		t.Fatalf("DeleteTag() error = %v", err)
+	}
+
+	if want := []string{"/v2/owner/project-base/manifests/prune"}; !slices.Equal(deletes, want) {
+		t.Errorf("DELETE requests = %v, want %v", deletes, want)
+	}
+
+	if got, err := crane.Digest(repo+":sibling", crane.Insecure); err != nil || got != digest {
+		t.Errorf("sibling digest = %q (err %v), want %s", got, err, digest)
+	}
+
+	if _, err := crane.Digest(repo+":prune", crane.Insecure); err == nil {
+		t.Error("prune still resolves after DeleteTag")
+	}
+}
+
+// TestDeleteTag_IsIdempotent: retention runs repeatedly, and an already-absent
+// tag is the desired state rather than an error — whether it was never there
+// or this run removed it a moment ago.
+func TestDeleteTag_IsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	owner, name, repo := localRepo(t)
 
 	pushRandomImage(t, repo, "present")
 
 	adapter := New()
+	ctx := context.Background()
 
-	if err := adapter.DeleteTag(context.Background(), repo+":absent"); err != nil {
+	// Never existed.
+	if err := adapter.DeleteTag(ctx, repo+":absent"); err != nil {
 		t.Errorf("DeleteTag() on a missing tag = %v, want nil", err)
+	}
+
+	// A tag that did exist, removed twice. The repeat is the half that
+	// makes this idempotence rather than tolerance of a typo.
+	if err := adapter.DeleteTag(ctx, repo+":present"); err != nil {
+		t.Fatalf("first DeleteTag() = %v, want nil", err)
+	}
+
+	if err := adapter.DeleteTag(ctx, repo+":present"); err != nil {
+		t.Errorf("second DeleteTag() = %v, want nil", err)
+	}
+
+	// And the tag really is gone: a delete that quietly did nothing would
+	// satisfy every error check above.
+	tags, err := adapter.ListContainerPackageVersions(ctx, owner, name)
+	if err != nil {
+		t.Fatalf("ListContainerPackageVersions() error = %v", err)
+	}
+
+	if len(tags) != 0 {
+		t.Errorf("tags after delete = %v, want none", tags)
 	}
 }
 
-// TestDeleteTagRejectsDigestPinnedRef: this adapter deletes tags. A
+// TestDeleteTag_RejectsDigestPinnedRef: this adapter deletes tags. A
 // digest-pinned ref would remove the manifest itself, which is what every
 // caller here is trying to avoid.
-func TestDeleteTagRejectsDigestPinnedRef(t *testing.T) {
+func TestDeleteTag_RejectsDigestPinnedRef(t *testing.T) {
 	t.Parallel()
 
 	_, _, repo := localRepo(t)
@@ -183,5 +290,47 @@ func TestDeleteTagRejectsDigestPinnedRef(t *testing.T) {
 
 	if !errors.Is(err, errs.ErrUsage) {
 		t.Errorf("error = %v, want errs.ErrUsage", err)
+	}
+}
+
+// TestClassifyRegistryError_MapsEveryClass pins the error class for each way a
+// registry call fails. Only 404 and the shared-manifest refusal were exercised,
+// through a live in-process registry; the auth, throttling, other 4xx, 5xx,
+// status-less transport and malformed-reference branches had no case. A
+// reference the library refuses to parse used to be reported as the registry
+// being unavailable, which CI treats as worth retrying.
+//
+// Pagination is not tabled here: go-containerregistry's remote.List follows
+// the registry's Link headers, and this adapter adds no paging of its own.
+func TestClassifyRegistryError_MapsEveryClass(t *testing.T) {
+	t.Parallel()
+
+	_, badName := name.NewRepository("Invalid Repository/With Spaces")
+	if badName == nil {
+		t.Fatal("fixture: the reference parsed")
+	}
+
+	status := func(code int) error {
+		return fmt.Errorf("GET /v2/owner/app/tags/list: %w", &transport.Error{StatusCode: code})
+	}
+
+	for label, tc := range map[string]struct {
+		err  error
+		want error
+	}{
+		"401 unauthorized":       {err: status(http.StatusUnauthorized), want: errs.ErrPermissionDenied},
+		"403 forbidden":          {err: status(http.StatusForbidden), want: errs.ErrPermissionDenied},
+		"404 not found":          {err: status(http.StatusNotFound), want: errs.ErrMissingInput},
+		"429 throttled":          {err: status(http.StatusTooManyRequests), want: errs.ErrRateLimited},
+		"400 bad request":        {err: status(http.StatusBadRequest), want: errs.ErrValidation},
+		"405 method not allowed": {err: status(http.StatusMethodNotAllowed), want: errs.ErrValidation},
+		"500 server error":       {err: status(http.StatusInternalServerError), want: errs.ErrDependencyUnavailable},
+		"503 unavailable":        {err: status(http.StatusServiceUnavailable), want: errs.ErrDependencyUnavailable},
+		"connection refused":     {err: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}, want: errs.ErrDependencyUnavailable},
+		"malformed reference":    {err: badName, want: errs.ErrUsage},
+	} {
+		if got := classifyRegistryError(tc.err); !errors.Is(got, tc.want) {
+			t.Errorf("%s: class = %v, want %v", label, got, tc.want)
+		}
 	}
 }

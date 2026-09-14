@@ -35,13 +35,13 @@ func commitChangelogReleaseCmd() *cli.Command {
 			&cli.StringFlag{Name: flagTag, Required: true, Sources: cli.EnvVars("RELEASE_TAG", "TAG_NAME"), Usage: "final stable release tag to create (vMAJOR.MINOR.PATCH)"},
 			&cli.StringFlag{Name: "repository", Required: true, Sources: cienv.Repository(), Usage: "repository in owner/name form"},
 			&cli.StringFlag{Name: flagBranch, Value: "main", Sources: cli.EnvVars("RELEASE_BRANCH", "BRANCH"), Usage: "branch to push the signed changelog commit to"},
-			&cli.StringFlag{Name: "changelog", Value: "CHANGELOG.md", Sources: cli.EnvVars("CHANGELOG_PATH"), Usage: "pre-generated changelog file to commit"},
+			&cli.StringFlag{Name: "changelog", Value: defaultChangelogFile, Sources: cli.EnvVars("CHANGELOG_PATH"), Usage: "pre-generated changelog file to commit"},
 			&cli.StringFlag{Name: "commit-message-file", Value: defaultCommitMessageFile, Sources: cli.EnvVars("COMMIT_MESSAGE_FILE"), Usage: "pre-generated commit message file used with git commit -F"},
 			&cli.StringFlag{Name: "author-name", Sources: cli.EnvVars("GIT_USER_NAME", "COMMIT_AUTHOR_NAME"), Usage: "git user.name for the release bump commit (required; no org default)"},
 			&cli.StringFlag{Name: "author-email", Sources: cli.EnvVars("GIT_USER_EMAIL", "COMMIT_AUTHOR_EMAIL"), Usage: "git user.email for the release bump commit (required; no org default)"},
 			&cli.StringFlag{Name: "private-key-file", Usage: "path to the OpenSSH private signing key (use '-' for stdin; defaults to $SSH_SIGNING_KEY)"},
 			&cli.StringFlag{Name: "git-url", Required: true, Sources: cli.EnvVars("RELEASE_GIT_URL"), Usage: "SSH origin URL in ssh://git@host[:port]/owner/repository.git form"},
-			&cli.StringFlag{Name: "host-key-type", Value: "ed25519", Sources: cli.EnvVars("RELEASE_GIT_HOST_KEY_TYPE"), Usage: "host key type passed to ssh-keyscan"},
+			&cli.StringFlag{Name: "host-key-type", Value: defaultHostKeyType, Sources: cli.EnvVars("RELEASE_GIT_HOST_KEY_TYPE"), Usage: "host key type passed to ssh-keyscan"},
 			&cli.StringFlag{Name: "host-key-fingerprint", Sources: cli.EnvVars("RELEASE_GIT_HOST_KEY_FINGERPRINT"), Usage: "expected SSH host key fingerprint, required (a trust anchor, never defaulted; get it with: ssh-keyscan [-p <port>] -t <type> <host> | ssh-keygen -lf -)"},
 			&cli.BoolFlag{Name: "no-sign", Usage: "skip final tag signing (intended for tests; production always signs)"},
 			&cli.BoolFlag{Name: "signed", Value: true, Sources: cli.EnvVars("TAG_RELEASE_SIGNED"), Usage: "create a signed final tag; set TAG_RELEASE_SIGNED=false for unsigned annotated test tags"},
@@ -81,9 +81,9 @@ func commitChangelogReleaseCmd() *cli.Command {
 					// the real run).
 					_, _ = fmt.Fprintln(os.Stderr, "[dry-run] skipping SSH signing key and host-key setup (commit and push are skipped)")
 
-					_, err := appversion.ChangelogRelease(ctx, repo, d.OutputSink, os.Stderr, in)
+					_, releaseErr := appversion.ChangelogRelease(ctx, repo, d.OutputSink, os.Stderr, in)
 
-					return err
+					return releaseErr
 				}
 
 				privateKey, err := secret.Resolve(cmd.String("private-key-file"), "SSH_SIGNING_KEY")
@@ -123,6 +123,10 @@ func commitChangelogReleaseCmd() *cli.Command {
 		},
 	}
 }
+
+// defaultHostKeyType is the SSH host key type scanned and pinned unless the
+// caller names another.
+const defaultHostKeyType = "ed25519"
 
 // setupChangelogReleaseSSH prepares an isolated SSH setup (signing key,
 // pinned known_hosts, ssh config) in a private temp dir and returns the
@@ -183,9 +187,13 @@ func setupChangelogReleaseSSH(ctx context.Context, privateKey, host string, port
 // against the expected value and writes the pinned known_hosts file inside
 // dir, returning the final known_hosts path.
 func pinChangelogReleaseHostKey(ctx context.Context, dir, host string, port int, keyType, expectedFingerprint string) (string, error) {
+	return pinScannedHostKey(ctx, dir, host, port, keyType, expectedFingerprint, runTool)
+}
+
+func pinScannedHostKey(ctx context.Context, dir, host string, port int, keyType, expectedFingerprint string, run func(context.Context, string, ...string) (string, error)) (string, error) {
 	knownHostsTmp := filepath.Join(dir, "known_hosts.tmp")
 
-	knownHosts, err := runTool(ctx, "ssh-keyscan", changelogReleaseKeyscanArgs(host, port, keyType)[1:]...)
+	knownHosts, err := run(ctx, "ssh-keyscan", changelogReleaseKeyscanArgs(host, port, keyType)[1:]...)
 	if err != nil {
 		return "", fmt.Errorf("commit-changelog: scan SSH host key: %w", err)
 	}
@@ -194,13 +202,13 @@ func pinChangelogReleaseHostKey(ctx context.Context, dir, host string, port int,
 		return "", fmt.Errorf("commit-changelog: write known_hosts: %w", writeErr)
 	}
 
-	fingerprintLine, err := runTool(ctx, "ssh-keygen", "-lf", knownHostsTmp)
+	fingerprintLine, err := run(ctx, "ssh-keygen", "-lf", knownHostsTmp)
 	if err != nil {
 		return "", fmt.Errorf("commit-changelog: fingerprint SSH host key: %w", err)
 	}
 
-	if actual := secondField(fingerprintLine); actual != expectedFingerprint {
-		return "", fmt.Errorf("commit-changelog: %s SSH host key fingerprint mismatch (got %s, want %s): %w", host, actual, expectedFingerprint, errs.ErrValidation)
+	if err := validateHostKeyFingerprints(fingerprintLine, expectedFingerprint); err != nil {
+		return "", err
 	}
 
 	knownHostsPath := filepath.Join(dir, "known_hosts")
@@ -209,6 +217,22 @@ func pinChangelogReleaseHostKey(ctx context.Context, dir, host string, port int,
 	}
 
 	return knownHostsPath, nil
+}
+
+func validateHostKeyFingerprints(output, expected string) error {
+	if strings.TrimSpace(output) == "" || expected == "" {
+		return fmt.Errorf("SSH host key fingerprints are required: %w", errs.ErrValidation)
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		// Both fingerprints are public and together tell a rotated host key
+		// from an interception, which is the operator's next decision.
+		if got := secondField(line); got != expected {
+			return fmt.Errorf("SSH host key fingerprint mismatch: scanned %s, pinned %s: %w", got, expected, errs.ErrValidation)
+		}
+	}
+
+	return nil
 }
 
 func changelogReleaseKeyscanArgs(host string, port int, keyType string) []string {

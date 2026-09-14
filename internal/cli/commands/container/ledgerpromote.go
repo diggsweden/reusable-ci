@@ -4,6 +4,7 @@
 package container
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -78,6 +79,7 @@ func ledgerPromoteCmd() *cli.Command {
 				stage:          stage,
 				journal:        cmd.String("journal"),
 				journalDirPerm: 0o755, //nolint:mnd // dist-style state dir; 0755 is conventional.
+				dryRun:         dryrun.Enabled(cmd),
 				errPrefix:      "ledger",
 				done:           fmt.Sprintf("ledger: promoted %d entr(y/ies) to stage %q", len(entries), stage.Name),
 				out:            os.Stderr,
@@ -97,6 +99,7 @@ type promotionRun struct {
 	stage          imageledger.Stage
 	journal        string      // empty: skip the journal write
 	journalDirPerm os.FileMode // mode for a created journal parent dir
+	dryRun         bool        // preview only: simulate copies and write no journal
 	errPrefix      string      // error/message prefix: "ledger" or "release images"
 	done           string      // success line printed after promotion
 	out            io.Writer   // success-line sink (stderr)
@@ -136,11 +139,52 @@ func runLedgerPromotion(ctx context.Context, run promotionRun) error {
 
 // writePromotionJournal plans the promotion and writes the journal file
 // when a journal path is set; with no journal path it is a no-op.
+//
+// A dry run writes nothing. The journal is the record of what was actually
+// published, and rollback deletes the tags it names: a preview that left one
+// behind was indistinguishable from a real promotion, so a later `rollback`
+// would act on a promotion that never happened and target the final and moving
+// tags — the moving tag being the one that still points at the previous, real
+// release.
 func writePromotionJournal(ctx context.Context, run promotionRun) error {
-	if run.journal == "" {
+	if run.journal == "" || run.dryRun {
 		return nil
 	}
 
+	if run.journal == cliio.StdSentinel {
+		return writeNewPromotionJournal(ctx, run)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(run.journal), run.journalDirPerm); err != nil {
+		return fmt.Errorf("%s: create dir for promotion journal %s: %w", run.errPrefix, run.journal, err)
+	}
+
+	return cliio.WithLock(run.journal, func() error { return reuseOrWritePromotionJournal(ctx, run) })
+}
+
+func reuseOrWritePromotionJournal(ctx context.Context, run promotionRun) error {
+	existing, err := os.ReadFile(run.journal) //nolint:gosec // operator-supplied journal path is the command's intended input.
+	if os.IsNotExist(err) || (err == nil && len(bytes.TrimSpace(existing)) == 0) {
+		return writeNewPromotionJournal(ctx, run)
+	}
+
+	if err != nil {
+		return fmt.Errorf("%s: read promotion journal %s: %w", run.errPrefix, run.journal, err)
+	}
+
+	records, err := imageledger.ParsePromotionJournal(existing)
+	if err != nil {
+		return fmt.Errorf("%s: existing promotion journal %s: %w", run.errPrefix, run.journal, err)
+	}
+
+	if err := imageledger.ValidatePromotionJournalIntent(records, run.entries, run.releaseTag, run.stage); err != nil {
+		return fmt.Errorf("%s: existing promotion journal %s does not match this promotion: %w", run.errPrefix, run.journal, err)
+	}
+
+	return nil
+}
+
+func writeNewPromotionJournal(ctx context.Context, run promotionRun) error {
 	records, err := imageledger.PlanReleasePromotionRollback(ctx, run.reg, run.entries, run.releaseTag, run.stage)
 	if err != nil {
 		return err
@@ -149,10 +193,6 @@ func writePromotionJournal(ctx context.Context, run promotionRun) error {
 	body, err := imageledger.MarshalPromotionJournal(records)
 	if err != nil {
 		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(run.journal), run.journalDirPerm); err != nil {
-		return fmt.Errorf("%s: create dir for promotion journal %s: %w", run.errPrefix, run.journal, err)
 	}
 
 	if err := cliio.WriteFile(run.journal, body, 0o600); err != nil {

@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provenance"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // imageDigestResolver is the registry surface ledger signing needs:
@@ -86,6 +88,10 @@ func SignLedgerImages(ctx context.Context, signer ledgerImageSigner, sbom ImageE
 		return err
 	}
 
+	if entryErr := validateLedgerSignEntries(in, constraints); entryErr != nil {
+		return entryErr
+	}
+
 	predicateDir, err := os.MkdirTemp("", "image-provenance-*")
 	if err != nil {
 		return fmt.Errorf("container ledger sign: create predicate dir: %w", err)
@@ -100,13 +106,22 @@ func SignLedgerImages(ctx context.Context, signer ledgerImageSigner, sbom ImageE
 		out:           out,
 		stderr:        stderr,
 		in:            in,
-		constraints:   constraints,
 		basePredicate: basePredicate,
 		predicateDir:  predicateDir,
 	}
 
+	plans := make([]ledgerSigningPlan, 0, len(in.Entries))
 	for idx, entry := range in.Entries {
-		if err := run.signEntry(ctx, idx, entry); err != nil {
+		plan, err := run.prepareEntry(ctx, idx, entry)
+		if err != nil {
+			return fmt.Errorf("container ledger sign: entry %d: %w", idx, err)
+		}
+
+		plans = append(plans, plan)
+	}
+
+	for idx, entry := range in.Entries {
+		if err := run.signEntry(ctx, entry, plans[idx]); err != nil {
 			return fmt.Errorf("container ledger sign: entry %d: %w", idx, err)
 		}
 	}
@@ -144,6 +159,28 @@ func validateSignLedgerImagesInput(signer ledgerImageSigner, sbom ImageEvidenceS
 	return nil
 }
 
+func validateLedgerSignEntries(in SignLedgerImagesInput, constraints ledgerSignConstraints) error {
+	if in.Method != domainrelease.SignMethodSigstore && in.Method != domainrelease.SignMethodKMS {
+		return fmt.Errorf("ledger signing requires sigstore or kms: %w", errs.ErrInvalidConfig)
+	}
+
+	seenSBOMs := make(map[string]bool, len(in.Entries))
+	for _, entry := range in.Entries {
+		if err := validateLedgerSignEntry(entry, in.ReleaseTag, constraints); err != nil {
+			return err
+		}
+
+		path := filepath.Clean(entry.SBOM)
+		if seenSBOMs[path] {
+			return fmt.Errorf("ledger entries share an SBOM output path: %w", errs.ErrValidation)
+		}
+
+		seenSBOMs[path] = true
+	}
+
+	return nil
+}
+
 // ledgerSignRun carries the resolved per-run state so each ledger entry can be
 // signed and attested without re-threading every dependency.
 type ledgerSignRun struct {
@@ -153,24 +190,67 @@ type ledgerSignRun struct {
 	out           io.Writer
 	stderr        io.Writer
 	in            SignLedgerImagesInput
-	constraints   ledgerSignConstraints
 	basePredicate []byte
 	predicateDir  string
 }
 
-// signEntry validates one ledger entry, signs its digest ref, and attaches the
-// SBOM and enriched provenance attestations.
-func (run ledgerSignRun) signEntry(ctx context.Context, idx int, entry imageledger.Entry) error {
-	if err := validateLedgerSignEntry(entry, run.in.ReleaseTag, run.constraints); err != nil {
-		return err
-	}
+type ledgerSigningPlan struct{ imageRef, predicatePath string }
 
+// prepareEntry resolves and prepares every local input without publication.
+func (run ledgerSignRun) prepareEntry(ctx context.Context, idx int, entry imageledger.Entry) (ledgerSigningPlan, error) {
 	imageRef, candidateTag, err := resolveLedgerSignRef(ctx, run.resolver, entry)
 	if err != nil {
-		return err
+		return ledgerSigningPlan{}, err
 	}
 
-	if err = SignImage(ctx, run.signer, run.out, SignImageInput{
+	request := domaincontainer.ImageSignRequest{ImageRef: imageRef, Recursive: run.in.Recursive, Keyless: run.in.Method == domainrelease.SignMethodSigstore, KeyRef: run.in.KeyRef, OIDCIssuer: run.in.OIDCIssuer, FulcioURL: run.in.FulcioURL, RekorURL: run.in.RekorURL, TrustedRootPath: run.in.TrustedRootPath}
+	if requestErr := request.Validate(); requestErr != nil {
+		return ledgerSigningPlan{}, requestErr
+	}
+
+	// Everything this entry can be refused for is settled before the
+	// first irreversible publish.
+	//
+	// Signing is not a local act: cosign writes a Rekor entry to the
+	// public transparency log on every method (ADR 0002 rule 5), and
+	// that entry is permanent and append-only. Both remaining checks are
+	// pure functions of inputs the run already holds -- a file hash, and
+	// a set of key names -- so neither needs anything signing produces.
+	// Running them after it meant a refused entry had already published
+	// a signature for an image whose SBOM pin did not match, or whose
+	// predicate declared a key the engine reserves. Now a refused entry
+	// leaves nothing behind.
+	//
+	// ADR 0002 rule 2 makes the signer re-validate every rule at its
+	// boundary rather than trusting the build side. Doing that before
+	// publishing is the same rule, applied in the order that lets it
+	// have an effect.
+	//
+	// When the entry declares no SBOM digest, ensureImageSBOM generates
+	// the SBOM rather than checking one. That is a local file write, not
+	// a publish, so it is safe on this side of the signature.
+	if err = ensureImageSBOM(ctx, run.sbom, run.stderr, imageRef, entry); err != nil {
+		return ledgerSigningPlan{}, err
+	}
+
+	if pathErr := validateLedgerSBOMPath(entry.SBOM, false); pathErr != nil {
+		return ledgerSigningPlan{}, pathErr
+	}
+
+	predicatePath, err := writeImagePredicate(run.predicateDir, idx, run.basePredicate, entry, imageRef, candidateTag)
+	if err != nil {
+		return ledgerSigningPlan{}, err
+	}
+
+	return ledgerSigningPlan{imageRef: imageRef, predicatePath: predicatePath}, nil
+}
+
+// signEntry consumes only a prepared plan; later entries cannot fail preflight
+// after this entry has already published a signature.
+func (run ledgerSignRun) signEntry(ctx context.Context, entry imageledger.Entry, plan ledgerSigningPlan) error {
+	imageRef, predicatePath := plan.imageRef, plan.predicatePath
+
+	if err := SignImage(ctx, run.signer, run.out, SignImageInput{
 		Image:           imageRef,
 		Method:          run.in.Method,
 		Recursive:       run.in.Recursive,
@@ -183,11 +263,7 @@ func (run ledgerSignRun) signEntry(ctx context.Context, idx int, entry imageledg
 		return err
 	}
 
-	if err = ensureImageSBOM(ctx, run.sbom, run.stderr, imageRef, entry); err != nil {
-		return err
-	}
-
-	if err = AttestImage(ctx, run.signer, run.out, AttestImageInput{
+	if err := AttestImage(ctx, run.signer, run.out, AttestImageInput{
 		Image:           imageRef,
 		Method:          run.in.Method,
 		PredicateType:   domaincontainer.PredicateTypeCycloneDX,
@@ -202,12 +278,7 @@ func (run ledgerSignRun) signEntry(ctx context.Context, idx int, entry imageledg
 		return err
 	}
 
-	predicatePath, err := writeImagePredicate(run.predicateDir, idx, run.basePredicate, entry, imageRef, candidateTag)
-	if err != nil {
-		return err
-	}
-
-	if err = AttestImage(ctx, run.signer, run.out, AttestImageInput{
+	if err := AttestImage(ctx, run.signer, run.out, AttestImageInput{
 		Image:           imageRef,
 		Method:          run.in.Method,
 		PredicateType:   domaincontainer.PredicateTypeSLSAProvenance1,
@@ -297,6 +368,10 @@ func validateLedgerSignEntry(entry imageledger.Entry, releaseTag string, constra
 		return fmt.Errorf("imageledger: sbom is required for signing: %w", errs.ErrValidation)
 	}
 
+	if err := validateLedgerSBOMPath(entry.SBOM, true); err != nil {
+		return err
+	}
+
 	if constraints.sbomPathRE != nil && !constraints.sbomPathRE.MatchString(entry.SBOM) {
 		return fmt.Errorf("imageledger: sbom %q must match %q: %w", entry.SBOM, constraints.sbomPathPattern, errs.ErrValidation)
 	}
@@ -305,7 +380,36 @@ func validateLedgerSignEntry(entry imageledger.Entry, releaseTag string, constra
 		return fmt.Errorf("imageledger: ref/digest mismatch: ref %q digest %q: %w", entry.Ref, entry.Digest, errs.ErrValidation)
 	}
 
-	return validateLedgerSignBase(entry)
+	return validateLedgerSignBase(entry, constraints)
+}
+
+//nolint:cyclop // missing outputs are allowed only during preflight; ancestry, type and size checks remain explicit.
+func validateLedgerSBOMPath(path string, allowMissing bool) error {
+	if !pathsafe.Relative(path) {
+		return fmt.Errorf("ledger SBOM must stay within the workspace: %w", errs.ErrValidation)
+	}
+
+	root, err := pathsafe.OpenRoot(filepath.Dir(path))
+	if allowMissing && errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = root.Close() }()
+
+	info, err := root.Lstat(filepath.Base(path))
+	if allowMissing && errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil || !info.Mode().IsRegular() || (!allowMissing && info.Size() == 0) {
+		return fmt.Errorf("ledger SBOM must be a nonempty regular file without symlinks: %w", errs.ErrValidation)
+	}
+
+	return nil
 }
 
 // validateLedgerSignRepositories pins every ref-bearing ledger field to the
@@ -337,13 +441,12 @@ func validateLedgerSignRepositories(entry imageledger.Entry, constraints ledgerS
 // identifies the input set that PRODUCED it. A base entry must therefore
 // declare base_input_id alone; enrichImagePredicate turns it into the
 // attested externalParameters.base_input_id lineage field.
-func validateLedgerSignBase(entry imageledger.Entry) error {
-	if entry.ImageKind == imageledger.ImageKindBase && entry.BaseRef == "" {
-		if !domaincontainer.ValidSHA256Hex(entry.BaseInputID) {
-			return fmt.Errorf("imageledger: base entries must declare base_input_id as a sha256 hex digest: %q: %w", entry.BaseInputID, errs.ErrValidation)
+func validateLedgerSignBase(entry imageledger.Entry, constraints ledgerSignConstraints) error {
+	if entry.ImageKind == imageledger.ImageKindBase {
+		done, err := validateBaseKindEntry(entry, constraints)
+		if err != nil || done {
+			return err
 		}
-
-		return nil
 	}
 
 	if (entry.BaseRef == "") != (entry.BaseInputID == "") {
@@ -351,7 +454,7 @@ func validateLedgerSignBase(entry imageledger.Entry) error {
 	}
 
 	if entry.BaseRef != "" {
-		if _, digest, ok := strings.Cut(entry.BaseRef, "@sha256:"); !ok || !domaincontainer.ValidSHA256Hex(digest) {
+		if !domaincontainer.ValidDigestReference(entry.BaseRef) {
 			return fmt.Errorf("imageledger: base_ref must be a registry path pinned by @sha256:<64 hex>: %q: %w", entry.BaseRef, errs.ErrValidation)
 		}
 
@@ -361,6 +464,37 @@ func validateLedgerSignBase(entry imageledger.Entry) error {
 	}
 
 	return nil
+}
+
+// validateBaseKindEntry checks the rules that apply only to a base image, whose
+// base_input_id identifies the inputs that produced it rather than a parent it
+// was built from. It reports done when the entry carries no base_ref, which for
+// a base image is complete rather than missing: the pairing rule below is about
+// entries that reference a parent.
+func validateBaseKindEntry(entry imageledger.Entry, constraints ledgerSignConstraints) (bool, error) {
+	if !domaincontainer.ValidSHA256Hex(entry.BaseInputID) {
+		return false, fmt.Errorf("imageledger: base entries must declare base_input_id as a sha256 hex digest: %q: %w", entry.BaseInputID, errs.ErrValidation)
+	}
+
+	if constraints.expectedImageRepository == "" {
+		return false, fmt.Errorf("imageledger: expected image repository is required when signing a base entry: %w", errs.ErrMissingInput)
+	}
+
+	if entry.Flavor == "" {
+		return false, fmt.Errorf("imageledger: base entries must declare flavor: %w", errs.ErrValidation)
+	}
+
+	wantFinalTag := fmt.Sprintf("%s:%s-%s", constraints.expectedImageRepository, entry.BaseInputID, entry.Flavor)
+	if entry.FinalTag != wantFinalTag {
+		return false, fmt.Errorf("imageledger: base final_tag must be %q for its base_input_id and flavor, got %q: %w", wantFinalTag, entry.FinalTag, errs.ErrValidation)
+	}
+
+	wantMovingTag := constraints.expectedImageRepository + ":" + entry.Flavor
+	if entry.MovingTag != "" && entry.MovingTag != wantMovingTag {
+		return false, fmt.Errorf("imageledger: base moving_tag must be %q for its flavor, got %q: %w", wantMovingTag, entry.MovingTag, errs.ErrValidation)
+	}
+
+	return entry.BaseRef == "", nil
 }
 
 func resolveLedgerSignRef(ctx context.Context, resolver imageDigestResolver, entry imageledger.Entry) (string, string, error) {
@@ -394,7 +528,13 @@ func ensureImageSBOM(ctx context.Context, sbom ImageEvidenceSyft, stderr io.Writ
 		return generateImageSBOM(ctx, sbom, stderr, imageRef, entry.SBOM)
 	}
 
-	raw, err := os.ReadFile(entry.SBOM) //nolint:gosec // ledger-declared dist path, confined by the caller.
+	root, err := pathsafe.OpenRoot(filepath.Dir(entry.SBOM))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
+	raw, err := root.ReadFile(filepath.Base(entry.SBOM))
 	if err != nil {
 		return fmt.Errorf("premade SBOM %s: %w", entry.SBOM, err)
 	}
@@ -457,6 +597,10 @@ func enrichImagePredicate(base []byte, entry imageledger.Entry, imageRef, candid
 		"role":          entry.Role,
 		"flavor":        entry.Flavor,
 		"sbom":          entry.SBOM,
+	}
+
+	if entry.ImageKind == imageledger.ImageKindBase && entry.Flavor != "" {
+		ext["flavor"] = entry.Flavor
 	}
 
 	if err := enrichPredicateBaseLineage(build, ext, entry); err != nil {

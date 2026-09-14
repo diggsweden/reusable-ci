@@ -6,10 +6,13 @@ package validate_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeprovider"
 )
@@ -48,8 +51,13 @@ func TestToken_GitHub_ClassicPATRefused(t *testing.T) {
 	err := appvalidate.Token(context.Background(), prov, &bytes.Buffer{}, appvalidate.TokenInput{
 		Token: "ghp_classic", Repository: "owner/repo",
 	})
-	if err == nil || !strings.Contains(err.Error(), "classic PAT detected") {
-		t.Errorf("err = %v", err)
+	// A token the policy will not accept is a credential refusal (exit 77).
+	if !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+
+	if !strings.Contains(err.Error(), "classic PAT detected") {
+		t.Errorf("err = %v, want it to name the token type", err)
 	}
 
 	if c := prov.Calls().ValidateToken; c != 0 {
@@ -96,8 +104,12 @@ func TestToken_EmptyToken(t *testing.T) {
 	err := appvalidate.Token(context.Background(), prov, &bytes.Buffer{}, appvalidate.TokenInput{
 		Repository: "owner/repo",
 	})
-	if err == nil || !strings.Contains(err.Error(), "no GitHub token provided") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+
+	if !strings.Contains(err.Error(), "no GitHub token provided") {
+		t.Errorf("err = %v, want it to say the token is absent", err)
 	}
 
 	for _, want := range []string{"fine-grained PAT", "personal-access-tokens"} {
@@ -115,8 +127,14 @@ func TestToken_EmptyRepositoryUsage(t *testing.T) {
 	err := appvalidate.Token(context.Background(), prov, &bytes.Buffer{}, appvalidate.TokenInput{
 		Token: "github_pat_AAAA",
 	})
-	if err == nil || !strings.Contains(err.Error(), "no repository provided") {
-		t.Errorf("err = %v", err)
+	// A missing --repository is a broken command line, not a credential
+	// problem: ErrUsage (exit 2), unlike the refusals above.
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
+	}
+
+	if !strings.Contains(err.Error(), "no repository provided") {
+		t.Errorf("err = %v, want it to name the missing argument", err)
 	}
 }
 
@@ -140,21 +158,24 @@ func TestToken_GitLab_NoFormatChecks(t *testing.T) {
 func TestToken_APIRejection(t *testing.T) {
 	t.Parallel()
 	prov := fakeprovider.New(t).WithPlatform(provider.ForgeGitHub).
-		WithValidateTokenError(fakeError("HTTP 401"))
+		WithValidateTokenError(fmt.Errorf("HTTP 401: %w", errs.ErrPermissionDenied))
 
 	//nolint:gosec // fake token literal — not a real credential.
 	err := appvalidate.Token(context.Background(), prov, &bytes.Buffer{}, appvalidate.TokenInput{
 		Token:      "github_pat_AAAA",
 		Repository: "owner/repo",
 	})
-	if err == nil || !strings.Contains(err.Error(), "Token is invalid") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+
+	// The provider's own message survives, so an operator sees the HTTP status.
+	for _, want := range []string{"validate token", "HTTP 401"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to mention %q", err, want)
+		}
 	}
 }
-
-type fakeError string
-
-func (e fakeError) Error() string { return string(e) }
 
 // --- BotPermissions -----------------------------------------------------
 
@@ -213,8 +234,12 @@ func TestBotPermissions_UserFatal(t *testing.T) {
 	err := appvalidate.BotPermissions(context.Background(), prov, &bytes.Buffer{}, appvalidate.BotPermissionsInput{
 		Repository: "owner/repo",
 	})
-	if err == nil || !strings.Contains(err.Error(), "RELEASE_TOKEN is invalid or expired") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+
+	if !strings.Contains(err.Error(), "RELEASE_TOKEN is invalid or expired") {
+		t.Errorf("err = %v, want it to name the token", err)
 	}
 }
 
@@ -227,8 +252,12 @@ func TestBotPermissions_RepoFatal(t *testing.T) {
 	err := appvalidate.BotPermissions(context.Background(), prov, &bytes.Buffer{}, appvalidate.BotPermissionsInput{
 		Repository: "owner/repo",
 	})
-	if err == nil || !strings.Contains(err.Error(), "cannot access this repository") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+
+	if !strings.Contains(err.Error(), "cannot access this repository") {
+		t.Errorf("err = %v, want it to name the access problem", err)
 	}
 }
 
@@ -237,7 +266,12 @@ func TestBotPermissions_EmptyRepoUsage(t *testing.T) {
 	prov := fakeprovider.New(t)
 
 	err := appvalidate.BotPermissions(context.Background(), prov, &bytes.Buffer{}, appvalidate.BotPermissionsInput{})
-	if err == nil || !strings.Contains(err.Error(), "usage") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
+	}
+
+	// Nothing probed: an empty repository must not reach the forge API.
+	if c := prov.Calls().ValidateBotPermissions; c != 0 {
+		t.Errorf("probed the forge with no repository, %d calls", c)
 	}
 }

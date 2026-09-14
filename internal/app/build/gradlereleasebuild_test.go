@@ -12,10 +12,12 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // recordingGradle records every gradle invocation (fakeGradle keeps only the
@@ -32,6 +34,10 @@ func (g *recordingGradle) RunInDirInherit(_ context.Context, _ string, _, _ io.W
 	g.calls = append(g.calls, args)
 
 	return nil
+}
+
+func (g *recordingGradle) RunInDirEnvInherit(ctx context.Context, dir string, _ []string, out, stderr io.Writer, args ...string) error {
+	return g.RunInDirInherit(ctx, dir, out, stderr, args...)
 }
 
 func newGradleDir(t *testing.T) string {
@@ -59,7 +65,7 @@ func assertGradleCalls(t *testing.T, got [][]string, want ...[]string) {
 	}
 
 	for i := range want {
-		if !reflect.DeepEqual(got[i], want[i]) {
+		if !slices.Equal(got[i], want[i]) {
 			t.Errorf("invocation %d = %q, want %q", i, got[i], want[i])
 		}
 	}
@@ -140,13 +146,8 @@ func TestGradleReleaseBuild_MissingWrapperFails(t *testing.T) {
 	}
 }
 
-// TestGradleReleaseBuild_BuildSBOMIsBestEffort pins the documented
-// best-effort contract: a Build SBOM that cannot be generated warns and
-// lets the release continue.
-//
-// It also pins what the summary says while that happens, which is not
-// what it means -- see docs/open-questions.md.
-func TestGradleReleaseBuild_BuildSBOMIsBestEffort(t *testing.T) {
+// Missing mandatory SBOM configuration is a preflight refusal, not a build.
+func TestGradleReleaseBuild_MissingSBOMVersionRefusesBeforeBuild(t *testing.T) {
 	t.Parallel()
 
 	ops := &recordingGradle{}
@@ -154,27 +155,24 @@ func TestGradleReleaseBuild_BuildSBOMIsBestEffort(t *testing.T) {
 
 	var stderr bytes.Buffer
 
+	dir := newGradleDir(t)
+	before := ownedTree(t, dir)
+
 	// EnableBuildSBOM with no SBOMToolVersion: the version is required, so
 	// generation fails before the tool is reached.
 	err := appbuild.GradleReleaseBuild(context.Background(), summary, ops, io.Discard, &stderr, appbuild.GradleReleaseBuildInput{
-		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: newGradleDir(t), EnableBuildSBOM: true},
+		ReleaseBuildOptions: appbuild.ReleaseBuildOptions{Dir: dir, EnableBuildSBOM: true},
 		Tasks:               "assemble",
 	})
-	if err != nil {
-		t.Fatalf("a failed Build SBOM must not fail the release: %v", err)
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("failed Build SBOM error = %v, want ErrUsage", err)
 	}
 
-	if !strings.Contains(stderr.String(), "SBOM generation failed (continuing)") {
-		t.Errorf("no warning about the failed SBOM: %q", stderr.String())
+	if strings.Contains(stderr.String(), "continuing") {
+		t.Errorf("mandatory SBOM failure claimed the release would continue: %q", stderr.String())
 	}
 
-	// The build itself still ran.
-	assertGradleCalls(t, ops.calls, []string{"assemble"})
-
-	// Recorded, not endorsed: the summary reports "release blocked" on a
-	// release that was not blocked, and says the same for a deliberately
-	// disabled SBOM.
-	if !strings.Contains(summary.buf.String(), "release blocked") {
-		t.Errorf("summary = %q", summary.buf.String())
+	if len(ops.calls) != 0 || summary.buf.Len() != 0 || !reflect.DeepEqual(before, ownedTree(t, dir)) {
+		t.Fatalf("preflight had effects: calls=%v summary=%s", ops.calls, &summary.buf)
 	}
 }

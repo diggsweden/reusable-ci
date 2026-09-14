@@ -25,7 +25,6 @@ func workflowGroup() *cli.Command {
 		Usage: "scan reusable workflow YAML for structural rules",
 		Commands: []*cli.Command{
 			workflowInputDefaultsCmd(),
-			workflowContractResidueCmd(),
 		},
 	}
 }
@@ -42,25 +41,6 @@ func workflowInputDefaultsCmd() *cli.Command {
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			return appvalidate.WorkflowInputDefaults(os.Stderr, deps.Annotator(cmd), appvalidate.WorkflowInputDefaultsInput{
 				Root: cmd.String(flagRoot),
-			})
-		},
-	}
-}
-
-func workflowContractResidueCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "contract-residue",
-		Usage: "reject removed v3-incompatible output contracts and aliases",
-		Description: `EXAMPLE:
-   reusable-ci validate workflow contract-residue --root .`,
-		Flags: []cli.Flag{
-			&cli.StringFlag{Name: flagRoot, Value: ".", Usage: "repository root to scan"},
-			&cli.StringSliceFlag{Name: "path", Usage: "path under root to scan (repeatable); defaults to source/workflow/doc roots"},
-		},
-		Action: func(_ context.Context, cmd *cli.Command) error {
-			return appvalidate.ContractResidue(os.Stderr, deps.Annotator(cmd), appvalidate.ContractResidueInput{
-				Root:  cmd.String(flagRoot),
-				Paths: cmd.StringSlice("path"),
 			})
 		},
 	}

@@ -6,7 +6,7 @@ package container_test
 import (
 	"context"
 	"errors"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -59,11 +59,11 @@ func TestUsableImageDigest_ReturnsDigestWhenArchAndLabelsMatch(t *testing.T) {
 		t.Fatalf("sink digest=%q ref=%q", sink.Single("digest"), sink.Single("ref"))
 	}
 
-	if !reflect.DeepEqual(registry.refs, []string{"registry.example/app:staging-amd64"}) {
+	if !slices.Equal(registry.refs, []string{"registry.example/app:staging-amd64"}) {
 		t.Errorf("registry refs = %v, want the requested ref once", registry.refs)
 	}
 
-	if !reflect.DeepEqual(registry.archs, []string{"amd64"}) {
+	if !slices.Equal(registry.archs, []string{"amd64"}) {
 		t.Errorf("registry archs = %v, want [amd64]", registry.archs)
 	}
 }
@@ -142,13 +142,21 @@ func TestUsableImageDigest_RejectsRequiredLabelMismatch(t *testing.T) {
 func TestUsableImageDigest_RejectsMalformedRequiredLabel(t *testing.T) {
 	t.Parallel()
 
-	_, err := appcontainer.UsableImageDigest(context.Background(), &fakeUsableImageRegistry{}, fakeoutputsink.New(t), appcontainer.UsableImageDigestInput{
+	registry := &fakeUsableImageRegistry{}
+
+	_, err := appcontainer.UsableImageDigest(context.Background(), registry, fakeoutputsink.New(t), appcontainer.UsableImageDigestInput{
 		Ref:            "registry.example/app:staging-amd64",
 		Arch:           "amd64",
 		RequiredLabels: []string{"org.example.content-id"},
 	})
 	if !errors.Is(err, errs.ErrUsage) {
 		t.Fatalf("err = %v, want ErrUsage", err)
+	}
+
+	// A label the caller wrote wrong is refused before the registry is
+	// asked anything, unlike a label the image genuinely fails to match.
+	if len(registry.refs) != 0 {
+		t.Errorf("inspected %v despite a malformed required label", registry.refs)
 	}
 }
 

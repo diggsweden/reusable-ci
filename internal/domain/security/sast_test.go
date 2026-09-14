@@ -298,7 +298,7 @@ func TestSARIFToGitLabSAST_SeverityAcceptsBothJSONShapes(t *testing.T) {
 }
 
 // TestSARIFToGitLabSAST_FallsBackToLevel covers what happens with no
-// CVSS property at all, which is most SAST output. An unparseable score
+// CVSS property at all, which is most SAST output. An unparsable score
 // must fall through to the level rather than band as zero: banding a
 // garbled value as Info would hide an error-level finding entirely.
 func TestSARIFToGitLabSAST_FallsBackToLevel(t *testing.T) {
@@ -315,7 +315,7 @@ func TestSARIFToGitLabSAST_FallsBackToLevel(t *testing.T) {
 		{name: "no property, note", score: "", level: "note", want: security.SeverityInfo},
 		{name: "no property, none", score: "", level: "none", want: security.SeverityInfo},
 		{name: "no property, unrecognised level", score: "", level: "catastrophe", want: security.SeverityUnknown},
-		{name: "unparseable score falls through to error", score: `"n/a"`, level: "error", want: security.SeverityHigh},
+		{name: "unparsable score falls through to error", score: `"n/a"`, level: "error", want: security.SeverityHigh},
 		{name: "null score falls through to error", score: `null`, level: "error", want: security.SeverityHigh},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

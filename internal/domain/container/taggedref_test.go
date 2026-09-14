@@ -13,6 +13,8 @@ import (
 )
 
 func TestParseTaggedRef_Accepts(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
 		name             string
 		ref              string
@@ -35,8 +37,15 @@ func TestParseTaggedRef_Accepts(t *testing.T) {
 			host: "localhost:5000", path: "owner/name", tag: "latest",
 			owner: "owner", imageName: "name",
 		},
+		{
+			name: "IPv6 host with a port", ref: "[::1]:5000/owner/name:latest",
+			host: "[::1]:5000", path: "owner/name", tag: "latest",
+			owner: "owner", imageName: "name",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			parsed, err := container.ParseTaggedRef(tc.ref)
 			if err != nil {
 				t.Fatalf("ParseTaggedRef(%q) = %v", tc.ref, err)
@@ -58,6 +67,8 @@ func TestParseTaggedRef_Accepts(t *testing.T) {
 }
 
 func TestParseTaggedRef_Refuses(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct{ name, ref, why string }{
 		{
 			name: "digest-pinned",
@@ -71,6 +82,7 @@ func TestParseTaggedRef_Refuses(t *testing.T) {
 		},
 		{name: "no tag", ref: "codeberg.org/owner/name", why: "addresses a repository, not a tag"},
 		{name: "no path", ref: "codeberg.org:v1", why: "no owner or name"},
+		{name: "unqualified name", ref: "owner/name:v1", why: "must not silently expand to Docker Hub"},
 		{name: "only one path segment", ref: "codeberg.org/name:v1", why: "no owner"},
 		{
 			name: "traversal in the tag", ref: "codeberg.org/owner/name:../../etc",
@@ -82,6 +94,8 @@ func TestParseTaggedRef_Refuses(t *testing.T) {
 		{name: "line break", ref: "codeberg.org/owner/name:v1\nGET /", why: "request splitting"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			parsed, err := container.ParseTaggedRef(tc.ref)
 			if !errors.Is(err, errs.ErrUsage) {
 				t.Fatalf("ParseTaggedRef(%q) = (%+v, %v), want ErrUsage — %s", tc.ref, parsed, err, tc.why)

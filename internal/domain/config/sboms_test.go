@@ -4,14 +4,16 @@
 package config_test
 
 import (
-	"reflect"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-func TestExpandSBOMs(t *testing.T) {
+func TestExpandSBOMs_ExpandsAllToEveryLayer(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -51,7 +53,13 @@ func TestExpandSBOMs(t *testing.T) {
 
 			got, err := config.ExpandSBOMs(tc.in)
 			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				// Every rejection here is a bad value in artifacts.yml, so
+				// they all classify the same way: ErrValidation, exit 1.
+				if !errors.Is(err, errs.ErrValidation) {
+					t.Fatalf("err = %v, want ErrValidation", err)
+				}
+
+				if !strings.Contains(err.Error(), tc.wantErr) {
 					t.Errorf("err = %v, want substring %q", err, tc.wantErr)
 				}
 
@@ -62,14 +70,14 @@ func TestExpandSBOMs(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			if !reflect.DeepEqual(got, tc.want) {
+			if !slices.Equal(got, tc.want) {
 				t.Errorf("got %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestPipelineSBOMs(t *testing.T) {
+func TestPipelineSBOMs_UnionsLayersAcrossArtifacts(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -102,5 +110,58 @@ func TestPipelineSBOMs(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestExpandSBOMs_AllReturnsAnIndependentSlice proves a caller cannot reach the
+// package's canonical layer list through what it was handed.
+//
+// "all" is the only branch that could return the shared slice, and returning it
+// would make ExpandSBOMs a way to rewrite the SBOM policy for the rest of the
+// process: one caller appending to or reordering its result would change what
+// every later caller — and the generated JSON schema, which derives its `sboms`
+// pattern from the same list — sees. The copy is there; nothing checked it, so
+// removing it was invisible.
+func TestExpandSBOMs_AllReturnsAnIndependentSlice(t *testing.T) {
+	t.Parallel()
+
+	first, err := config.ExpandSBOMs("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(first) == 0 {
+		t.Fatal("all expanded to nothing; the assertions below would be vacuous")
+	}
+
+	want := slices.Clone(first)
+
+	// Overwrite and reorder what the caller was given.
+	for i := range first {
+		first[i] = config.SBOMLayer("mutated")
+	}
+
+	slices.Reverse(first)
+
+	second, err := config.ExpandSBOMs("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Equal(second, want) {
+		t.Errorf("a second expansion returned %v, want %v: the first caller's writes reached the canonical list", second, want)
+	}
+
+	// Two expansions must also not alias each other, or the second caller
+	// inherits whatever the first one does next.
+	third, err := config.ExpandSBOMs("all")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	third[0] = config.SBOMLayer("mutated-again")
+
+	if second[0] == config.SBOMLayer("mutated-again") {
+		t.Error("two expansions share one backing array")
 	}
 }

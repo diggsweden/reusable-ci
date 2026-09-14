@@ -26,7 +26,6 @@ package conformance_test
 // from a scrape.
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -177,7 +176,7 @@ jobs:
 //
 // GitHub workflow commands (::error::, ::warning::, ::group::) are rendered by
 // GitHub and by nothing else. Forgejo implements the same workflow *syntax* while
-// rendering none of them, so a runner mis-detected as GitHub emits `::error::`
+// rendering none of them, so a runner incorrectly detected as GitHub emits `::error::`
 // into a log that shows it verbatim — the diagnostic becomes noise, and the
 // Annotations pane a maintainer looks at stays empty.
 //
@@ -201,64 +200,13 @@ func TestInRunner_NoGitHubAnnotationsOnOtherForges(t *testing.T) {
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "annotation-dialect",
-				annotationProbe(target, assetURL))
+				annotationProbe(target.Forge, livetest.ProbePrelude(target, assetURL)))
 			if conclusion != "success" {
 				t.Errorf("%s: run concluded %q — the product emitted GitHub workflow commands on a runner that does not render them, so its diagnostics reach the log as literal text",
 					forge, conclusion)
 			}
 		})
 	}
-}
-
-// annotationProbe drives a verb that reports through the annotator and fails the
-// job if GitHub's dialect appears.
-//
-// `doctor` is the vehicle because it always has something to say and never
-// mutates anything, so the probe stays about the dialect. Its exit status is
-// ignored: whether this lab passes a health check is not the claim.
-func annotationProbe(target livetest.Target, assetURL string) string {
-	check := `./reusable-ci doctor > out.txt 2>&1 || true
-cat out.txt
-
-# A negative assertion over an empty file proves nothing, and a verb that
-# printed nothing would pass it. Require output before judging its dialect.
-test -s out.txt
-
-if grep -qE '::(error|warning|notice|group|endgroup)::' out.txt; then
-  echo "FAIL: GitHub workflow commands emitted on a runner that does not render them"
-  exit 1
-fi`
-
-	if target.Forge == provider.ForgeGitLab {
-		return `detect:
-  image: ` + livetest.ProbeImage + `
-  script:
-    - |
-      ` + indent(livetest.TrustLabCA(target), 6) + `
-    - curl -fsSL -o reusable-ci "` + assetURL + `"
-    - chmod +x reusable-ci
-    - |
-      ` + strings.ReplaceAll(check, "\n", "\n      ") + `
-`
-	}
-
-	return `on: [push]
-jobs:
-  detect:
-    runs-on: ubuntu-latest
-    steps:
-      - name: the annotation dialect must match the runner
-        run: |
-          ` + strings.ReplaceAll(check, "\n", "\n          ") + `
-`
-}
-
-// indent re-indents a multi-line shell block so it survives being spliced into
-// YAML, where a stray column changes meaning.
-func indent(block string, spaces int) string {
-	pad := strings.Repeat(" ", spaces)
-
-	return strings.ReplaceAll(block, "\n", "\n"+pad)
 }
 
 // PAR-RUN-4: a step summary reaches a reader on every runner.
@@ -385,89 +333,11 @@ func TestInRunner_StepOutputsReachTheRunnersOutputFile(t *testing.T) {
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "step-outputs",
-				outputFileProbe(target, assetURL))
+				outputFileProbe(target.Forge, livetest.ProbePrelude(target, assetURL)))
 			if conclusion != "success" {
 				t.Errorf("%s: run concluded %q — step outputs did not reach the file this runner reads, so a later step sees an empty value and silently uses its default",
 					forge, conclusion)
 			}
 		})
 	}
-}
-
-// outputFileProbe runs an output-writing verb and reads the runner's own output
-// file back.
-//
-// The Forgejo half also settles which variable wins. The runner sets both names,
-// so the probe compares the two paths rather than assuming: when they resolve to
-// the same file the question is moot and it says so, and when they differ the
-// native $FORGEJO_OUTPUT is required to be the one written. Asserting a
-// preference that the runner's own configuration makes unobservable would be
-// testing the fixture.
-func outputFileProbe(target livetest.Target, assetURL string) string {
-	const resolve = `run_product release resolve metadata \
-  --version v9.9.9-parrun5 --repository livetest/outputs`
-
-	if target.Forge == provider.ForgeGitLab {
-		// GitLab does not provide an output file; the pipeline nominates one,
-		// which is the documented contract rather than a fixture convenience.
-		return `detect:
-  image: ` + livetest.ProbeImage + `
-  variables:
-    CI_OUTPUT: build.env
-  script:
-    - |
-      ` + indent(livetest.ProbePrelude(target, assetURL), 6) + `
-      ` + indent(resolve, 6) + `
-
-      echo "--- $CI_OUTPUT ---"
-      cat "$CI_OUTPUT"
-
-      # Upper snake case, because that is what GitLab dotenv accepts and what a
-      # later job will reference as $VERSION_NO_V.
-      grep -q '^VERSION=v9.9.9-parrun5$' "$CI_OUTPUT"
-      grep -q '^VERSION_NO_V=9.9.9-parrun5$' "$CI_OUTPUT"
-      grep -q '^PROJECT_NAME=outputs$' "$CI_OUTPUT"
-`
-	}
-
-	return `on: [push]
-jobs:
-  detect:
-    runs-on: ubuntu-latest
-    steps:
-      - name: outputs must land in the file this runner reads
-        run: |
-          ` + indent(livetest.ProbePrelude(target, assetURL), 10) + `
-
-          echo "FORGEJO_OUTPUT=${FORGEJO_OUTPUT:-unset}"
-          echo "GITHUB_OUTPUT=${GITHUB_OUTPUT:-unset}"
-
-          if [ -z "${FORGEJO_OUTPUT:-}" ] && [ -z "${GITHUB_OUTPUT:-}" ]; then
-            echo "FAIL: this runner provided no step-output file under either name"
-            exit 1
-          fi
-
-          ` + indent(resolve, 10) + `
-
-          # The native name is preferred; the alias is the fallback. Which file to
-          # read back is therefore the same decision the product just made.
-          target="${FORGEJO_OUTPUT:-$GITHUB_OUTPUT}"
-          echo "--- $target ---"
-          cat "$target"
-
-          grep -q '^version=v9.9.9-parrun5$' "$target"
-          grep -q '^version-no-v=9.9.9-parrun5$' "$target"
-          grep -q '^project-name=outputs$' "$target"
-
-          # When the runner points both names at one file the preference is
-          # unobservable, and claiming to have proven it would be a lie.
-          if [ -n "${FORGEJO_OUTPUT:-}" ] && [ -n "${GITHUB_OUTPUT:-}" ]; then
-            if [ "$FORGEJO_OUTPUT" = "$GITHUB_OUTPUT" ]; then
-              echo "NOTE: both names point at one file; native-vs-alias preference is not observable here"
-            elif grep -q '^version=v9.9.9-parrun5$' "$GITHUB_OUTPUT"; then
-              echo "FAIL: the value went to the \$GITHUB_OUTPUT alias while \$FORGEJO_OUTPUT is set"
-              exit 1
-            fi
-          fi
-`
 }

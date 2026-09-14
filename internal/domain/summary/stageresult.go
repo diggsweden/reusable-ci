@@ -119,12 +119,18 @@ func ParseStageResultEnvelope(value string) (StageResultEnvelope, error) {
 		return StageResultEnvelope{Version: StageResultEnvelopeVersion, Result: ResultSkipped}, nil
 	}
 
+	// A duplicate member or target name would let a later value replace an
+	// earlier one, so {"a":"failure","a":"success"} read as a clean success.
+	if err := checkConsumedMembers([]byte(value), "stage-result", "version", "stage", "result", "ran", "targets"); err != nil {
+		return StageResultEnvelope{}, fmt.Errorf("parse stage-result JSON: %w", err)
+	}
+
 	var raw struct {
-		Version int               `json:"version"`
-		Stage   string            `json:"stage"`
-		Result  Result            `json:"result"`
-		Ran     bool              `json:"ran"`
-		Targets map[string]Result `json:"targets"`
+		Version int             `json:"version"`
+		Stage   string          `json:"stage"`
+		Result  Result          `json:"result"`
+		Ran     bool            `json:"ran"`
+		Targets json.RawMessage `json:"targets"`
 	}
 	if err := json.Unmarshal([]byte(value), &raw); err != nil {
 		// Classify as malformed input (EX_DATAERR) like the field checks
@@ -148,24 +154,14 @@ func ParseStageResultEnvelope(value string) (StageResultEnvelope, error) {
 		return StageResultEnvelope{}, fmt.Errorf("stage-result JSON has invalid result %q: %w", raw.Result, errs.ErrMalformedInput)
 	}
 
-	if raw.Targets == nil {
-		return StageResultEnvelope{}, fmt.Errorf("stage-result JSON missing targets"+": %w", errs.ErrMalformedInput)
+	targets, err := parseStageTargets(raw.Targets)
+	if err != nil {
+		return StageResultEnvelope{}, err
 	}
 
-	targets := make([]Target, 0, len(raw.Targets))
-	for name, result := range raw.Targets {
-		if strings.TrimSpace(name) == "" {
-			return StageResultEnvelope{}, fmt.Errorf("stage-result JSON contains an empty target name"+": %w", errs.ErrMalformedInput)
-		}
-
-		if !IsResult(result) {
-			return StageResultEnvelope{}, fmt.Errorf("stage-result JSON target %q has invalid result %q: %w", name, result, errs.ErrMalformedInput)
-		}
-
-		targets = append(targets, Target{Name: name, Result: result})
+	if err := checkStageSummary(raw.Result, raw.Ran, targets); err != nil {
+		return StageResultEnvelope{}, err
 	}
-
-	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
 
 	return StageResultEnvelope{
 		Version: raw.Version,
@@ -174,6 +170,81 @@ func ParseStageResultEnvelope(value string) (StageResultEnvelope, error) {
 		Ran:     raw.Ran,
 		Targets: targets,
 	}, nil
+}
+
+// parseStageTargets validates every target name and result, and returns the
+// targets sorted by name. A target named twice is refused: decoding into a map
+// keeps only the last value, which could hide a failure.
+func parseStageTargets(body json.RawMessage) ([]Target, error) {
+	if len(body) == 0 || string(body) == "null" {
+		return nil, fmt.Errorf("stage-result JSON missing targets"+": %w", errs.ErrMalformedInput)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	if start, err := decoder.Token(); err != nil || start != json.Delim('{') {
+		return nil, fmt.Errorf("stage-result JSON targets must be an object: %w", errs.ErrMalformedInput)
+	}
+
+	seen := map[string]bool{}
+	targets := []Target{}
+
+	for decoder.More() {
+		key, err := decoder.Token()
+
+		name, ok := key.(string)
+		if err != nil || !ok {
+			return nil, fmt.Errorf("stage-result JSON contains an invalid target member: %w", errs.ErrMalformedInput)
+		}
+
+		var result Result
+		if err := decoder.Decode(&result); err != nil {
+			return nil, fmt.Errorf("stage-result JSON target %q is not a result: %w", name, errs.ErrMalformedInput)
+		}
+
+		if err := checkStageTarget(name, result, seen); err != nil {
+			return nil, err
+		}
+
+		seen[name] = true
+		targets = append(targets, Target{Name: name, Result: result})
+	}
+
+	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
+
+	return targets, nil
+}
+
+func checkStageTarget(name string, result Result, seen map[string]bool) error {
+	switch {
+	case strings.TrimSpace(name) == "":
+		return fmt.Errorf("stage-result JSON contains an empty target name"+": %w", errs.ErrMalformedInput)
+	case seen[name]:
+		return fmt.Errorf("stage-result JSON names target %q twice: %w", name, errs.ErrMalformedInput)
+	case !IsResult(result):
+		return fmt.Errorf("stage-result JSON target %q has invalid result %q: %w", name, result, errs.ErrMalformedInput)
+	}
+
+	return nil
+}
+
+// checkStageSummary refuses a stage result or ran flag its targets do not
+// produce. The producer derives both from the targets; an envelope that
+// disagrees (success over a failed target, a stage that ran with nothing
+// running) is not one it could have written.
+func checkStageSummary(result Result, ran bool, targets []Target) error {
+	results := make([]Result, 0, len(targets))
+	targetsRan := false
+
+	for _, target := range targets {
+		results = append(results, target.Result)
+		targetsRan = targetsRan || target.Result != ResultSkipped
+	}
+
+	if ran != targetsRan || result != StageResult(targetsRan, results) {
+		return fmt.Errorf("stage-result JSON result %q (ran=%t) does not match its targets: %w", result, ran, errs.ErrMalformedInput)
+	}
+
+	return nil
 }
 
 // TargetResult returns the named target result, defaulting to skipped for

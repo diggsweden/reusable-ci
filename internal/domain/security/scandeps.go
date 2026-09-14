@@ -4,7 +4,7 @@
 package security
 
 import (
-	"encoding/json"
+	"cmp"
 	"fmt"
 	"slices"
 	"strings"
@@ -124,19 +124,9 @@ func ExtractTrivyVulnIDs(body []byte) ([]string, error) {
 		return nil, nil
 	}
 
-	type trivyResult struct {
-		Vulnerabilities []struct {
-			VulnerabilityID string `json:"VulnerabilityID"`
-		} `json:"Vulnerabilities"`
-	}
-
-	type trivyReport struct {
-		Results []trivyResult `json:"Results"`
-	}
-
-	var doc trivyReport
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, fmt.Errorf("parse trivy JSON: %w", err)
+	doc, err := ParseTrivyReport(body)
+	if err != nil {
+		return nil, err
 	}
 
 	seen := map[string]struct{}{}
@@ -161,24 +151,62 @@ func ExtractTrivyVulnIDs(body []byte) ([]string, error) {
 	return out, nil
 }
 
-// DiffNewIDs returns the IDs present in head but absent from base.
-// Both inputs must already be sorted. Mirrors `comm -13 base head`.
-//
-// Returns a freshly-allocated slice (never aliases head).
-func DiffNewIDs(base, head []string) []string {
-	baseSet := make(map[string]struct{}, len(base))
-	for _, id := range base {
-		baseSet[id] = struct{}{}
+// VulnFinding is one vulnerability in one package of one scanned target
+// (a lockfile, a go.mod, a jar). A dependency diff compares findings, not
+// bare vulnerability IDs: a pull request that brings a CVE into another
+// package or another lockfile has added exposure even when the base branch
+// already carries that CVE somewhere else. The installed version is left
+// out, so upgrading a package to a release still affected by the same CVE
+// is not reported as new.
+type VulnFinding struct {
+	Target  string
+	Package string
+	ID      string
+}
+
+// ExtractTrivyFindings returns the unique findings in a Trivy JSON report,
+// sorted by target, package and ID. Entries without a vulnerability ID are
+// skipped, as ExtractTrivyVulnIDs skips them.
+func ExtractTrivyFindings(body []byte) ([]VulnFinding, error) {
+	if len(body) == 0 {
+		return nil, nil
 	}
 
-	out := make([]string, 0)
+	doc, err := ParseTrivyReport(body)
+	if err != nil {
+		return nil, err
+	}
 
-	for _, id := range head {
-		if _, ok := baseSet[id]; ok {
-			continue
+	var out []VulnFinding
+
+	for _, result := range doc.Results {
+		for _, vuln := range result.Vulnerabilities {
+			if vuln.VulnerabilityID == "" {
+				continue
+			}
+
+			out = append(out, VulnFinding{Target: result.Target, Package: vuln.PkgName, ID: vuln.VulnerabilityID})
 		}
+	}
 
-		out = append(out, id)
+	slices.SortFunc(out, compareFindings)
+
+	return slices.Compact(out), nil
+}
+
+func compareFindings(a, b VulnFinding) int {
+	return cmp.Or(cmp.Compare(a.Target, b.Target), cmp.Compare(a.Package, b.Package), cmp.Compare(a.ID, b.ID))
+}
+
+// DiffNewFindings returns the findings in head that base does not have, in
+// head's order. The result never aliases head.
+func DiffNewFindings(base, head []VulnFinding) []VulnFinding {
+	out := make([]VulnFinding, 0)
+
+	for _, finding := range head {
+		if !slices.Contains(base, finding) {
+			out = append(out, finding)
+		}
 	}
 
 	return out
@@ -194,58 +222,37 @@ type VulnRow struct {
 	Fixed     string
 }
 
-// FilterVulnRowsByID returns the VulnRow set in body whose
-// VulnerabilityID is in keep. The bash uses `jq --slurpfile ids ... |
-// index($id)` for the same purpose.
-func FilterVulnRowsByID(body []byte, keep []string) ([]VulnRow, error) {
+// FilterVulnRows returns a table row for every vulnerability in body that
+// matches one of keep. A package installed at two versions in one target
+// yields a row for each.
+func FilterVulnRows(body []byte, keep []VulnFinding) ([]VulnRow, error) {
 	if len(keep) == 0 || len(body) == 0 {
 		return nil, nil
 	}
 
-	type trivyVuln struct {
-		VulnerabilityID  string `json:"VulnerabilityID"`
-		Severity         string `json:"Severity"`
-		PkgName          string `json:"PkgName"`
-		InstalledVersion string `json:"InstalledVersion"`
-		FixedVersion     string `json:"FixedVersion"`
-	}
-
-	type trivyResult struct {
-		Vulnerabilities []trivyVuln `json:"Vulnerabilities"`
-	}
-
-	type trivyReport struct {
-		Results []trivyResult `json:"Results"`
-	}
-
-	var doc trivyReport
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, fmt.Errorf("parse trivy JSON: %w", err)
-	}
-
-	keepSet := make(map[string]struct{}, len(keep))
-	for _, id := range keep {
-		keepSet[id] = struct{}{}
+	doc, err := ParseTrivyReport(body)
+	if err != nil {
+		return nil, err
 	}
 
 	var out []VulnRow
 
-	for _, r := range doc.Results {
-		for _, v := range r.Vulnerabilities { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-			if _, ok := keepSet[v.VulnerabilityID]; !ok {
+	for _, result := range doc.Results {
+		for _, vuln := range result.Vulnerabilities {
+			if !slices.Contains(keep, VulnFinding{Target: result.Target, Package: vuln.PkgName, ID: vuln.VulnerabilityID}) {
 				continue
 			}
 
-			fixed := v.FixedVersion
+			fixed := vuln.FixedVersion
 			if fixed == "" {
 				fixed = "—"
 			}
 
 			out = append(out, VulnRow{
-				ID:        v.VulnerabilityID,
-				Severity:  v.Severity,
-				Package:   v.PkgName,
-				Installed: v.InstalledVersion,
+				ID:        vuln.VulnerabilityID,
+				Severity:  vuln.Severity,
+				Package:   vuln.PkgName,
+				Installed: vuln.InstalledVersion,
 				Fixed:     fixed,
 			})
 		}

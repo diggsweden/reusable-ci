@@ -21,7 +21,10 @@ import (
 
 // defaultRemote is the remote name assumed whenever a caller leaves the
 // remote unspecified — the same "origin" every fetch/push method targets.
-const defaultRemote = "origin"
+const (
+	defaultRemote       = "origin"
+	hooksDisabledConfig = "core.hooksPath=/dev/null"
+)
 
 // Repo is a handle for git operations against a working tree.
 // The Dir field, when non-empty, sets the cwd for every invocation.
@@ -65,6 +68,8 @@ func (r *Repo) Run(ctx context.Context, args ...string) (string, error) {
 		cmd.Dir = r.Dir
 	}
 
+	cmd.Env = messageStableEnv()
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		wrapped := safeexec.WrapError(err, bin, firstGitArg(args))
@@ -105,6 +110,31 @@ func firstGitArg(args []string) string {
 	return ""
 }
 
+// messageStableEnv is the ambient environment with the message locale pinned
+// to C.
+//
+// Callers classify git by reading its diagnostics: VerifyTagSSHAgainstAllowedSigners
+// decides between "the allowed_signers file is missing" (exit 66, tells the
+// operator to commit the file) and "the signer is not allowed" (exit 77, a
+// refusal) by matching "Unable to open allowed keys file", "No such file or
+// directory" and "No principal matched" in git's output. Those strings are
+// git's and ssh-keygen's localised messages. Under a non-English LANG they come
+// back translated, every match fails, and both cases collapse into the generic
+// branch — a missing file reported as a plain validation failure with no hint
+// about what to do.
+//
+// Nothing made that premise true; it held because CI runners happen to have no
+// locale set. Pinning LC_ALL makes the premise a property of the call instead
+// of a property of the host, and it is the narrow half of the fix: the wider
+// half would be for git to expose a machine-readable reason, which it does not.
+//
+// The rest of the environment is inherited unchanged. These invocations reach
+// ssh-agent, gpg-agent and credential helpers through it, so replacing it
+// rather than extending it would break signing.
+func messageStableEnv() []string {
+	return append(os.Environ(), "LC_ALL=C")
+}
+
 // RunStdin is Run with a stdin string (used for things like signing input
 // or piping commands to git-connect-style tools).
 func (r *Repo) RunStdin(ctx context.Context, stdin string, args ...string) (string, error) {
@@ -118,6 +148,7 @@ func (r *Repo) RunStdin(ctx context.Context, stdin string, args ...string) (stri
 		cmd.Dir = r.Dir
 	}
 
+	cmd.Env = messageStableEnv()
 	cmd.Stdin = strings.NewReader(stdin)
 
 	out, err := cmd.CombinedOutput()

@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,21 +21,15 @@ import (
 
 // recordingTrivy captures invocations and optionally pre-stages output files.
 type recordingTrivy struct {
-	runs       [][]string
-	runErr     error
-	stageFiles map[string][]byte // path → body to write on first matching invocation
+	runs      [][]string
+	runErr    error
+	writeJSON []byte // non-nil writes this report at the requested private output path
 }
 
 func (r *recordingTrivy) RunInherit(_ context.Context, _, _ io.Writer, args ...string) (int, error) {
-	r.runs = append(r.runs, args)
-	// Stage any files this invocation should produce.
-	for path, body := range r.stageFiles {
-		// Only stage on the matching invocation by --output arg (mirrors how trivy itself decides).
-		for i, a := range args {
-			if a == "--output" && i+1 < len(args) && args[i+1] == path {
-				_ = os.WriteFile(path, body, 0o644) //nolint:gosec // test fixture
-			}
-		}
+	r.runs = append(r.runs, append([]string{}, args...))
+	if r.writeJSON != nil {
+		writeFixtureReport(scanOutput(args), string(r.writeJSON), args)
 	}
 
 	return 0, r.runErr
@@ -65,7 +60,7 @@ func TestScanContainer_FailsWhenFindingsAtThreshold(t *testing.T) {
         }]
     }`)
 
-	trivy := &recordingTrivy{stageFiles: map[string][]byte{jsonPath: body}}
+	trivy := &recordingTrivy{writeJSON: body}
 
 	err := appsecurity.ScanContainer(context.Background(), trivy, &bytes.Buffer{}, &bytes.Buffer{}, output.Annotator{}, appsecurity.ScanContainerInput{
 		ImageRef:         "ghcr.io/example/img@sha256:deadbeef",
@@ -98,21 +93,19 @@ func TestScanContainer_FailsWhenFindingsAtThreshold(t *testing.T) {
 	}
 }
 
-// TestScanContainer_PassesWhenEmptyJSON: trivy's --severity filter
-// suppressed everything below threshold; empty JSON = no findings at or
-// above the gate. Pipeline passes, no SARIF / GitLab to derive.
-func TestScanContainer_PassesWhenEmptyJSON(t *testing.T) {
+// Empty bytes are missing scan evidence, not a clean JSON report.
+func TestScanContainer_RejectsEmptyJSON(t *testing.T) {
 	dir := t.TempDir()
 	jsonPath := filepath.Join(dir, "trivy.json")
 
-	trivy := &recordingTrivy{stageFiles: map[string][]byte{jsonPath: nil}}
+	trivy := &recordingTrivy{writeJSON: []byte{}}
 	if err := appsecurity.ScanContainer(context.Background(), trivy, &bytes.Buffer{}, &bytes.Buffer{}, output.Annotator{}, appsecurity.ScanContainerInput{
 		ImageRef:         "img",
 		JSONFile:         jsonPath,
 		SARIFFile:        filepath.Join(dir, "trivy.sarif"),
 		GitLabReportFile: filepath.Join(dir, "gl.json"),
-	}); err != nil {
-		t.Fatalf("expected success on empty JSON, got: %v", err)
+	}); !errors.Is(err, errs.ErrMalformedInput) {
+		t.Fatalf("expected malformed-input refusal on empty JSON, got: %v", err)
 	}
 
 	if len(trivy.runs) != 1 {
@@ -130,7 +123,7 @@ func TestScanContainer_PassesWhenJSONHasNoVulns(t *testing.T) {
 	glPath := filepath.Join(dir, "gl.json")
 
 	body := []byte(`{"ArtifactName": "ghcr.io/example/img", "Results": [{"Target": "alpine", "Vulnerabilities": []}]}`)
-	trivy := &recordingTrivy{stageFiles: map[string][]byte{jsonPath: body}}
+	trivy := &recordingTrivy{writeJSON: body}
 
 	if err := appsecurity.ScanContainer(context.Background(), trivy, &bytes.Buffer{}, &bytes.Buffer{}, output.Annotator{}, appsecurity.ScanContainerInput{
 		ImageRef:         "ghcr.io/example/img@sha256:deadbeef",
@@ -144,23 +137,44 @@ func TestScanContainer_PassesWhenJSONHasNoVulns(t *testing.T) {
 }
 
 func TestScanContainer_RejectsMissingImageRef(t *testing.T) {
-	err := appsecurity.ScanContainer(context.Background(), &recordingTrivy{}, io.Discard, io.Discard, output.Annotator{}, appsecurity.ScanContainerInput{})
-	if err == nil || !strings.Contains(err.Error(), "image-ref is required") {
-		t.Fatalf("err = %v", err)
+	trivy := &recordingTrivy{}
+
+	err := appsecurity.ScanContainer(context.Background(), trivy, io.Discard, io.Discard, output.Annotator{}, appsecurity.ScanContainerInput{})
+	// A missing --image-ref is a broken invocation, not a finding: ErrUsage
+	// exits 2 rather than 1, which would read as "the image is vulnerable".
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
+	}
+
+	if !strings.Contains(err.Error(), "image-ref is required") {
+		t.Errorf("err = %v, want it to name the missing flag", err)
+	}
+
+	if len(trivy.runs) != 0 {
+		t.Errorf("scanned without an image ref: %v", trivy.runs)
 	}
 }
 
 func TestScanContainer_PropagatesScanFailure(t *testing.T) {
 	dir := t.TempDir()
 	jsonPath := filepath.Join(dir, "trivy.json")
-	trivy := &recordingTrivy{runErr: errors.New("trivy boom")} //nolint:err113 // test mock error
+	boom := errors.New("trivy boom") //nolint:err113 // test mock error
+	trivy := &recordingTrivy{runErr: boom}
 
 	err := appsecurity.ScanContainer(context.Background(), trivy, &bytes.Buffer{}, &bytes.Buffer{}, output.Annotator{}, appsecurity.ScanContainerInput{
-		ImageRef: "img",
-		JSONFile: jsonPath,
+		ImageRef:         "img",
+		JSONFile:         jsonPath,
+		SARIFFile:        filepath.Join(dir, "report.sarif"),
+		GitLabReportFile: filepath.Join(dir, "gitlab.json"),
 	})
-	if err == nil || !strings.Contains(err.Error(), "trivy image") {
-		t.Fatalf("err = %v", err)
+	// The cause has to survive the wrap, or an operator debugging a broken
+	// scanner sees only "trivy image" with no reason attached.
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want it to wrap %v", err, boom)
+	}
+
+	if !strings.Contains(err.Error(), "trivy image") {
+		t.Errorf("err = %v, want it to name the failing step", err)
 	}
 }
 
@@ -170,36 +184,40 @@ func TestScanContainer_PropagatesScanFailure(t *testing.T) {
 func TestScanContainer_ImageScanArgsCarryThresholdAndExitZero(t *testing.T) {
 	dir := t.TempDir()
 	jsonPath := filepath.Join(dir, "trivy.json")
-	trivy := &recordingTrivy{stageFiles: map[string][]byte{jsonPath: nil}}
+	trivy := &recordingTrivy{writeJSON: []byte(`{"Results":[]}`)}
 
-	_ = appsecurity.ScanContainer(context.Background(), trivy, &bytes.Buffer{}, &bytes.Buffer{}, output.Annotator{}, appsecurity.ScanContainerInput{
-		ImageRef: "ghcr.io/example/img@sha256:deadbeef",
-		JSONFile: jsonPath,
-		Severity: "CRITICAL",
-	})
-
-	if len(trivy.runs) == 0 {
-		t.Fatal("no trivy invocation recorded")
+	if err := appsecurity.ScanContainer(context.Background(), trivy, &bytes.Buffer{}, &bytes.Buffer{}, output.Annotator{}, appsecurity.ScanContainerInput{
+		ImageRef:         "ghcr.io/example/img@sha256:deadbeef",
+		JSONFile:         jsonPath,
+		Severity:         "CRITICAL",
+		SARIFFile:        filepath.Join(dir, "report.sarif"),
+		GitLabReportFile: filepath.Join(dir, "gitlab.json"),
+	}); err != nil {
+		t.Fatal(err)
 	}
 
-	args := trivy.runs[0]
-	if args[0] != "image" {
-		t.Errorf("invocation = %v, want image scan", args)
+	if len(trivy.runs) != 1 {
+		t.Fatalf("trivy invocations = %d, want exactly the image scan", len(trivy.runs))
 	}
 
-	for _, want := range []string{"--severity", "CRITICAL", "--exit-code", "0", "ghcr.io/example/img@sha256:deadbeef"} {
-		if !containsArg(args, want) {
-			t.Errorf("image args missing %q: %v", want, args)
-		}
-	}
-}
-
-func containsArg(args []string, want string) bool {
-	for _, a := range args {
-		if a == want {
-			return true
-		}
+	privateOutput := scanOutput(trivy.runs[0])
+	if privateOutput == jsonPath || !filepath.IsAbs(privateOutput) {
+		t.Fatalf("scan did not use a private absolute report: %q", privateOutput)
 	}
 
-	return false
+	// The whole invocation, not a membership check per flag: a set test
+	// cannot tell "--severity CRITICAL" from "--severity" followed by some
+	// other value with CRITICAL sitting elsewhere in the line.
+	want := []string{
+		"image",
+		"--format", "json",
+		"--output", privateOutput,
+		"--severity", "CRITICAL",
+		"--vuln-type", "os,library",
+		"--exit-code", "0",
+		"ghcr.io/example/img@sha256:deadbeef",
+	}
+	if !slices.Equal(trivy.runs[0], want) {
+		t.Errorf("image args =\n%q\nwant\n%q", trivy.runs[0], want)
+	}
 }

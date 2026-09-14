@@ -6,11 +6,13 @@ package release_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strings"
+	"slices"
 	"testing"
 
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
@@ -21,6 +23,11 @@ import (
 type fakeSigner struct {
 	signed []string
 }
+
+type silentSigner struct{}
+
+func (silentSigner) Extensions() []string                   { return []string{".asc"} }
+func (silentSigner) SignFile(context.Context, string) error { return nil }
 
 func (f *fakeSigner) Extensions() []string { return []string{".asc"} }
 
@@ -108,7 +115,7 @@ func TestSign_ExactFilesSignsEveryDistinctFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !reflect.DeepEqual(signer.signed, files) {
+	if !slices.Equal(signer.signed, files) {
 		t.Errorf("signed = %v, want %v", signer.signed, files)
 	}
 
@@ -119,10 +126,8 @@ func TestSign_ExactFilesSignsEveryDistinctFile(t *testing.T) {
 	}
 }
 
-// TestSign_ExactFileMissingRefusesBeforeSigningAnything pins where the
-// refusal lands. The files are checked one at a time as they are signed,
-// so a missing file late in the list leaves the earlier ones already
-// signed -- a partially signed release rather than a refused one.
+// TestSign_ExactFileMissingRefusesBeforeSigningAnything pins the validation
+// pass: one missing file refuses the full set before any sidecar is written.
 func TestSign_ExactFileMissingRefusesBeforeSigningAnything(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.WriteFile(filepath.Join("dist", "present.json"), []byte("x"))
@@ -137,12 +142,8 @@ func TestSign_ExactFileMissingRefusesBeforeSigningAnything(t *testing.T) {
 		t.Fatalf("err = %v, want ErrMissingInput", err)
 	}
 
-	// Recorded, not endorsed: the earlier file is signed before the
-	// missing one is noticed. Nothing consumes a half-signed dist
-	// directory today -- the run fails and the release is not published
-	// -- but the sidecar is on disk. See docs/open-questions.md.
-	if got := signer.signed; !reflect.DeepEqual(got, []string{filepath.Join("dist", "present.json")}) {
-		t.Errorf("signed = %v, want the first file only", got)
+	if got := signer.signed; len(got) != 0 {
+		t.Errorf("signed = %v, want no mutation before validation completes", got)
 	}
 }
 
@@ -155,6 +156,52 @@ func TestSign_ExactFileRequiresRegularFile(t *testing.T) {
 	})
 	if !errors.Is(err, errs.ErrMissingInput) {
 		t.Fatalf("err = %v, want ErrMissingInput", err)
+	}
+}
+
+func TestSign_CompletePreflightPrecedesEverySignature(t *testing.T) {
+	for _, late := range []string{"manifest section", "directory", "attachment"} {
+		t.Run(late, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			mustWrite(t, "checksums.sha256", "checksums")
+			mustWrite(t, "app.jar", "artifact")
+			mustWrite(t, "checksums.sha256.asc", "old checksum signature")
+			mustWrite(t, "app.jar.asc", "old artifact signature")
+
+			in := apprelease.SignInput{Files: []string{"app.jar"}, SkipReleaseArtifactsDir: true}
+			want := errs.ErrValidation
+
+			switch late {
+			case "manifest section":
+				in.ManifestSections = []string{"evidence", "invalid-section"}
+				want = errs.ErrUsage
+			case "directory":
+				mustWrite(t, "not-directory", "file")
+
+				in.SkipReleaseArtifactsDir = false
+				in.ReleaseArtifactsDir = "not-directory"
+			case "attachment":
+				in.AttachArtifacts = "app.jar,["
+				want = filepath.ErrBadPattern
+			}
+
+			signer := &fakeSigner{}
+
+			var out bytes.Buffer
+
+			err := apprelease.SignArtifacts(t.Context(), signer, &out, in)
+			if !errors.Is(err, want) {
+				t.Errorf("err=%v, want %v", err, want)
+			}
+
+			if len(signer.signed) != 0 || out.Len() != 0 {
+				t.Errorf("preflight caused effects: signed=%v output=%q", signer.signed, out.String())
+			}
+
+			if readFile(t, "checksums.sha256.asc") != "old checksum signature" || readFile(t, "app.jar.asc") != "old artifact signature" {
+				t.Error("preflight changed existing sidecars")
+			}
+		})
 	}
 }
 
@@ -180,8 +227,11 @@ func TestSign_SkipDefaultTargets(t *testing.T) {
 func TestSign_ManifestSectionsAndChecksumFromManifest(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.WriteFile(filepath.Join("dist", "app.tar.gz"), []byte("archive"))
-	fsys.WriteFile(filepath.Join("dist", "app_checksums.txt"), []byte(strings.Repeat("0", 64)+"  app.tar.gz\n"+strings.Repeat("1", 64)+"  app.sbom.json\n"))
 	fsys.WriteFile(filepath.Join("dist", "app.sbom.json"), []byte("sbom"))
+
+	archiveDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("archive")))
+	sbomDigest := fmt.Sprintf("%x", sha256.Sum256([]byte("sbom")))
+	fsys.WriteFile(filepath.Join("dist", "app_checksums.txt"), []byte(archiveDigest+"  app.tar.gz\n"+sbomDigest+"  app.sbom.json\n"))
 	fsys.WriteFile(filepath.Join("dist", "doctor.json"), []byte("evidence"))
 	fsys.WriteFile(filepath.Join("dist", "release-files.json"), []byte(`{
   "version": 1,
@@ -222,5 +272,67 @@ func TestSign_ManifestSectionsAndChecksumFromManifest(t *testing.T) {
 
 	if got, want := len(signer.signed), 3; got != want {
 		t.Fatalf("signed %d files, want %d: %v", got, want, signer.signed)
+	}
+}
+
+func TestSign_AssemblySignsDistroPackagesAsCanonicalAssets(t *testing.T) {
+	// No t.Parallel: testfs.Real.Chdir mutates the process working directory.
+	fsys := testfs.NewReal(t)
+
+	packages := []string{
+		filepath.Join("release-files", "assets", "app.deb"),
+		filepath.Join("release-files", "assets", "app.rpm"),
+		filepath.Join("release-files", "assets", "app.apk"),
+	}
+	for _, path := range packages {
+		fsys.WriteFile(path, []byte("package"))
+	}
+
+	fsys.WriteFile("assembly.json", []byte(`{
+  "version": 1,
+  "assets": [
+    {"path":"release-files/assets/app.deb","name":"app.deb"},
+    {"path":"release-files/assets/app.rpm","name":"app.rpm"},
+    {"path":"release-files/assets/app.apk","name":"app.apk"}
+  ],
+  "checksum_file":""
+}`))
+	fsys.Chdir()
+
+	signer := &fakeSigner{}
+	if err := apprelease.SignArtifacts(context.Background(), signer, io.Discard, apprelease.SignInput{AssemblyFile: "assembly.json"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Equal(signer.signed, packages) {
+		t.Errorf("signed = %v, want %v", signer.signed, packages)
+	}
+
+	for _, path := range packages {
+		if _, err := os.Stat(path + ".asc"); err != nil {
+			t.Errorf("missing canonical signature for %s: %v", path, err)
+		}
+	}
+}
+
+func TestSign_AssemblyFailsClosedWhenSignerProducesNoSidecar(t *testing.T) {
+	// No t.Parallel: testfs.Real.Chdir mutates the process working directory.
+	fsys := testfs.NewReal(t)
+	fsys.WriteFile(filepath.Join("release-files", "assets", "app.deb"), []byte("package"))
+	fsys.WriteFile(filepath.Join("release-files", "assets", "app.deb.asc"), []byte("stale signature"))
+	fsys.WriteFile("assembly.json", []byte(`{
+  "version": 1,
+  "assets": [{"path":"release-files/assets/app.deb","name":"app.deb"}],
+  "checksum_file":""
+}`))
+	fsys.Chdir()
+
+	err := apprelease.SignArtifacts(context.Background(), silentSigner{}, io.Discard, apprelease.SignInput{AssemblyFile: "assembly.json"})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+
+	if _, statErr := os.Stat(filepath.Join("release-files", "assets", "app.deb.asc")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("stale sidecar survived failed signing: %v", statErr)
 	}
 }

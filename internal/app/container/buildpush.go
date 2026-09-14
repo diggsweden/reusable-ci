@@ -46,7 +46,7 @@ type BuildPushGit interface {
 }
 
 // BuildPushOCIImageInput drives `container build-push-oci-image`, a Go port of
-// forgejo-ci's public build-push-oci-image action body.
+// a public reusable-workflow build-push-oci-image action body.
 type BuildPushOCIImageInput struct {
 	Tag           string
 	Containerfile string
@@ -75,6 +75,8 @@ type BuildPushOCIImageOutput struct {
 
 // BuildPushOCIImage builds every requested platform into one buildah manifest,
 // pushes it, and writes image/digest outputs.
+//
+//nolint:cyclop // plan, build, push, digest postcondition and optional outputs are independent phases.
 func BuildPushOCIImage(ctx context.Context, tool BuildPushTool, git BuildPushGit, sink ci.OutputSink, out io.Writer, in BuildPushOCIImageInput) (*BuildPushOCIImageOutput, error) {
 	plan, err := deriveBuildPushPlan(ctx, git, in)
 	if err != nil {
@@ -99,6 +101,10 @@ func BuildPushOCIImage(ctx context.Context, tool BuildPushTool, git BuildPushGit
 	digest = strings.TrimSpace(digest)
 	if digest == "" {
 		return nil, fmt.Errorf("buildah manifest push produced an empty digest: %w", errs.ErrDependencyUnavailable)
+	}
+
+	if !domaincontainer.ValidDigest(digest) {
+		return nil, fmt.Errorf("buildah manifest push returned a malformed digest: %w", errs.ErrInvalidConfig)
 	}
 
 	if out != nil {
@@ -167,7 +173,10 @@ func deriveBuildPushPlan(ctx context.Context, git BuildPushGit, in BuildPushOCII
 
 	image := in.Image
 	if image == "" {
-		image = defaultBuildPushImage(in.ServerURL, in.Repository)
+		image, err = defaultBuildPushImage(in.ServerURL, in.Repository)
+		if err != nil {
+			return buildPushPlan{}, err
+		}
 	}
 
 	url := strings.TrimRight(in.ServerURL, "/") + "/" + in.Repository
@@ -230,7 +239,7 @@ func validateBuildPushInput(in BuildPushOCIImageInput) error {
 
 // validateBuildPushSources checks the tag and Containerfile inputs.
 func validateBuildPushSources(in BuildPushOCIImageInput) error {
-	if in.Tag == "" || strings.ContainsAny(in.Tag, " \n") {
+	if !domaincontainer.ValidOCITagComponent(in.Tag) {
 		return fmt.Errorf("invalid tag: %s: %w", in.Tag, errs.ErrUsage)
 	}
 
@@ -248,6 +257,10 @@ func validateBuildPushSources(in BuildPushOCIImageInput) error {
 
 // validateBuildPushRegistry checks TLS, auth-file, and registry target inputs.
 func validateBuildPushRegistry(in BuildPushOCIImageInput) error {
+	if in.Image != "" && !domaincontainer.ValidRepositoryName(in.Image) {
+		return fmt.Errorf("build image must be a canonical tag-free repository: %w", errs.ErrUsage)
+	}
+
 	switch in.TLSVerify {
 	case tlsVerifyTrue, tlsVerifyFalse:
 	default:
@@ -299,13 +312,18 @@ func buildPushCreated(epoch string) (string, error) {
 	return time.Unix(seconds, 0).UTC().Format("2006-01-02T15:04:05Z"), nil
 }
 
-func defaultBuildPushImage(serverURL, repository string) string {
-	host := strings.TrimPrefix(strings.TrimPrefix(serverURL, "http://"), "https://")
-	if idx := strings.Index(host, "/"); idx >= 0 {
-		host = host[:idx]
+func defaultBuildPushImage(serverURL, repository string) (string, error) {
+	host, err := domaincontainer.RegistryHost(serverURL)
+	if err != nil {
+		return "", fmt.Errorf("derive build image registry: %w", err)
 	}
 
-	return host + "/" + strings.ToLower(repository)
+	image := host + "/" + strings.ToLower(repository)
+	if !domaincontainer.ValidRepositoryName(image) {
+		return "", fmt.Errorf("derived build image is not a canonical repository: %w", errs.ErrUsage)
+	}
+
+	return image, nil
 }
 
 func defaultBuildPushString(value, fallback string) string {

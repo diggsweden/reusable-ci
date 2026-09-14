@@ -89,13 +89,7 @@ func artifactSignatureCmd() *cli.Command {
 			identityRegexp := cmd.String(flagCertIdentityRegexp)
 			oidcIssuer := cmd.String(flagCertOIDCIssuer)
 
-			// Default the keyless verification identity from the detected
-			// forge when the operator didn't pin one. Skipped for KMS
-			// (a non-empty --key), where an injected identity regexp would
-			// flip auto-detection from kms to sigstore.
-			if keyRef == "" && method != domainrelease.SignMethodKMS {
-				identityRegexp, oidcIssuer = keylessVerifyIdentity(identityRegexp, oidcIssuer)
-			}
+			identityRegexp, oidcIssuer = verificationIdentity(method, keyRef, identityRegexp, oidcIssuer)
 
 			in := appvalidate.ArtifactSignatureInput{
 				Artifact:           cmd.String("artifact"),

@@ -6,7 +6,7 @@
 package safeexec
 
 // HardenProcess is a no-op on non-Linux platforms. The Linux
-// implementation suppresses core dumps and ptrace via RLIMIT_CORE +
+// implementation limits core dumps and unprivileged ptrace via RLIMIT_CORE and
 // PR_SET_DUMPABLE; equivalent knobs exist on macOS (ulimit -c) and
 // Windows (CrashControl/AeDebug) but production CI for diggsweden
 // runs on Linux runners, so we ship the Linux hardening and leave

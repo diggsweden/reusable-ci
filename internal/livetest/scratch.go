@@ -55,7 +55,7 @@ func NewScratchRepo(tb TB, target Target, scenario string) string {
 
 	repo := ScratchRepo(scenario)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), scratchTimeout())
 	defer cancel()
 
 	if err := DeleteScratchRepo(ctx, target, repo); err != nil {
@@ -81,7 +81,7 @@ func NewScratchRepo(tb TB, target Target, scenario string) string {
 			return
 		}
 
-		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), scratchTimeout())
 		defer cleanupCancel()
 
 		// Errorf, not Fatalf: cleanup runs after the scenario, and a leaked
@@ -106,7 +106,7 @@ func PrepareTag(tb TB, target Target, repo, tag string) {
 	tb.Helper()
 	requireAccepted(tb, target)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), scratchTimeout())
 	defer cancel()
 
 	if err := prepareTag(ctx, target, repo, tag); err != nil {
@@ -157,6 +157,10 @@ func prepareTag(ctx context.Context, target Target, repo, tag string) error {
 // DeleteScratchRepo removes a scratch repository. Absent is success, so it is
 // safe as both a pre-run reset and a teardown.
 func DeleteScratchRepo(ctx context.Context, target Target, repo string) error {
+	if !target.accepted {
+		return fmt.Errorf("refusing scratch cleanup through an unaccepted target: %w", errs.ErrValidation)
+	}
+
 	if !strings.HasPrefix(repo, ResourcePrefix) {
 		return fmt.Errorf("refusing to delete %q: outside the %q namespace this suite owns: %w", repo, ResourcePrefix, errs.ErrValidation)
 	}
@@ -431,7 +435,7 @@ func decode(ctx context.Context, target Target, method, endpoint string, body, i
 
 	authorize(req, target)
 
-	client, err := targetHTTPClient(target, time.Minute)
+	client, err := targetHTTPClient(target, apiTimeout())
 	if err != nil {
 		return 0, fmt.Errorf("configure target HTTP trust: %w", err)
 	}
@@ -503,7 +507,7 @@ func CommitFile(tb TB, target Target, repo, path, message, content string) {
 	tb.Helper()
 	requireAccepted(tb, target)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), apiTimeout())
 	defer cancel()
 
 	if err := commitFile(ctx, target, repo, path, message, content); err != nil {
@@ -521,7 +525,7 @@ func TagCommitSHA(tb TB, target Target, repo, tag string) string {
 	tb.Helper()
 	requireAccepted(tb, target)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), apiTimeout())
 	defer cancel()
 
 	switch target.Forge {
@@ -583,6 +587,7 @@ func TagCommitSHA(tb TB, target Target, repo, tag string) string {
 // this suite owns, and a lab is disposable -- which is the trade being made.
 func NewScratchRepoUnique(tb TB, target Target, scenario string) string {
 	tb.Helper()
+	requireAccepted(tb, target)
 
 	// Lowercase alphanumerics only. This name reaches the URLs these helpers
 	// build and the prefix check deciding what the suite may delete, so it
@@ -608,7 +613,7 @@ func NewScratchRepoUnique(tb TB, target Target, scenario string) string {
 func sweepScratchRepos(tb TB, target Target, prefix string) {
 	tb.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), scratchTimeout())
 	defer cancel()
 
 	for _, name := range scratchRepoNames(ctx, target, prefix) {

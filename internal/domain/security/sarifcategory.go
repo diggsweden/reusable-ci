@@ -31,8 +31,8 @@ func SetSARIFCategory(body []byte, category string) ([]byte, error) {
 		return body, nil
 	}
 
-	var doc any
-	if err := json.Unmarshal(body, &doc); err != nil {
+	doc, err := decodeSARIF(body)
+	if err != nil {
 		return nil, fmt.Errorf("parse SARIF: %w", err)
 	}
 
@@ -42,13 +42,36 @@ func SetSARIFCategory(body []byte, category string) ([]byte, error) {
 	}
 
 	runs, _ := root["runs"].([]any)
+
+	reserved := make(map[string]bool, len(runs))
+	for _, run := range runs {
+		r, _ := run.(map[string]any)
+		details, _ := r["automationDetails"].(map[string]any)
+
+		id, _ := details["id"].(string)
+		if id != "" {
+			reserved[id] = true
+		}
+	}
+
 	for index, run := range runs {
-		r, ok := run.(map[string]any)
+		object, ok := run.(map[string]any)
 		if !ok {
 			continue
 		}
 
-		setRunAutomationID(r, automationID(category, index, len(runs)))
+		details, _ := object["automationDetails"].(map[string]any)
+		if existing, _ := details["id"].(string); existing != "" {
+			continue
+		}
+
+		id := automationID(category, index, len(runs))
+		for suffix := 1; reserved[id]; suffix++ {
+			id = automationID(category, index, len(runs)) + "/" + strconv.Itoa(suffix)
+		}
+
+		setRunAutomationID(object, id)
+		reserved[id] = true
 	}
 
 	return json.Marshal(root)

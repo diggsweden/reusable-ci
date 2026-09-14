@@ -22,6 +22,8 @@ func TestIsValidProjectType_KnownTypes(t *testing.T) {
 	t.Parallel()
 	require.True(t, sbom.IsValidProjectType("auto"))
 	require.False(t, sbom.IsValidProjectType("ruby"))
+	// Meta groups artifacts; nothing is built from it, so no SBOM either.
+	require.False(t, sbom.IsValidProjectType("meta"))
 }
 
 func TestParseLayerCSV_TrimsAndDropsEmpty(t *testing.T) {
@@ -53,9 +55,12 @@ func TestIsValidLayer_KnownLayers(t *testing.T) {
 	}
 
 	require.False(t, sbom.IsValidLayer("source"))
+	// "all" is a CSV expansion token, not a layer: a caller that validates
+	// layers one by one after expansion must never see it accepted.
+	require.False(t, sbom.IsValidLayer("all"))
 }
 
-func TestUnknownLayerError(t *testing.T) {
+func TestUnknownLayerError_NamesTheLayerAndTheValidSet(t *testing.T) {
 	t.Parallel()
 
 	err := sbom.UnknownLayerError("source")

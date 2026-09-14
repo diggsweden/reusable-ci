@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"time"
 )
 
 // Signing scenarios drive the real cosign binary, and cosign publishes every
@@ -45,7 +44,7 @@ func CosignKey(tb TB, dir string) (string, string) {
 
 	// Bounded: key generation is local work, so anything slower than this is a
 	// hang rather than a slow machine.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), apiTimeout())
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "cosign", "generate-key-pair", "--output-key-prefix", "lab-cosign")

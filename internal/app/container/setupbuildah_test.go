@@ -9,11 +9,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
 
@@ -45,7 +46,7 @@ func (f *fakeBuildahSetupTool) InfoJSON(_ context.Context, _ []string) ([]byte, 
 	return f.infoJSON, nil
 }
 
-func (f *fakeBuildahSetupTool) ProbeBuild(_ context.Context, env []string, probeDir, _ string, _ io.Writer) error {
+func (f *fakeBuildahSetupTool) ProbeBuild(_ context.Context, env []string, probeDir, image string, _ io.Writer) error {
 	driver, err := storageDriverFromEnv(env)
 	if err != nil {
 		return err
@@ -56,7 +57,7 @@ func (f *fakeBuildahSetupTool) ProbeBuild(_ context.Context, env []string, probe
 	}
 
 	f.probeDir = probeDir
-	f.calls = append(f.calls, "build")
+	f.calls = append(f.calls, "build:"+image)
 	f.probeCalls = append(f.probeCalls, driver)
 
 	if driver == "overlay" && f.failOverlayProbe {
@@ -144,7 +145,7 @@ func TestSetupBuildah_ChoosesTheDriverItsProbeAccepts(t *testing.T) {
 			}
 
 			// Overlay is always tried first; vfs only appears after it fails.
-			if !reflect.DeepEqual(tool.probeCalls, testCase.wantProbes) {
+			if !slices.Equal(tool.probeCalls, testCase.wantProbes) {
 				t.Errorf("probe calls = %v, want %v", tool.probeCalls, testCase.wantProbes)
 			}
 
@@ -206,7 +207,7 @@ func TestSetupBuildah_InstallsOnlyMissingPackages(t *testing.T) {
 	}
 
 	want := []string{"fuse-overlayfs", "gettext", "custom"}
-	if !reflect.DeepEqual(installer.packages, want) {
+	if !slices.Equal(installer.packages, want) {
 		t.Fatalf("installed packages = %v, want %v", installer.packages, want)
 	}
 }
@@ -216,18 +217,29 @@ func TestSetupBuildah_RejectsUnsafeInputs(t *testing.T) {
 
 	tool := &fakeBuildahSetupTool{commands: map[string]bool{"buildah": true}}
 
-	if _, err := appcontainer.SetupBuildah(context.Background(), tool, nil, nil, nil, io.Discard, appcontainer.SetupBuildahInput{
-		ExtraPackages:   "evil;rm",
-		InstallPackages: false,
-	}); err == nil || !strings.Contains(err.Error(), "unsafe apt package name") {
-		t.Fatalf("unsafe package error = %v", err)
-	}
+	for name, testCase := range map[string]struct {
+		in       appcontainer.SetupBuildahInput
+		wantText string
+	}{
+		// A package name reaches an apt argv, and a shared storage root
+		// would be reset out from under whatever else is using it.
+		"a package name that is not a package name": {
+			in:       appcontainer.SetupBuildahInput{ExtraPackages: "evil;rm", InstallPackages: false},
+			wantText: "unsafe apt package name",
+		},
+		"a storage root shared with the system": {
+			in:       appcontainer.SetupBuildahInput{InstallPackages: false, StorageRoot: "/tmp", RunnerTemp: t.TempDir()},
+			wantText: "buildah paths must be below runner-temp",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	if _, err := appcontainer.SetupBuildah(context.Background(), tool, nil, nil, nil, io.Discard, appcontainer.SetupBuildahInput{
-		InstallPackages: false,
-		StorageRoot:     "/tmp",
-	}); err == nil || !strings.Contains(err.Error(), "unsafe container storage root") {
-		t.Fatalf("unsafe root error = %v", err)
+			_, err := appcontainer.SetupBuildah(context.Background(), tool, nil, nil, nil, io.Discard, testCase.in)
+			if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), testCase.wantText) {
+				t.Fatalf("err = %v, want ErrUsage containing %q", err, testCase.wantText)
+			}
+		})
 	}
 }
 
@@ -387,18 +399,20 @@ func TestSetupBuildah_ProbeRemovesAStaleImageBeforeBuilding(t *testing.T) {
 		t.Fatalf("SetupBuildah: %v", err)
 	}
 
-	if len(tool.calls) < 2 {
-		t.Fatalf("calls = %v, want a removal followed by a build", tool.calls)
+	// The removal has to name the image the build then produces, or it
+	// deletes something else and the stale one survives.
+	if len(tool.calls) != 2 {
+		t.Fatalf("calls = %v, want one removal followed by one build", tool.calls)
 	}
 
-	if !strings.HasPrefix(tool.calls[0], "remove:") || tool.calls[1] != "build" {
+	removed, isRemoval := strings.CutPrefix(tool.calls[0], "remove:")
+	built, isBuild := strings.CutPrefix(tool.calls[1], "build:")
+
+	if !isRemoval || !isBuild {
 		t.Fatalf("calls = %v, want the stale image removed before the build", tool.calls)
 	}
 
-	// The removal has to name the image the build then produces, or it
-	// deletes something else and the stale one survives.
-	removed := strings.TrimPrefix(tool.calls[0], "remove:")
-	if removed == "" {
-		t.Error("the probe removed an image with no name")
+	if removed == "" || removed != built {
+		t.Errorf("removed %q but built %q; the removal must target the probe image", removed, built)
 	}
 }

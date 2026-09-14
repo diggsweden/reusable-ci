@@ -31,6 +31,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/livetest"
 )
@@ -149,6 +150,13 @@ func recordVerifyPromote(
 	if verify.ExitCode != 0 {
 		t.Fatalf("%s ledger validate-digests exited %d against the registry it just recorded\nstderr: %s",
 			forge, verify.ExitCode, verify.Stderr)
+	}
+	wrongLedger := writeWrongDigestLedger(t, filepath.Join(work, ledger), releaseTag)
+	wrong := livetest.CLIIn(t, target, repo, opts,
+		"container", "ledger", "validate-digests",
+		"--ledger", wrongLedger, "--auth-file", authFile, "--tag", releaseTag)
+	if wrong.ExitCode != int(errs.ExitCodeValidation) || !strings.Contains(wrong.Stderr, "resolves to "+pushed.Digest) {
+		t.Fatalf("%s wrong-digest control did not report the digest actually served by the registry: exit=%d stderr=%s", forge, wrong.ExitCode, wrong.Stderr)
 	}
 
 	promote := livetest.CLIIn(t, target, repo, opts,

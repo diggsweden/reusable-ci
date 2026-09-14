@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -22,8 +23,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/adapters/httpretry"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 func serverCertificatePEM(server *httptest.Server) []byte {
@@ -68,6 +73,44 @@ func withCAFacts(t *testing.T, target Target) Target {
 	target.CAFacts = facts
 
 	return target
+}
+
+func TestValidateCertificatePEM_CertificateOnlyGrammar(t *testing.T) {
+	t.Parallel()
+
+	certificate := string(independentCAPEM(t))
+	for _, tc := range []struct{ name, body, reason string }{
+		{name: "single", body: certificate},
+		{name: "bundle", body: " \n\t" + certificate + "\n\t" + certificate + " \n"},
+		{name: "crlf", body: strings.ReplaceAll(certificate, "\n", "\r\n")},
+		{name: "empty", body: " \n", reason: "contains no certificates"},
+		{name: "preamble", body: "NOT A CERTIFICATE\n" + certificate, reason: "must contain only PEM CERTIFICATE blocks"},
+		{name: "between", body: certificate + "NOT A CERTIFICATE\n" + certificate, reason: "must contain only PEM CERTIFICATE blocks"},
+		{name: "trailing", body: certificate + "NOT A CERTIFICATE\n", reason: "must contain only PEM CERTIFICATE blocks"},
+		{name: "headers", body: strings.Replace(certificate, "-----BEGIN CERTIFICATE-----\n", "-----BEGIN CERTIFICATE-----\nHeader: value\n\n", 1), reason: "must contain only PEM CERTIFICATE blocks"},
+		{name: "wrong_type", body: strings.ReplaceAll(certificate, "CERTIFICATE", "PUBLIC KEY"), reason: "must contain only PEM CERTIFICATE blocks"},
+		{name: "malformed_prefix_block", body: "-----BEGIN CERTIFICATE-----\n!\n-----END CERTIFICATE-----\n" + certificate, reason: "must contain only PEM CERTIFICATE blocks"},
+		{name: "invalid_der", body: string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not DER")})), reason: "contains an invalid certificate"},
+		{name: "missing_end_marker", body: strings.TrimSuffix(strings.TrimSpace(certificate), "-----END CERTIFICATE-----"), reason: "must contain only PEM CERTIFICATE blocks"},
+		{name: "nested_begin", body: "-----BEGIN CERTIFICATE-----\n" + certificate, reason: "must contain only PEM CERTIFICATE blocks"},
+		{name: "end_marker_only", body: certificate + "-----END CERTIFICATE-----\n", reason: "must contain only PEM CERTIFICATE blocks"},
+		{name: "valid_then_invalid_der", body: certificate + string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not DER")})), reason: "contains an invalid certificate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateCertificatePEM([]byte(tc.body))
+			if tc.reason == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				return
+			}
+
+			if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf("got %v, want validation refusal %q", err, tc.reason)
+			}
+		})
+	}
 }
 
 func TestRegistryTransport_RejectsChallengeRealmExfiltration(t *testing.T) {
@@ -189,6 +232,10 @@ func TestCredentialTransport_RejectsRedirectBeforeRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, ok := transport.inner.(*httpretry.Transport); ok {
+		t.Fatal("registry authority transport must leave retries to go-containerregistry")
+	}
+
 	client := &http.Client{Transport: transport, Timeout: time.Second}
 
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, registry.URL+"/v2/", nil)
@@ -232,6 +279,7 @@ func TestCredentialProxy_RejectsRedirectAuthorityBeforeRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -277,6 +325,70 @@ func TestCredentialProxy_RejectsRedirectAuthorityBeforeRequest(t *testing.T) {
 	}
 }
 
+func TestCredentialProxy_RejectsHostileBearerRealmBeforeTokenRequest(t *testing.T) {
+	t.Parallel()
+
+	var hostileRequests atomic.Int32
+
+	hostile := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		hostileRequests.Add(1)
+	}))
+	defer hostile.Close()
+
+	hostileRealm, err := url.Parse(hostile.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hostileRealm.Host = "hostile.example.invalid:" + hostileRealm.Port()
+
+	registry := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("WWW-Authenticate", `Bearer realm="`+hostileRealm.String()+`/token",service="hostile"`)
+		response.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer registry.Close()
+
+	proxy, err := StartCredentialProxy([]string{registry.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		_ = proxy.Close(ctx)
+	}()
+
+	proxyURL, err := url.Parse(proxy.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(append(serverCertificatePEM(registry), serverCertificatePEM(hostile)...))
+
+	transport := http.DefaultTransport.(*http.Transport).Clone() //nolint:forcetypeassert // Standard library default is asserted throughout this package.
+	transport.Proxy = http.ProxyURL(proxyURL)
+	transport.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+
+	repository, err := name.NewRepository(strings.TrimPrefix(registry.URL, "https://") + "/fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = remote.List(repository,
+		remote.WithTransport(transport),
+		remote.WithAuth(&authn.Basic{Username: "fixture-user", Password: "fixture-secret"}),
+	)
+	if err == nil || !strings.Contains(err.Error(), "Forbidden") {
+		t.Fatalf("hostile bearer realm result = %v", err)
+	}
+
+	if hostileRequests.Load() != 0 {
+		t.Fatalf("hostile bearer realm received %d token request(s)", hostileRequests.Load())
+	}
+}
+
 func TestTargetHTTPClient_UsesSelectedCAInsteadOfAmbientTrust(t *testing.T) {
 	t.Parallel()
 
@@ -301,6 +413,10 @@ func TestTargetHTTPClient_UsesSelectedCAInsteadOfAmbientTrust(t *testing.T) {
 	client, err := targetHTTPClient(target, time.Second)
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	if _, ok := client.Transport.(*httpretry.Transport); !ok {
+		t.Fatalf("forge HTTP transport = %T, want read retry transport", client.Transport)
 	}
 
 	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, server.URL, nil)
@@ -398,6 +514,43 @@ func TestFrozenCA_ReplacementIsRejectedBeforePathUse(t *testing.T) {
 	body, err := loadTargetCAPEM(captured)
 	if err != nil || string(body) != string(original) {
 		t.Fatalf("captured CA changed: err=%v", err)
+	}
+}
+
+// TestFrozenCA_ReturnedBytesAreIndependent mutates every CA byte slice handed
+// out after capture: the loaded copy, a second loaded copy and the file bytes
+// still verify, and a later load returns the original certificate.
+func TestFrozenCA_ReturnedBytesAreIndependent(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "ca.pem")
+
+	original := independentCAPEM(t)
+	if err := os.WriteFile(path, original, 0o400); err != nil {
+		t.Fatal(err)
+	}
+
+	captured, err := captureTargetCA(withCAFacts(t, Target{CAFile: path}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := loadTargetCAPEM(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i := range first {
+		first[i] = 'X'
+	}
+
+	second, err := loadTargetCAPEM(captured)
+	if err != nil || string(second) != string(original) {
+		t.Fatalf("a mutated returned copy changed the frozen CA: err=%v", err)
+	}
+
+	if verifyErr := verifyTargetCAPath(captured); verifyErr != nil {
+		t.Fatalf("mutating returned bytes broke verification of the unchanged file: %v", verifyErr)
 	}
 }
 

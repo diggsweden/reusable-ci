@@ -13,6 +13,8 @@ import (
 )
 
 func TestParseSignMethod_Accepts(t *testing.T) {
+	t.Parallel()
+
 	for _, name := range []string{"gpg", "sigstore", "kms"} {
 		got, err := release.ParseSignMethod(name)
 		if err != nil {
@@ -26,6 +28,8 @@ func TestParseSignMethod_Accepts(t *testing.T) {
 }
 
 func TestParseSignMethod_EmptyIsMissingInput(t *testing.T) {
+	t.Parallel()
+
 	_, err := release.ParseSignMethod("")
 	if !errors.Is(err, errs.ErrMissingInput) {
 		t.Errorf("empty input: expected ErrMissingInput, got %v", err)
@@ -33,13 +37,17 @@ func TestParseSignMethod_EmptyIsMissingInput(t *testing.T) {
 }
 
 func TestParseSignMethod_UnknownIsInvalidConfig(t *testing.T) {
+	t.Parallel()
+
 	_, err := release.ParseSignMethod("openssl")
 	if !errors.Is(err, errs.ErrInvalidConfig) {
 		t.Errorf("unknown method: expected ErrInvalidConfig, got %v", err)
 	}
 }
 
-func TestSignatureExtensions(t *testing.T) {
+func TestSignatureExtensions_MapsEachSignMethodToItsExtensions(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		method release.SignMethod
 		want   []string
@@ -58,6 +66,8 @@ func TestSignatureExtensions(t *testing.T) {
 }
 
 func TestDefaultSignMethod_IsGPG(t *testing.T) {
+	t.Parallel()
+
 	// Pinned: changing the default is a contract break for every
 	// existing consumer who relies on .asc verification. If we move
 	// the default, do it in a major version bump.

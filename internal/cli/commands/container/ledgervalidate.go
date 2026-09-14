@@ -24,7 +24,16 @@ func ledgerValidateCmd() *cli.Command {
 		Flags: []cli.Flag{
 			ledgerPathFlag(),
 			releaseTagFlag(),
-			&cli.BoolFlag{Name: "non-empty", Usage: "fail when the ledger contains no entries"},
+			// An empty ledger is refused by default. "validate" is called as a
+			// release gate (promote-stage.yml runs it immediately before
+			// `promote`), and there an empty ledger is never legitimate: it
+			// means the build job's `ledger add` did not run, or ran against a
+			// different --ledger path. Passing that through reported success
+			// for a release with no recorded images.
+			&cli.BoolFlag{Name: "allow-empty", Usage: "accept a ledger with no entries (default: an empty ledger is a failure)"},
+			// Retained: --non-empty now describes the default, so it is
+			// accepted and does nothing rather than breaking callers that pass it.
+			&cli.BoolFlag{Name: "non-empty", Usage: "deprecated, now the default; accepted and ignored", Hidden: true},
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			data, err := cliio.ReadFile(cmd.String(flagLedger))
@@ -41,8 +50,11 @@ func ledgerValidateCmd() *cli.Command {
 				return err
 			}
 
-			if cmd.Bool("non-empty") && len(entries) == 0 {
-				return fmt.Errorf("imageledger: ledger must contain at least one entry: %w", errs.ErrValidation)
+			if len(entries) == 0 && !cmd.Bool("allow-empty") {
+				return fmt.Errorf(
+					"imageledger: ledger %s contains no entries: nothing was recorded to validate "+
+						"(pass --allow-empty if a release with no images is expected): %w",
+					cmd.String(flagLedger), errs.ErrValidation)
 			}
 
 			_, _ = fmt.Fprintf(os.Stderr, "ledger: %d entr(y/ies) valid for release tag %q\n", len(entries), cmd.String(flagTag))

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 )
 
@@ -34,7 +35,8 @@ func TestMavenCentralCredentials_MissingUsername(t *testing.T) {
 	err := appvalidate.MavenCentralCredentials(&out, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.MavenCentralCredentialsInput{
 		Password: "p",
 	})
-	require.Error(t, err)
+	// A missing secret is a credential problem, not a bad flag: exit 77.
+	require.ErrorIs(t, err, errs.ErrPermissionDenied)
 	require.Contains(t, err.Error(), "USERNAME")
 	require.Contains(t, stderr.String(), "::error::Missing MAVEN_CENTRAL_USERNAME")
 	require.Contains(t, out.String(), "Required for publishing to Maven Central")
@@ -48,7 +50,8 @@ func TestMavenCentralCredentials_MissingPassword(t *testing.T) {
 	err := appvalidate.MavenCentralCredentials(&out, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), appvalidate.MavenCentralCredentialsInput{
 		Username: "u",
 	})
-	require.Error(t, err)
+	require.ErrorIs(t, err, errs.ErrPermissionDenied)
 	require.Contains(t, err.Error(), "PASSWORD")
+	require.Contains(t, stderr.String(), "::error::Missing MAVEN_CENTRAL_PASSWORD")
 	require.Contains(t, out.String(), "Required for publishing to Maven Central")
 }

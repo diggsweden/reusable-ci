@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -29,8 +30,14 @@ type Sink struct {
 	closeCount int
 }
 
-// New returns a fresh Sink and registers t.Cleanup to assert single Close.
-// Tests that care about close-once semantics inspect CloseCount.
+// New returns a fresh Sink.
+//
+// It registers no cleanup and asserts nothing on its own: a test that never
+// closes the sink passes. That is deliberate — most callers hand the sink to
+// one function and care about what was written, not about the close — but it
+// used to be documented as the opposite ("registers t.Cleanup to assert single
+// Close"), which is a claim a reader would reasonably rely on when deciding
+// they need not check. Close-once is opt-in: inspect CloseCount.
 func New(t *testing.T) *Sink {
 	t.Helper()
 
@@ -43,6 +50,10 @@ func New(t *testing.T) *Sink {
 
 // Set implements ci.OutputSink.
 func (s *Sink) Set(_ context.Context, key, value string) error {
+	if strings.ContainsAny(value, "\r\n") {
+		return fmt.Errorf("fakeoutputsink: scalar output %q contains a newline; use SetMultiline: %w", key, errs.ErrValidation)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -100,19 +111,28 @@ func (s *Sink) Single(key string) string {
 	return s.scalar[key]
 }
 
-// Multiline returns the multi-line value for key, or nil if absent.
+// Multiline returns a copy of the multi-line value for key, or nil if absent.
+// An explicitly set empty value (including nil) returns a non-nil empty slice.
 func (s *Sink) Multiline(key string) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	v := s.multiline[key]
-	cp := make([]string, len(v))
-	copy(cp, v)
+	value, ok := s.multiline[key]
+	if !ok {
+		return nil
+	}
+
+	cp := make([]string, len(value))
+	copy(cp, value)
 
 	return cp
 }
 
-// AllScalar returns a sorted snapshot of all scalar key=value pairs.
+// AllScalar returns a snapshot of all scalar key=value pairs.
+//
+// It is a copy, so mutating it cannot reach the sink. It is NOT ordered: this
+// is a map, and the doc used to call it "sorted", which is not something a map
+// can be. Use Keys for a sorted key list, or Order for insertion order.
 func (s *Sink) AllScalar() map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

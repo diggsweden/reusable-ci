@@ -29,7 +29,12 @@ func SourceDateEpochRFC3339() (string, bool) {
 		return "", false
 	}
 
-	return time.Unix(secs, 0).UTC().Format(time.RFC3339), true
+	formatted := time.Unix(secs, 0).UTC().Format(time.RFC3339)
+	if _, err := time.Parse(time.RFC3339, formatted); err != nil {
+		return "", false
+	}
+
+	return formatted, true
 }
 
 // envServerURL reads the forge server URL forge-neutrally, trailing slash
@@ -41,7 +46,30 @@ func SourceDateEpochRFC3339() (string, bool) {
 // $FORGEJO_SERVER. Resolving the shared runcontext.Var against os.Getenv
 // gives the value without a second name list.
 func envServerURL() string {
-	return strings.TrimSuffix(runcontext.ServerURL().Resolve(os.Getenv), "/")
+	value, _ := runcontext.ServerURL().ResolveAttested(runcontext.ProvenanceEnv(os.Getenv))
+
+	return strings.TrimRight(value.String(), "/")
+}
+
+// ProvenanceSource returns the repository URL, short ref and commit SHA from
+// the active runner's attested namespace, not the selected target provider.
+// Missing values stay empty; in particular, local runs invent no source identity.
+func ProvenanceSource() (string, string, string) {
+	get := runcontext.ProvenanceEnv(os.Getenv)
+	repository, _ := runcontext.Repository().ResolveAttested(get)
+	ref, _ := runcontext.RefName().ResolveAttested(get)
+	commit, _ := runcontext.Commit().ResolveAttested(get)
+	// GitLab's repository/ref names are intentionally outside the shared
+	// command flag chains; the filtered lookup admits them only on GitLab CI.
+	server := envServerURL()
+	repo := cmp.Or(repository.String(), get("CI_PROJECT_PATH"))
+
+	var repoURL string
+	if server != "" && repo != "" {
+		repoURL = server + "/" + repo
+	}
+
+	return repoURL, cmp.Or(ref.String(), get("CI_COMMIT_REF_NAME")), commit.String()
 }
 
 // ProvenanceInvocationID returns the run/job URL identifying this CI
@@ -49,7 +77,8 @@ func envServerURL() string {
 // the GitHub/Forgejo Actions run URL (Forgejo's native $FORGEJO_* names
 // preferred over the $GITHUB_* aliases). Empty when nothing is resolvable.
 func ProvenanceInvocationID() string {
-	if jobURL := os.Getenv("CI_JOB_URL"); jobURL != "" {
+	get := runcontext.ProvenanceEnv(os.Getenv)
+	if jobURL := cmp.Or(get("CI_JOB_URL"), get("CI_PIPELINE_URL")); jobURL != "" {
 		return jobURL
 	}
 
@@ -60,8 +89,9 @@ func ProvenanceInvocationID() string {
 	// (see EventName's doc). Provenance has no resolved context to fall back
 	// on — it is a helper, not a flag — so it appends them here, after the
 	// shared chain rather than instead of it.
-	repo := cmp.Or(runcontext.Repository().Resolve(os.Getenv), os.Getenv("CI_PROJECT_PATH"))
-	runID := cmp.Or(runcontext.RunID().Resolve(os.Getenv), os.Getenv("CI_PIPELINE_ID"))
+	repository, _ := runcontext.Repository().ResolveAttested(get)
+	run, _ := runcontext.RunID().ResolveAttested(get)
+	repo, runID := repository.String(), run.String()
 
 	if server != "" && repo != "" && runID != "" {
 		return server + "/" + repo + "/actions/runs/" + runID
@@ -77,7 +107,8 @@ func ProvenanceInvocationID() string {
 // attest, release provenance) so the builder identity is identical across
 // artifact types — never the human-facing workflow display name.
 func ProvenanceBuilderID() string {
-	if ref := cmp.Or(os.Getenv("FORGEJO_WORKFLOW_REF"), os.Getenv("GITHUB_WORKFLOW_REF")); ref != "" {
+	get := runcontext.ProvenanceEnv(os.Getenv)
+	if ref := cmp.Or(get("FORGEJO_WORKFLOW_REF"), get("GITHUB_WORKFLOW_REF")); ref != "" {
 		if server := envServerURL(); server != "" {
 			return server + "/" + ref
 		}

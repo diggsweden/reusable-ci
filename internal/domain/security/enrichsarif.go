@@ -4,10 +4,14 @@
 package security
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strconv"
-	"strings"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // EnrichGitHubSARIF rewrites a SARIF document body so every result has
@@ -18,15 +22,15 @@ import (
 // Rules:
 //   - Pre-existing primaryLocationLineHash values are left alone.
 //   - When absent, fingerprints["matchBasedId/v1"] wins when present.
-//   - Otherwise the hash is composed from
-//     ruleId | first-location.uri | startLine | message.text
-//     joined with "|".
+//   - Otherwise the identity is a canonical JSON tuple of ruleId,
+//     first-location.uri, startLine and message.text, so delimiters in one
+//     field cannot be mistaken for boundaries between fields.
 //
 // The function works on a generic `any` decoded by encoding/json so it
 // preserves the SARIF document's other fields untouched.
 func EnrichGitHubSARIF(body []byte) ([]byte, error) {
-	var doc any
-	if err := json.Unmarshal(body, &doc); err != nil {
+	doc, err := decodeSARIF(body)
+	if err != nil {
 		return nil, fmt.Errorf("parse SARIF: %w", err)
 	}
 
@@ -94,7 +98,7 @@ func matchBasedID(result map[string]any) string {
 	return v
 }
 
-// composeFallbackHash builds the pipe-joined synthetic fingerprint
+// composeFallbackHash builds the unambiguous synthetic fingerprint
 // when matchBasedId is unavailable.
 func composeFallbackHash(result map[string]any) string {
 	ruleID, _ := result["ruleId"].(string)
@@ -112,7 +116,40 @@ func composeFallbackHash(result map[string]any) string {
 		}
 	}
 
-	return strings.Join([]string{ruleID, uri, strconv.Itoa(startLine), msgText}, "|")
+	return sarifResultIdentity(ruleID, uri, startLine, msgText)
+}
+
+func sarifResultIdentity(ruleID, uri string, line int, message string) string {
+	// A string-only tuple is always JSON-encodable. Existing supplied
+	// fingerprints are preserved; only newly generated fallbacks use this shape.
+	body, _ := json.Marshal([]string{ruleID, uri, strconv.Itoa(line), message}) //nolint:errchkjson // fixed string-only tuple cannot produce a marshal error.
+
+	return string(body)
+}
+
+var errTrailingSARIF = errors.New("SARIF must contain exactly one JSON value")
+
+// decodeSARIF retains numeric spellings while enforcing the same single-value
+// boundary as json.Unmarshal. Both document rewriters use this decoder.
+func decodeSARIF(body []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+
+	var doc any
+	if err := decoder.Decode(&doc); err != nil {
+		return nil, fmt.Errorf("%w: %w", err, errs.ErrMalformedInput)
+	}
+
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("%w: %w", errTrailingSARIF, errs.ErrMalformedInput)
+		}
+
+		return nil, fmt.Errorf("%w: %w", err, errs.ErrMalformedInput)
+	}
+
+	return doc, nil
 }
 
 // extractURIAndStartLine pulls the artifact URI and starting line from the
@@ -147,13 +184,28 @@ func extractURIAndStartLine(result map[string]any) (string, int) {
 	startLine := 0
 
 	if region, ok := phys["region"].(map[string]any); ok {
-		switch v := region["startLine"].(type) {
-		case float64:
-			startLine = int(v)
-		case int:
-			startLine = v
-		}
+		startLine = sarifLine(region["startLine"])
 	}
 
 	return uri, startLine
+}
+
+func sarifLine(raw any) int {
+	switch value := raw.(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case json.Number:
+		if line, err := strconv.Atoi(value.String()); err == nil {
+			return line
+		}
+		// JSON integers may also use decimal or exponent notation. Retain
+		// the interpretation used before decoding with UseNumber.
+		if number, err := value.Float64(); err == nil {
+			return int(number)
+		}
+	}
+
+	return 0
 }

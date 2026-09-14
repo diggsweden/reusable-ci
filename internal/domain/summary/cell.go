@@ -9,7 +9,9 @@ import (
 )
 
 // SanitizeCell makes an attacker-influenceable value safe to embed in a
-// Markdown table cell of a step summary.
+// Markdown code span inside a table cell of a step summary. A value rendered
+// as plain cell text needs LiteralText instead: outside a code span, link and
+// HTML syntax still render, and this function leaves those alone.
 //
 // Values such as a fork pull request's branch name flow into the PR
 // summary, and git allows backticks and pipes in ref names. Without

@@ -17,8 +17,11 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
 
-// ymlExt is the workflow file extension this package scans for.
-const ymlExt = ".yml"
+// Workflow file extensions scanned by validators in this package.
+const (
+	ymlExt  = ".yml"
+	yamlExt = ".yaml"
+)
 
 // JobGraphInput drives JobGraph.
 type JobGraphInput struct {
@@ -38,39 +41,41 @@ type JobGraphInput struct {
 // outputs) and fails if any unacknowledged edge exists. Violations are emitted
 // as error annotations; the call returns a wrapped errs.ErrValidation.
 func JobGraph(w io.Writer, annot output.Annotator, in JobGraphInput) error { //nolint:varnamelen // idiomatic short name.
-	root := in.Root
-	if root == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getwd: %w", err)
-		}
-
-		root = cwd
-	}
-
-	workflowsDir := in.WorkflowsDir
-	if workflowsDir == "" {
-		workflowsDir = filepath.Join(root, ".github", "workflows")
-	}
-
 	if len(in.Workflows) > 0 {
 		if in.FS != nil {
-			return jobGraphFilesInFS(w, annot, in.FS, workflowFilesForFS(in.Workflows))
+			return jobGraphFiles(w, annot, workflowFilesForFS(in.Workflows), func(file string) ([]byte, error) {
+				return fs.ReadFile(in.FS, file)
+			})
 		}
 
-		return jobGraphFilesOS(w, annot, root, in.Workflows)
+		files := make([]string, 0, len(in.Workflows))
+		for _, file := range in.Workflows {
+			files = append(files, filepath.ToSlash(filepath.Clean(file)))
+		}
+
+		return jobGraphFiles(w, annot, files, func(file string) ([]byte, error) {
+			diskPath := filepath.FromSlash(file)
+			if !filepath.IsAbs(diskPath) {
+				diskPath = filepath.Join(in.Root, diskPath)
+			}
+
+			return os.ReadFile(diskPath) //nolint:gosec // operator-supplied workflow path.
+		})
 	}
 
-	if in.FS != nil {
-		return jobGraphInFS(w, annot, in.FS, workflowDirForFS(filepath.ToSlash(filepath.Clean(workflowsDir))))
-	}
-
-	relDir, err := filepath.Rel(root, workflowsDir)
+	fsys, workflowsDir, err := workflowScanDir(in.Root, in.WorkflowsDir, in.FS)
 	if err != nil {
-		return fmt.Errorf("relative workflows dir %s from %s: %w", workflowsDir, root, err)
+		return err
 	}
 
-	return jobGraphInFS(w, annot, os.DirFS(root), filepath.ToSlash(relDir))
+	entries, err := fs.ReadDir(fsys, workflowsDir)
+	if err != nil {
+		return workflowReadError(workflowsDir, err)
+	}
+
+	return jobGraphFiles(w, annot, collectWorkflowFiles(entries, workflowsDir), func(file string) ([]byte, error) {
+		return fs.ReadFile(fsys, file)
+	})
 }
 
 func workflowFilesForFS(files []string) []string {
@@ -82,38 +87,16 @@ func workflowFilesForFS(files []string) []string {
 	return out
 }
 
-func jobGraphFilesOS(out io.Writer, annot output.Annotator, root string, files []string) error {
+// jobGraphFiles checks every file in order and reports every violation. A file
+// that cannot be read or parsed stops the run with its own class: the result
+// could no longer claim to cover the requested workflows.
+func jobGraphFiles(w io.Writer, annot output.Annotator, files []string, read func(string) ([]byte, error)) error { //nolint:varnamelen // idiomatic short name.
 	failures := 0
 
 	for _, file := range files {
-		diskPath := file
-		if !filepath.IsAbs(diskPath) {
-			diskPath = filepath.Join(root, diskPath)
-		}
-
-		data, err := os.ReadFile(diskPath) //nolint:gosec // operator-supplied workflow path.
+		data, err := read(file)
 		if err != nil {
-			return fmt.Errorf("read %s: %w", file, err)
-		}
-
-		count, err := checkJobGraphFile(annot, filepath.ToSlash(filepath.Clean(file)), data)
-		if err != nil {
-			return err
-		}
-
-		failures += count
-	}
-
-	return finishJobGraph(out, failures)
-}
-
-func jobGraphFilesInFS(w io.Writer, annot output.Annotator, fsys fs.FS, files []string) error { //nolint:varnamelen // idiomatic short name.
-	failures := 0
-
-	for _, file := range files {
-		data, err := fs.ReadFile(fsys, file)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", file, err)
+			return workflowReadError(file, err)
 		}
 
 		count, err := checkJobGraphFile(annot, file, data)
@@ -124,7 +107,13 @@ func jobGraphFilesInFS(w io.Writer, annot output.Annotator, fsys fs.FS, files []
 		failures += count
 	}
 
-	return finishJobGraph(w, failures)
+	if failures > 0 {
+		return fmt.Errorf("job-graph masking validation failed: %w", errs.ErrValidation)
+	}
+
+	_, _ = fmt.Fprintln(w, "No reusable-consumer job-graph masking risks.")
+
+	return nil
 }
 
 // collectWorkflowFiles returns the sorted .yml/.yaml workflow paths under
@@ -133,7 +122,7 @@ func collectWorkflowFiles(entries []fs.DirEntry, workflowsDir string) []string {
 	files := make([]string, 0, len(entries))
 
 	for _, entry := range entries {
-		if entry.IsDir() || (filepath.Ext(entry.Name()) != ymlExt && filepath.Ext(entry.Name()) != ".yaml") {
+		if entry.IsDir() || (filepath.Ext(entry.Name()) != ymlExt && filepath.Ext(entry.Name()) != yamlExt) {
 			continue
 		}
 
@@ -145,37 +134,10 @@ func collectWorkflowFiles(entries []fs.DirEntry, workflowsDir string) []string {
 	return files
 }
 
-func jobGraphInFS(w io.Writer, annot output.Annotator, fsys fs.FS, workflowsDir string) error { //nolint:varnamelen // idiomatic short name.
-	entries, err := fs.ReadDir(fsys, workflowsDir)
-	if err != nil {
-		return fmt.Errorf("read workflows dir %s: %w", workflowsDir, err)
-	}
-
-	files := collectWorkflowFiles(entries, workflowsDir)
-
-	failures := 0
-
-	for _, file := range files {
-		data, err := fs.ReadFile(fsys, file)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", file, err)
-		}
-
-		count, err := checkJobGraphFile(annot, file, data)
-		if err != nil {
-			return err
-		}
-
-		failures += count
-	}
-
-	return finishJobGraph(w, failures)
-}
-
 func checkJobGraphFile(annot output.Annotator, file string, data []byte) (int, error) {
 	violations, err := validate.CheckJobGraph(data)
 	if err != nil {
-		return 0, fmt.Errorf("check %s: %w", file, err)
+		return 0, fmt.Errorf("check %s: %w: %w", file, err, errs.ErrMalformedInput)
 	}
 
 	for _, v := range violations {
@@ -183,14 +145,4 @@ func checkJobGraphFile(annot output.Annotator, file string, data []byte) (int, e
 	}
 
 	return len(violations), nil
-}
-
-func finishJobGraph(w io.Writer, failures int) error {
-	if failures > 0 {
-		return fmt.Errorf("job-graph masking validation failed: %w", errs.ErrValidation)
-	}
-
-	_, _ = fmt.Fprintln(w, "No reusable-consumer job-graph masking risks.")
-
-	return nil
 }

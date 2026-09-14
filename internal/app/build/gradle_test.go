@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -220,7 +221,7 @@ func TestGradleApplication_RunsTasks(t *testing.T) {
 	}
 
 	want := []string{"assemble", "check"} //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-	if !equalArgs(ops.args, want) {
+	if !slices.Equal(ops.args, want) {
 		t.Errorf("args = %v, want %v", ops.args, want)
 	}
 }
@@ -235,7 +236,7 @@ func TestGradleApplication_AppendsSkipTests(t *testing.T) {
 	}
 
 	want := []string{"assemble", "-x", "test"} //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-	if !equalArgs(ops.args, want) {
+	if !slices.Equal(ops.args, want) {
 		t.Errorf("args = %v, want %v", ops.args, want)
 	}
 }

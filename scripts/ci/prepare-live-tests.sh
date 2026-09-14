@@ -11,11 +11,6 @@ set -euo pipefail
 script_dir=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd -P)
 go_bin=${GO:-go}
-scenario=${1:-}
-[[ $# -le 1 ]] || {
-	printf 'usage: %s [go-test-run-filter]\n' "$0" >&2
-	exit 2
-}
 
 state=$(mktemp -d "${TMPDIR:-/tmp}/reusable-ci-live-preflight.XXXXXXXX")
 trap 'rm -rf -- "$state"' EXIT
@@ -30,4 +25,4 @@ if ! (
 	exit 2
 fi
 
-RC_LIVE_PREFLIGHT_BIN="$state/live-preflight" bash "$script_dir/run-live-tests.sh" "$scenario"
+RC_LIVE_PREFLIGHT_BIN="$state/live-preflight" bash "$script_dir/run-live-tests.sh" "$@"

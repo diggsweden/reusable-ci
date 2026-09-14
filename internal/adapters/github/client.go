@@ -86,18 +86,24 @@ func (p *Provider) releaseClient(_ context.Context) (*gogithub.Client, error) {
 
 				return
 			}
-			// In production GHE deployments, BaseURL is api/v3/ and
-			// UploadURL is api/uploads/. Tests collapse both onto one
-			// httptest server, so point them at the same place; the
-			// adapter's combinedHandler routes by path suffix.
+
 			c.BaseURL = u
-			c.UploadURL = u
+			c.UploadURL = githubUploadURL(u)
 		}
 
 		p.ghClient = c
 	})
 
 	return p.ghClient, p.ghErr
+}
+
+func githubUploadURL(apiURL *url.URL) *url.URL {
+	upload := *apiURL
+	if strings.HasSuffix(upload.Path, "/api/v3/") {
+		upload.Path = strings.TrimSuffix(upload.Path, "/api/v3/") + "/api/uploads/"
+	}
+
+	return &upload
 }
 
 // bearerHeader returns "Bearer <token>" or "" when token is empty.
@@ -117,6 +123,14 @@ func classifyGitHubError(err error) error {
 		return nil
 	}
 
+	var (
+		rate  *gogithub.RateLimitError
+		abuse *gogithub.AbuseRateLimitError
+	)
+	if errors.As(err, &rate) || errors.As(err, &abuse) {
+		return fmt.Errorf("GitHub rate limit: %w", errs.ErrRateLimited)
+	}
+
 	var resp *gogithub.ErrorResponse
 	if errors.As(err, &resp) && resp.Response != nil {
 		if cls := errs.FromHTTPStatus(resp.Response.StatusCode); cls != nil {
@@ -131,13 +145,43 @@ func classifyGitHubError(err error) error {
 	return err
 }
 
-// getJSON does a GET with the provided headers, returns the body bytes.
-// Empty Authorization is dropped. Caller is responsible for unmarshalling.
-func getJSON(ctx context.Context, client *http.Client, url string, headers map[string]string) ([]byte, error) {
+// doRequest sends req through client, or the default client, and refuses a
+// redirect that leaves the request's scheme and host, as the GitLab adapter
+// does. The standard library drops Authorization on such a redirect, but it
+// replays a POST with its body, so a SARIF report would be delivered to the
+// other host and its 2xx read as accepted by Code Scanning. The caller's
+// client is copied, never modified.
+func doRequest(client *http.Client, req *http.Request) (*http.Response, error) {
 	if client == nil {
 		client = defaultHTTPClient()
 	}
 
+	guarded := *client
+	previous := client.CheckRedirect
+	guarded.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("GitHub redirect limit reached: %w", errs.ErrDependencyUnavailable)
+		}
+
+		if previous != nil {
+			if err := previous(next, via); err != nil {
+				return err
+			}
+		}
+
+		if next.URL.User != nil || !strings.EqualFold(next.URL.Scheme, req.URL.Scheme) || !strings.EqualFold(next.URL.Host, req.URL.Host) {
+			return fmt.Errorf("GitHub redirect changes authority: %w", errs.ErrValidation)
+		}
+
+		return nil
+	}
+
+	return guarded.Do(req)
+}
+
+// getJSON does a GET with the provided headers, returns the body bytes.
+// Empty Authorization is dropped. Caller is responsible for unmarshalling.
+func getJSON(ctx context.Context, client *http.Client, url string, headers map[string]string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
@@ -151,7 +195,7 @@ func getJSON(ctx context.Context, client *http.Client, url string, headers map[s
 		req.Header.Set(k, v)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := doRequest(client, req)
 	if err != nil {
 		return nil, err
 	}
@@ -178,10 +222,6 @@ func getJSON(ctx context.Context, client *http.Client, url string, headers map[s
 // postJSON sends a POST request with the given body and headers,
 // classifying non-2xx responses via errs.FromHTTPStatus when possible.
 func postJSON(ctx context.Context, client *http.Client, url string, headers map[string]string, body []byte) error {
-	if client == nil {
-		client = defaultHTTPClient()
-	}
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
@@ -195,7 +235,7 @@ func postJSON(ctx context.Context, client *http.Client, url string, headers map[
 		req.Header.Set(k, v)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := doRequest(client, req)
 	if err != nil {
 		return fmt.Errorf("post: %w", err)
 	}

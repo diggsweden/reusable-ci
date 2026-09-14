@@ -5,6 +5,7 @@ package validate_test
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,7 +18,7 @@ const (
 	eventPR   = "pull_request"
 )
 
-func TestRequireAllowedEvent(t *testing.T) {
+func TestRequireAllowedEvent_RejectsEventsOutsideTheAllowlist(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -105,7 +106,7 @@ func TestRequireAllowedEvent_RefuseReturnsStructuredError(t *testing.T) {
 	}
 }
 
-func TestIsPullRequestEvent(t *testing.T) {
+func TestIsPullRequestEvent_RecognisesTheWholePullRequestFamily(t *testing.T) {
 	t.Parallel()
 
 	prFamily := []string{
@@ -137,4 +138,71 @@ func sortedAscending(in []string) bool {
 	}
 
 	return true
+}
+
+// TestRequireAllowedEvent_AnOverrideReplacesTheDefaults pins what a custom
+// allowlist means. It is the whole policy, not an addition to the default one:
+// a step that allows pull_request for a preview deploy must not also accept
+// push unless it says so. Matching is exact -- no trimming, no case folding --
+// because event names come from the forge in one spelling, and the CLI trims
+// the list before it gets here. The diagnostic lists the policy sorted, from a
+// copy, so the caller's slice is left as it was.
+func TestRequireAllowedEvent_AnOverrideReplacesTheDefaults(t *testing.T) {
+	t.Parallel()
+
+	refused := func(t *testing.T, err error) *validate.EventContextError {
+		t.Helper()
+
+		var ece *validate.EventContextError
+		if !errors.As(err, &ece) {
+			t.Fatalf("err = %v, want *EventContextError", err)
+		}
+
+		return ece
+	}
+
+	t.Run("a later entry is matched", func(t *testing.T) {
+		t.Parallel()
+
+		if err := validate.RequireAllowedEvent(eventPR, []string{"deployment", "workflow_call", eventPR}); err != nil {
+			t.Errorf("err = %v, want the third entry to allow it", err)
+		}
+	})
+
+	t.Run("a default event outside the override is refused", func(t *testing.T) {
+		t.Parallel()
+
+		allowed := []string{"zeta_event", eventPR, "alpha_event"}
+		ece := refused(t, validate.RequireAllowedEvent(eventPush, allowed))
+
+		if want := []string{"alpha_event", eventPR, "zeta_event"}; !slices.Equal(ece.Allowed, want) {
+			t.Errorf("Allowed = %v, want only the override, sorted: %v", ece.Allowed, want)
+		}
+
+		if want := []string{"zeta_event", eventPR, "alpha_event"}; !slices.Equal(allowed, want) {
+			t.Errorf("caller's allowlist became %v, want it unchanged", allowed)
+		}
+	})
+
+	for name, event := range map[string]string{
+		"case differs":       "Push",
+		"leading whitespace": " push",
+		"trailing newline":   "push\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if ece := refused(t, validate.RequireAllowedEvent(event, nil)); ece.Got != event {
+				t.Errorf("Got = %q, want the event as given", ece.Got)
+			}
+		})
+	}
+
+	t.Run("an allowlist entry with whitespace matches nothing", func(t *testing.T) {
+		t.Parallel()
+
+		if ece := refused(t, validate.RequireAllowedEvent(eventPush, []string{" push "})); ece.Got != eventPush {
+			t.Errorf("Got = %q, want %q", ece.Got, eventPush)
+		}
+	})
 }

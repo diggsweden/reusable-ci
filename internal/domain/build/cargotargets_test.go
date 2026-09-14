@@ -4,33 +4,49 @@
 package build_test
 
 import (
+	"maps"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/build"
 )
 
-func TestCargoTargetTriple(t *testing.T) {
+func TestCargoTargetTriple_MapsPlatformsToRustTriples(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		platform string
-		triple   string
-	}{
-		{"linux/amd64", "x86_64-unknown-linux-gnu"},
-		{"linux/arm64", "aarch64-unknown-linux-gnu"},
-		{"darwin/arm64", "aarch64-apple-darwin"},
+	// Every entry in the canonical table, not a sample: a triple that drifted
+	// would silently cross-compile for the wrong architecture, and the table
+	// is the only place that says which spelling maps to which target.
+	want := map[string]string{
+		"linux/amd64":   "x86_64-unknown-linux-gnu",
+		"linux/arm64":   "aarch64-unknown-linux-gnu",
+		"linux/arm":     "armv7-unknown-linux-gnueabihf",
+		"darwin/amd64":  "x86_64-apple-darwin",
+		"darwin/arm64":  "aarch64-apple-darwin",
+		"windows/amd64": "x86_64-pc-windows-gnu",
 	}
-	for _, tc := range cases {
-		if got := build.CargoTargetTriple(tc.platform); got != tc.triple {
-			t.Errorf("CargoTargetTriple(%q) = %q, want %q", tc.platform, got, tc.triple)
-		}
-
-		if !build.IsKnownCargoPlatform(tc.platform) {
-			t.Errorf("IsKnownCargoPlatform(%q) = false, want true", tc.platform)
-		}
+	if !maps.Equal(build.CargoTargetTriples, want) {
+		t.Errorf("CargoTargetTriples = %v, want %v", build.CargoTargetTriples, want)
 	}
 
-	if build.IsKnownCargoPlatform("plan9/amd64") {
-		t.Errorf("plan9/amd64 should not be a known cargo platform")
+	for platform, triple := range want {
+		if got := build.CargoTargetTriple(platform); got != triple {
+			t.Errorf("CargoTargetTriple(%q) = %q, want %q", platform, got, triple)
+		}
+
+		if !build.IsKnownCargoPlatform(platform) {
+			t.Errorf("IsKnownCargoPlatform(%q) = false, want true", platform)
+		}
+	}
+
+	// An unknown platform reports false AND yields the empty triple. Checking
+	// only the boolean left the caller's other question unanswered: a lookup
+	// that returned some default would have passed.
+	const unknown = "plan9/amd64"
+	if build.IsKnownCargoPlatform(unknown) {
+		t.Errorf("IsKnownCargoPlatform(%q) = true, want false", unknown)
+	}
+
+	if got := build.CargoTargetTriple(unknown); got != "" {
+		t.Errorf("CargoTargetTriple(%q) = %q, want the empty triple", unknown, got)
 	}
 }

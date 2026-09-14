@@ -37,13 +37,20 @@ func DownloadArtifacts(ctx context.Context, dl provider.RunArtifactDownloader, s
 		return err
 	}
 
-	for _, item := range plan.Items {
+	names := make([]string, len(plan.Items))
+	for index, item := range plan.Items {
 		name, err := transferArtifactName(item, in.RunID)
 		if err != nil {
 			return err
 		}
 
-		_, err = dl.DownloadRunArtifact(ctx, provider.RunArtifactDownload{
+		names[index] = name
+	}
+
+	for index, item := range plan.Items {
+		name := names[index]
+
+		_, err := dl.DownloadRunArtifact(ctx, provider.RunArtifactDownload{
 			RunID:      in.RunID,
 			Repository: in.Repository,
 			Name:       name,

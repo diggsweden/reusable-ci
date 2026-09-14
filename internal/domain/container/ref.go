@@ -5,10 +5,13 @@ package container
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+
+	ociname "github.com/google/go-containerregistry/pkg/name"
 )
 
 // DigestPattern is the canonical OCI content digest shape: the lowercase
@@ -41,18 +44,87 @@ var sha256HexRE = regexp.MustCompile(SHA256HexPattern)
 // sha256 with no `sha256:` prefix.
 func ValidSHA256Hex(s string) bool { return sha256HexRE.MatchString(s) }
 
-// digestPinnedRefRE matches a fully digest-pinned image reference with NO tag
-// permitted: registry/path@sha256:<64-hex>. The base-image and signer-image
-// trust boundaries require the exact digest form, so they share this pattern
-// rather than each re-compiling it. (The image ledger deliberately keeps its
-// own tag-permitting variant, imageledger.imageRefRE, which is a distinct rule.)
-//
-//nolint:gochecknoglobals // compiled regex, read-only.
-var digestPinnedRefRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+@sha256:[0-9a-f]{64}$`)
-
 // ValidDigestPinnedRef reports whether s is a tag-free, digest-pinned image
 // reference (registry/path@sha256:<64-hex>).
-func ValidDigestPinnedRef(s string) bool { return digestPinnedRefRE.MatchString(s) }
+func ValidDigestPinnedRef(ref string) bool {
+	ref = explicitRegistryName(ref)
+	parsed, err := ociname.NewDigest(ref, ociname.StrictValidation)
+
+	// NewDigest accepts tag@digest and deliberately drops the tag from Name.
+	// Requiring exact reproduction preserves this function's tag-free contract.
+	return err == nil && parsed.Name() == ref && validRepositorySegments(parsed.RepositoryStr())
+}
+
+// ValidDigestReference reports whether ref is a fully qualified digest
+// reference with an optional tag before the digest. Promotion journals retain
+// the source tag in this form while pinning the manifest with the digest.
+func ValidDigestReference(ref string) bool {
+	ref = explicitRegistryName(ref)
+
+	parsed, err := ociname.NewDigest(ref, ociname.StrictValidation)
+	if err != nil || !validRepositorySegments(parsed.RepositoryStr()) {
+		return false
+	}
+
+	if parsed.Name() == ref {
+		return true
+	}
+
+	base, _, hasDigest := strings.Cut(ref, "@")
+	if !hasDigest {
+		return false
+	}
+
+	tagged, err := ociname.NewTag(base, ociname.StrictValidation)
+
+	return err == nil && tagged.Name() == base
+}
+
+// ValidTaggedRef reports whether ref is a fully qualified, tagged image
+// reference. Exact reproduction rejects names that the parser would otherwise
+// expand with Docker Hub defaults.
+func ValidTaggedRef(ref string) bool {
+	ref = explicitRegistryName(ref)
+	parsed, err := ociname.NewTag(ref, ociname.StrictValidation)
+
+	return err == nil && parsed.Name() == ref && validRepositorySegments(parsed.RepositoryStr())
+}
+
+// ValidRepositoryName requires an explicit, lowercase, tag-free OCI repository.
+func ValidRepositoryName(value string) bool {
+	value = explicitRegistryName(value)
+	parsed, err := ociname.NewRepository(value, ociname.StrictValidation)
+
+	return err == nil && parsed.Name() == value && value == strings.ToLower(value) && validRepositorySegments(parsed.RepositoryStr())
+}
+
+// The name library rewrites Docker Hub's documented host to its index alias.
+// Accept both explicit hosts, without permitting implicit registry expansion.
+func explicitRegistryName(ref string) string {
+	if strings.HasPrefix(ref, "docker.io/") {
+		return "index.docker.io/" + strings.TrimPrefix(ref, "docker.io/")
+	}
+
+	return ref
+}
+
+// ValidateManifestTags validates the complete publication set before any writes.
+func ValidateManifestTags(image string, tags []string) error {
+	if !ValidRepositoryName(image) || len(tags) == 0 {
+		return fmt.Errorf("manifest requires a canonical image repository and tags: %w", errs.ErrValidation)
+	}
+
+	seen := make(map[string]bool, len(tags))
+	for _, tag := range tags {
+		if !ValidTaggedRef(tag) || StripTag(tag) != image || seen[tag] {
+			return fmt.Errorf("manifest tags must be unique tagged references under the image repository: %w", errs.ErrValidation)
+		}
+
+		seen[tag] = true
+	}
+
+	return nil
+}
 
 // OCITagComponent is the unanchored regex fragment for a single OCI tag
 // component: the value after `:` in a reference, and equally a promotion stage
@@ -61,15 +133,17 @@ func ValidDigestPinnedRef(s string) bool { return digestPinnedRefRE.MatchString(
 // `[A-Za-z0-9._-]` — so the ledger's composed ref patterns and the stage-name
 // validator embed THIS constant rather than re-spelling the class. Kept
 // unanchored so callers can splice it into a larger pattern; the anchored
-// standalone form is ociTagComponentRE / ValidOCITagComponent.
+// standalone form is ValidOCITagComponent.
 const OCITagComponent = `[A-Za-z0-9_][A-Za-z0-9._-]{0,127}`
 
-//nolint:gochecknoglobals // compiled regex, read-only.
-var ociTagComponentRE = regexp.MustCompile(`^` + OCITagComponent + `$`)
+//nolint:gochecknoglobals // shared immutable compiled grammar.
+var ociTagRE = regexp.MustCompile("^" + OCITagComponent + "$")
 
 // ValidOCITagComponent reports whether s is a single valid OCI tag component
 // (also the rule for a promotion stage name).
-func ValidOCITagComponent(s string) bool { return ociTagComponentRE.MatchString(s) }
+func ValidOCITagComponent(s string) bool {
+	return ociTagRE.MatchString(s)
+}
 
 // StripTag removes a trailing `:tag` from an OCI reference, keeping the
 // registry/path. A `:` that precedes the final `/` (a host:port, e.g.
@@ -112,6 +186,15 @@ func ImageNameWithoutTag(ref string) (string, error) {
 
 	name := StripTag(ref)
 
+	parsed, err := ociname.ParseReference(name, ociname.WeakValidation)
+	if err != nil {
+		return "", fmt.Errorf("invalid image repository name %q: %w: %w", ref, err, errs.ErrUsage)
+	}
+
+	if !validRepositorySegments(parsed.Context().RepositoryStr()) {
+		return "", fmt.Errorf("image repository name contains an empty or relative path segment: %s: %w", ref, errs.ErrUsage)
+	}
+
 	last := name[strings.LastIndex(name, "/")+1:]
 	if last == "" {
 		return "", fmt.Errorf("image repository name is empty after removing tag: %s: %w", ref, errs.ErrUsage)
@@ -122,6 +205,8 @@ func ImageNameWithoutTag(ref string) (string, error) {
 
 // CanonicalImageRef removes docker:// and canonicalizes digest refs by dropping
 // any tag before @sha256:..., matching Buildah/Skopeo's digest-ref expectation.
+//
+//nolint:cyclop // one refusal per malformed shape (empty, newline, transport, double digest, bad parse), then canonicalise. Flat guards.
 func CanonicalImageRef(ref string) (string, error) {
 	if ref == "" || strings.ContainsAny(ref, "\n\r") {
 		return "", fmt.Errorf("unsafe or empty image ref: %w", errs.ErrUsage)
@@ -137,21 +222,30 @@ func CanonicalImageRef(ref string) (string, error) {
 		return "", fmt.Errorf("image ref contains multiple digest separators: %s: %w", ref, errs.ErrUsage)
 	}
 
-	name, digest, hasDigest := strings.Cut(ref, "@")
+	parsed, err := ociname.ParseReference(ref, ociname.WeakValidation)
+	if err != nil {
+		return "", fmt.Errorf("invalid image ref %q: %w: %w", ref, err, errs.ErrUsage)
+	}
+
+	if !validRepositorySegments(parsed.Context().RepositoryStr()) {
+		return "", fmt.Errorf("image ref contains an empty or relative path segment: %s: %w", ref, errs.ErrUsage)
+	}
+
+	repository, digest, hasDigest := strings.Cut(ref, "@")
 	if !hasDigest {
 		return ref, nil
 	}
 
-	if name == "" || digest == "" {
+	if repository == "" || digest == "" {
 		return "", fmt.Errorf("image digest ref must include both name and digest: %s: %w", ref, errs.ErrUsage)
 	}
 
-	name, err := ImageNameWithoutTag(name)
+	repository, err = ImageNameWithoutTag(repository)
 	if err != nil {
 		return "", err
 	}
 
-	return name + "@" + digest, nil
+	return repository + "@" + digest, nil
 }
 
 // ImageNameForRef returns the repository/name for a tag or digest ref.
@@ -164,4 +258,72 @@ func ImageNameForRef(ref string) (string, error) {
 	name, _, _ := strings.Cut(canonical, "@")
 
 	return ImageNameWithoutTag(name)
+}
+
+// RegistryHost returns the registry authority from either an HTTP(S) URL, a
+// bare host, or a fully qualified OCI repository path.
+//
+//nolint:cyclop // accepts both a URL and a bare OCI repository, each with its own refusals — two flat parse paths rather than nested logic.
+func RegistryHost(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" || strings.ContainsAny(value, " \t\n\r") {
+		return "", fmt.Errorf("registry host is empty or contains whitespace: %w", errs.ErrUsage)
+	}
+
+	// Credentials in the authority are refused before any branch below can
+	// quote the input back. Every refusal here used to echo the raw value, so
+	// `https://user:TOKEN@registry` -- a plausible way to misconfigure a server
+	// URL -- put the token into the error and from there into a CI log. The
+	// message states the rule instead of the value.
+	if strings.Contains(registryAuthority(value), "@") {
+		return "", fmt.Errorf("registry host must not carry credentials (userinfo); supply them through the registry auth inputs: %w", errs.ErrUsage)
+	}
+
+	if strings.Contains(value, "://") {
+		parsed, err := url.Parse(value)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
+			return "", fmt.Errorf("invalid registry URL %q: %w", raw, errs.ErrUsage)
+		}
+
+		return parsed.Host, nil
+	}
+
+	value = strings.Trim(value, "/")
+	if strings.Contains(value, "/") {
+		repository, err := ociname.NewRepository(value, ociname.StrictValidation)
+		if err != nil {
+			return "", fmt.Errorf("invalid registry repository %q: %w: %w", raw, err, errs.ErrUsage)
+		}
+
+		return repository.RegistryStr(), nil
+	}
+
+	registry, err := ociname.NewRegistry(value, ociname.StrictValidation)
+	if err != nil {
+		return "", fmt.Errorf("invalid registry host %q: %w: %w", raw, err, errs.ErrUsage)
+	}
+
+	return registry.RegistryStr(), nil
+}
+
+// registryAuthority returns the authority part of a registry URL, bare host or
+// repository path: after any scheme and before the first path separator.
+func registryAuthority(value string) string {
+	if _, rest, found := strings.Cut(value, "://"); found {
+		value = rest
+	}
+
+	authority, _, _ := strings.Cut(value, "/")
+
+	return authority
+}
+
+func validRepositorySegments(path string) bool {
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+
+	return true
 }

@@ -9,7 +9,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
 
-func TestClassifyBranchPosition(t *testing.T) {
+func TestClassifyBranchPosition_ClassifiesTagAndBranchContainment(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {

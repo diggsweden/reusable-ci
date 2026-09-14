@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,6 +51,10 @@ func (e JobResultEnvelope) MarshalJSON() ([]byte, error) {
 
 // ParseJobResultEnvelope parses and validates one job-result document.
 func ParseJobResultEnvelope(data []byte) (JobResultEnvelope, error) {
+	if err := checkConsumedMembers(data, "job-result", "version", "job", "result"); err != nil {
+		return JobResultEnvelope{}, fmt.Errorf("parse job-result JSON: %w", err)
+	}
+
 	var raw struct {
 		Version int    `json:"version"`
 		Job     string `json:"job"`
@@ -84,34 +89,110 @@ func ParseJobResultEnvelope(data []byte) (JobResultEnvelope, error) {
 // way to read sibling `uses:` job results; the shape is not vendor-specific, so
 // it is named for what it is. Each status is normalised fail-closed
 // (NormalizeJobStatus), and records sort by name for deterministic output.
+//
+//nolint:cyclop // Keep outer duplicate-job preservation and each child's member/typed checks together.
 func ParseJobResultsMap(data []byte) ([]JobResultEnvelope, error) {
-	var raw map[string]struct {
-		Result string `json:"result"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf(
-			"parse job-results map: not a valid {job:{result}} object: %w", errs.ErrMalformedInput)
+	decoder := json.NewDecoder(bytes.NewReader(data))
+
+	start, err := decoder.Token()
+	if err != nil || start != json.Delim('{') {
+		return nil, fmt.Errorf("parse job-results map: not a valid {job:{result}} object: %w", errs.ErrMalformedInput)
 	}
 
-	names := make([]string, 0, len(raw))
-	for name := range raw {
-		if strings.TrimSpace(name) != "" {
-			names = append(names, name)
+	var records []JobResultEnvelope
+	// Keep duplicate job names as separate records so aggregation sees every
+	// outcome instead of encoding/json's last-key-wins map behavior.
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return nil, fmt.Errorf("read job name: %w: %w", err, errs.ErrMalformedInput)
+		}
+
+		name, ok := key.(string)
+		if !ok || strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("job name is empty or invalid: %w", errs.ErrMalformedInput)
+		}
+
+		var body json.RawMessage
+		if err := decoder.Decode(&body); err != nil {
+			return nil, fmt.Errorf("read job result: %w: %w", err, errs.ErrMalformedInput)
+		}
+
+		if err := checkConsumedMembers(body, "job-result", "result"); err != nil {
+			return nil, fmt.Errorf("read job result for job %q: %w", name, err)
+		}
+
+		var record struct {
+			Result string `json:"result"`
+		}
+		if err := json.Unmarshal(body, &record); err != nil {
+			return nil, fmt.Errorf("read job result: %w: %w", err, errs.ErrMalformedInput)
+		}
+
+		records = append(records, JobResultEnvelope{Version: JobResultEnvelopeVersion, Job: name, Result: NormalizeJobStatus(record.Result)})
+	}
+
+	if _, err := decoder.Token(); err != nil {
+		return nil, fmt.Errorf("close job-results map: %w: %w", err, errs.ErrMalformedInput)
+	}
+
+	var extra any
+	if decoder.Decode(&extra) != io.EOF {
+		return nil, fmt.Errorf("trailing job-results data: %w", errs.ErrMalformedInput)
+	}
+
+	sort.SliceStable(records, func(i, j int) bool { return records[i].Job < records[j].Job })
+
+	return records, nil
+}
+
+// checkConsumedMembers counts only immediate consumed fields, which encoding/json
+// matches case-insensitively and would otherwise let a later duplicate
+// overwrite. Typed decoding still checks shape and syntax; RawMessage leaves
+// additive values opaque, including nested duplicate keys and numbers outside
+// float64's range. label names the contract in errors.
+func checkConsumedMembers(data []byte, label string, fields ...string) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+
+	start, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("not a valid %s object: %w", label, errs.ErrMalformedInput)
+	}
+
+	if start != json.Delim('{') {
+		// In particular, retain the map child's existing null normalization.
+		return nil
+	}
+
+	seen := make([]bool, len(fields))
+
+	for decoder.More() {
+		key, err := decoder.Token()
+
+		name, ok := key.(string)
+		if err != nil || !ok {
+			return fmt.Errorf("invalid %s member: %w", label, errs.ErrMalformedInput)
+		}
+
+		for index, field := range fields {
+			if !strings.EqualFold(name, field) {
+				continue
+			}
+
+			if seen[index] {
+				return fmt.Errorf("duplicate field %q: %w", field, errs.ErrMalformedInput)
+			}
+
+			seen[index] = true
+		}
+
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return fmt.Errorf("invalid %s member value: %w", label, errs.ErrMalformedInput)
 		}
 	}
 
-	sort.Strings(names)
-
-	out := make([]JobResultEnvelope, 0, len(names))
-	for _, name := range names {
-		out = append(out, JobResultEnvelope{
-			Version: JobResultEnvelopeVersion,
-			Job:     name,
-			Result:  NormalizeJobStatus(raw[name].Result),
-		})
-	}
-
-	return out, nil
+	return nil
 }
 
 // ResolveTargetResults maps each planned target name to the result reported by
@@ -121,13 +202,19 @@ func ParseJobResultsMap(data []byte) ([]JobResultEnvelope, error) {
 //
 // Targets with no matching record are omitted from the map; the caller applies
 // the fail-closed default (a planned target that never reported is a failure).
-// When two records would map to the same target, the last one wins — callers
-// collect records from a flat directory where each job writes once, so
-// collisions only arise from malformed input.
+// Alias collisions aggregate conservatively; input order and exact-name
+// preference must never hide a failed job behind another spelling's success.
 func ResolveTargetResults(targetNames []string, jobs []JobResultEnvelope) map[string]Result {
 	byJob := make(map[string]Result, len(jobs))
 	for _, job := range jobs {
-		byJob[job.Job] = job.Result
+		name := strings.ReplaceAll(job.Job, "_", "-")
+		if prior, exists := byJob[name]; exists {
+			if prior != job.Result {
+				byJob[name] = ResultFailure
+			}
+		} else {
+			byJob[name] = job.Result
+		}
 	}
 
 	out := make(map[string]Result, len(targetNames))
@@ -144,15 +231,7 @@ func ResolveTargetResults(targetNames []string, jobs []JobResultEnvelope) map[st
 // matchJobResult finds the record for a target, accepting the snake_case form
 // recorded as kebab-case (and vice versa).
 func matchJobResult(byJob map[string]Result, target string) (Result, bool) {
-	if result, ok := byJob[target]; ok {
-		return result, true
-	}
+	result, ok := byJob[strings.ReplaceAll(target, "_", "-")]
 
-	if dashed := strings.ReplaceAll(target, "_", "-"); dashed != target {
-		if result, ok := byJob[dashed]; ok {
-			return result, true
-		}
-	}
-
-	return "", false
+	return result, ok
 }

@@ -32,7 +32,11 @@ func TestResolveContext_FromInjectedEnv(t *testing.T) {
 		"CI_REPO":     "owner/repo",
 	})}
 
-	evt, _ := p.ResolveContext(context.Background())
+	evt, err := p.ResolveContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if evt.ForgeAPI != provider.ForgeLocal {
 		t.Errorf("Platform = %q", evt.ForgeAPI)
 	}

@@ -19,7 +19,6 @@ path = [
   "docs/artifacts-reference.md",
   "docs/components.md",
   "docs/ecosystems.md",
-  "docs/gitlabsupportplan.md",
   "docs/publishing.md",
   "docs/reference.md",
   "docs/sbom.md",
@@ -46,13 +45,16 @@ path = [
   "docs/cli-black-box.md",
   "docs/cli-reference.md",
   "docs/flows.md",
+  "docs/failed-release-recovery.md",
   "docs/forgejo.md",
+  "docs/gitlabsupportplan.md",
   "docs/neutral-target-v2-rollout.md",
-  "docs/providers.md",
   "docs/release-flow-architecture.md",
+  "docs/signing-convergence.md",
+  "docs/open-questions.md",
+  "docs/providers.md",
   "docs/runtime-images.md",
   "docs/scripts.md",
-  "docs/signing-convergence.md",
   "docs/testing.md",
   "docs/threat-model.md",
   "examples/gitlab/*/README.md",
@@ -61,6 +63,11 @@ path = [
   "examples/signing/*/README.md",
 ]
 precedence = "override"
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
+[[annotations]]
+path = "examples/signing/sigstore-keyless/.reusable-ci/allowed_signers.example"
 SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
 
@@ -123,8 +130,15 @@ path = [
   "internal/domain/build/testdata/**",
   "internal/domain/pipeline/testdata/**",
   "internal/domain/provenance/testdata/**",
-  "internal/testutil/fixtures/testdata/**",
+  "internal/domain/security/testdata/**",
   "internal/livetest/testdata/**",
 ]
 SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
+
+# In-runner probe shell bodies embedded by internal/livetest (go:embed);
+# headers would corrupt the generated probes, so they are annotated here.
+[[annotations]]
+path = ["internal/livetest/probes/**"]
+SPDX-FileCopyrightText = "2026 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "EUPL-1.2 OR GPL-3.0-or-later"

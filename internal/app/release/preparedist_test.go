@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
@@ -17,9 +18,9 @@ import (
 )
 
 func TestPrepareDist_PrunesDirectoriesAndEmitsDigest(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	dir := filepath.Join(workspace, "dist")
 	writePrepareDistFile(t, filepath.Join(dir, "release.txt"), "release\n")
 	writePrepareDistFile(t, filepath.Join(dir, "raw", "binary"), "pruned\n")
 
@@ -40,8 +41,11 @@ func TestPrepareDist_PrunesDirectoriesAndEmitsDigest(t *testing.T) {
 		t.Fatalf("digest output mismatch: result=%q sink=%q", got.Digest, sink.Single("digest"))
 	}
 
-	if stderr.String() == "" {
-		t.Fatal("expected digest log on stderr")
+	// The log carries the digest itself, so an operator reading the job
+	// output can compare it against what the next step reports. "Not empty"
+	// was satisfied by any line at all.
+	if !strings.Contains(stderr.String(), got.Digest) {
+		t.Errorf("stderr = %q, want it to name the digest %q", stderr.String(), got.Digest)
 	}
 }
 
@@ -51,6 +55,31 @@ func TestPrepareDist_RejectsUnsafePruneRoot(t *testing.T) {
 	_, err := apprelease.PrepareDist(context.Background(), nil, &bytes.Buffer{}, apprelease.PrepareDistInput{Path: ".", PruneDirs: true})
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+}
+
+func TestPrepareDist_RejectsSymlinkedParentOutsideWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	writePrepareDistFile(t, filepath.Join(outside, "dist", "nested", "keep"), "outside\n")
+
+	link := filepath.Join(workspace, "linked")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	t.Chdir(workspace)
+
+	_, err := apprelease.PrepareDist(context.Background(), nil, &bytes.Buffer{}, apprelease.PrepareDistInput{
+		Path:      filepath.Join("linked", "dist"),
+		PruneDirs: true,
+	})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(outside, "dist", "nested", "keep")); err != nil {
+		t.Fatalf("outside content was pruned: %v", err)
 	}
 }
 

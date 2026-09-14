@@ -86,6 +86,38 @@ func filterEnv(environ []string, allow map[string]bool) []string {
 	return out
 }
 
+// ForKeyRef returns an Adapter isolated for the signing key it is given.
+//
+// An env:// key names the one variable cosign needs, so the subprocess
+// can be reduced to the runtime set plus that variable and
+// COSIGN_PASSWORD. KMS, file and keyless refs each need credential
+// material this package cannot enumerate -- AWS_*, VAULT_*, the runner's
+// OIDC request variables -- and isolating them on a guess does not fail
+// at review time, it fails during a release. Those get the ambient
+// environment, deliberately.
+//
+// Callers add the variables their own path needs (for example
+// DOCKER_CONFIG for registry auth) through extra; they are allowed only
+// on the isolated path, since the ambient one already has them.
+//
+// This is the rule three signing call sites had each spelled out for
+// themselves. Having it in one place is what stops a fourth from
+// quietly not having it.
+func ForKeyRef(keyRef string, extra ...string) *Adapter {
+	variable, isEnvRef := strings.CutPrefix(keyRef, "env://")
+	if !isEnvRef || variable == "" {
+		return New()
+	}
+
+	allow := append([]string{variable, envKeyPassword}, extra...)
+
+	return NewIsolated(allow...)
+}
+
+// envKeyPassword is the variable cosign reads for a signing key's
+// passphrase; always allowed alongside an env:// key.
+const envKeyPassword = "COSIGN_PASSWORD"
+
 // NewIsolated returns an Adapter whose cosign subprocess sees only the
 // runtime env plus the named secret vars (e.g. the COSIGN key family).
 // Used by the provenance signer so an env-supplied signing key is the

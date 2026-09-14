@@ -16,10 +16,10 @@ const (
 	mergeRequestEvent = "merge_request_event"
 )
 
-// TestClassifyRefType covers the gitlab half of the shared rule. The PR
+// TestClassifyRefType_ClassifiesRefsFromTheForgeEnvironment covers the gitlab half of the shared rule. The PR
 // case was reached through the provider tests; the rest of the ladder
 // was not, and the ladder is ordered for a reason.
-func TestClassifyRefType(t *testing.T) {
+func TestClassifyRefType_ClassifiesRefsFromTheForgeEnvironment(t *testing.T) {
 	t.Parallel()
 
 	env := func(kv map[string]string) func(string) string {

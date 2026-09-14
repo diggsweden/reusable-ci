@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
@@ -75,7 +76,9 @@ func SwiftFormatLint(
 		pattern = "*.swift"
 	}
 
-	listed, err := files.Run(ctx, "ls-files", "--", pattern)
+	dir := defaultDir(in.Dir)
+
+	listed, err := files.Run(ctx, "-C", dir, "ls-files", "--", pattern)
 	if err != nil {
 		return fmt.Errorf("git ls-files %q: %w", pattern, err)
 	}
@@ -89,7 +92,7 @@ func SwiftFormatLint(
 
 	_, _ = fmt.Fprintf(w, "Running swift-format on %d files...\n", len(swiftFiles))
 
-	output, exitCode, err := sf.Lint(ctx, in.Dir, swiftFiles)
+	output, exitCode, err := sf.Lint(ctx, dir, swiftFiles)
 	if err != nil {
 		return fmt.Errorf("swift-format lint: %w", err)
 	}
@@ -139,7 +142,12 @@ func SwiftLintLint(
 ) error {
 	configPath := in.ConfigPath
 	if configPath != "" {
-		if exists, err := fileExists(configPath); err != nil {
+		resolved := configPath
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(defaultDir(in.Dir), resolved)
+		}
+
+		if exists, err := fileExists(resolved); err != nil {
 			return err
 		} else if exists {
 			_, _ = fmt.Fprintf(w, "Using SwiftLint configuration: %s\n", configPath)
@@ -199,7 +207,7 @@ func splitNonEmptyLines(value string) []string {
 func fileExists(path string) (bool, error) {
 	info, err := os.Stat(path)
 	if err == nil {
-		return !info.IsDir(), nil
+		return info.Mode().IsRegular(), nil
 	}
 
 	if errors.Is(err, fs.ErrNotExist) {

@@ -95,3 +95,35 @@ func TestEventContext_EmptyEventNameWrapsMissingInput(t *testing.T) {
 		t.Errorf("expected ErrMissingInput, got %v", err)
 	}
 }
+
+// TestEventContext_HostileEventNameStaysOneAnnotation feeds an event name that
+// carries a newline and a workflow command. The name comes from the workflow
+// context, so a refusal must not let it open a second annotation or end the
+// first early; the Go error quotes it instead of printing it raw.
+func TestEventContext_HostileEventNameStaysOneAnnotation(t *testing.T) {
+	t.Parallel()
+
+	const hostile = "fork\n::warning title=owned::injected"
+
+	var out bytes.Buffer
+
+	err := appvalidate.EventContext(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.EventContextInput{EventName: hostile})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+
+	annotation := out.String()
+	if strings.Count(annotation, "\n") != 1 || !strings.HasPrefix(annotation, "::error title=Refused trigger event::") || strings.Contains(annotation, "\n::warning") {
+		t.Errorf("annotation = %q, want a single ::error line", annotation)
+	}
+
+	if strings.Contains(err.Error(), hostile) {
+		t.Errorf("error prints the event name raw: %q", err.Error())
+	}
+
+	// The generic guidance must say an override replaces the policy: the old
+	// "extend" wording led adopters to list only the event they were adding.
+	if !strings.Contains(err.Error(), "replaces the default policy") {
+		t.Errorf("guidance does not say the override replaces the defaults: %v", err)
+	}
+}

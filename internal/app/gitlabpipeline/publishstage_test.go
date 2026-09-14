@@ -4,73 +4,162 @@
 package gitlabpipeline_test
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	gitlabpipeline "github.com/diggsweden/reusable-ci/v3/internal/app/gitlabpipeline"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
-func TestPublishStagePipeline_FansOutTargets(t *testing.T) {
+func TestPublishStagePipeline_RefusesUnrepresentableArtifactHandoff(t *testing.T) {
 	t.Parallel()
 
-	plan := pipeline.ReleasePublishStagePlan{
-		Stage: "publish",
-		Targets: pipeline.ReleasePublishTargets{
-			MavenCentral: pipeline.TargetPlan[pipeline.PlannedArtifact]{
-				Runs: true, Items: []pipeline.PlannedArtifact{{Name: "lib-core", ProjectType: projecttype.Maven}},
+	for _, tc := range []struct {
+		name    string
+		targets pipeline.ReleasePublishTargets
+	}{
+		{
+			name: "maven central",
+			targets: pipeline.ReleasePublishTargets{
+				MavenCentral: runningTarget(pipeline.PlannedArtifact{Name: "lib", ProjectType: projecttype.Maven}),
 			},
-			// PlannedContainer target — different item type, same helper.
-			Containers: pipeline.TargetPlan[pipeline.PlannedContainer]{
-				Runs: true, Items: []pipeline.PlannedContainer{{Name: "app-image"}},
-			},
-			// npm/google-play/etc not running.
 		},
-	}
+		{
+			name: "forge packages maven",
+			targets: pipeline.ReleasePublishTargets{
+				ForgePackages: runningTarget(pipeline.PlannedArtifact{Name: "lib", ProjectType: projecttype.Maven}),
+			},
+		},
+		{
+			// npm is a valid component project type. It reaches the shared
+			// handoff refusal rather than being rejected as Maven-only.
+			name: "forge packages npm",
+			targets: pipeline.ReleasePublishTargets{
+				ForgePackages: runningTarget(pipeline.PlannedArtifact{Name: "web", ProjectType: projecttype.NPM}),
+			},
+		},
+		{
+			name: "apple app store",
+			targets: pipeline.ReleasePublishTargets{
+				XcodeIOS: runningTarget(pipeline.PlannedArtifact{Name: "ios", ProjectType: projecttype.XcodeIOS}),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	child := gitlabpipeline.PublishStagePipeline(plan, gitlabpipeline.BuildPipelineOptions{
-		ComponentBase: "$CI_SERVER_FQDN/diggsweden/reusable-ci",
-		ComponentRef:  "1.0.0",
-		Version:       "2.3.4",
-	})
-
-	if len(child.Include) != 2 {
-		t.Fatalf("includes = %d, want 2 (maven-central + container)", len(child.Include))
-	}
-
-	mvn := child.Include[0]
-	if mvn.Component != "$CI_SERVER_FQDN/diggsweden/reusable-ci/publish-maven-central@1.0.0" {
-		t.Errorf("maven-central component = %q", mvn.Component)
-	}
-
-	if mvn.Inputs["job-name"] != "publish-maven-central-lib-core" || mvn.Inputs["artifact-name"] != "lib-core" || mvn.Inputs["version"] != "2.3.4" {
-		t.Errorf("maven-central inputs = %v", mvn.Inputs)
-	}
-
-	// project-type routes multi-ecosystem publish components (publish-forge-packages).
-	if mvn.Inputs["project-type"] != "maven" {
-		t.Errorf("maven-central project-type = %q, want maven", mvn.Inputs["project-type"])
-	}
-
-	cnt := child.Include[1]
-	if cnt.Component != "$CI_SERVER_FQDN/diggsweden/reusable-ci/publish-container@1.0.0" {
-		t.Errorf("container component = %q", cnt.Component)
-	}
-
-	if cnt.Inputs["job-name"] != "publish-container-app-image" {
-		t.Errorf("container job-name = %q", cnt.Inputs["job-name"])
+			_, err := gitlabpipeline.PublishStagePipeline(pipeline.ReleasePublishStagePlan{Targets: tc.targets}, gitlabpipeline.BuildPipelineOptions{
+				ComponentBase: "$CI_SERVER_FQDN/diggsweden/reusable-ci",
+				ComponentRef:  "1.0.0",
+			})
+			if !errors.Is(err, errs.ErrUnsupported) || !strings.Contains(err.Error(), "artifact handoff") {
+				t.Fatalf("err = %v, want ErrUnsupported naming the artifact handoff", err)
+			}
+		})
 	}
 }
 
-func TestPublishStagePipeline_EmptyStillValid(t *testing.T) {
+func TestPublishStagePipeline_RejectsZeroJobChildPipeline(t *testing.T) {
 	t.Parallel()
 
-	child := gitlabpipeline.PublishStagePipeline(pipeline.ReleasePublishStagePlan{Stage: "publish"}, gitlabpipeline.BuildPipelineOptions{ComponentRef: "1.0.0"})
-	if len(child.Include) != 0 {
-		t.Errorf("includes = %d, want 0", len(child.Include))
+	_, err := gitlabpipeline.PublishStagePipeline(pipeline.ReleasePublishStagePlan{Stage: "publish"}, gitlabpipeline.BuildPipelineOptions{
+		ComponentBase: "$CI_SERVER_FQDN/diggsweden/reusable-ci",
+		ComponentRef:  "1.0.0",
+	})
+	if !errors.Is(err, errs.ErrInvalidConfig) || !strings.Contains(err.Error(), "no generated jobs") {
+		t.Fatalf("err = %v, want ErrInvalidConfig naming the zero-job pipeline", err)
 	}
+}
 
-	if child.Stages[0] != "publish" {
-		t.Errorf("stage = %q, want publish", child.Stages[0])
+func TestPublishStagePipeline_RefusesMissingComponent(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		plan pipeline.ReleasePublishStagePlan
+		want string
+	}{
+		{
+			name: "container",
+			plan: pipeline.ReleasePublishStagePlan{Targets: pipeline.ReleasePublishTargets{
+				Containers: pipeline.TargetPlan[pipeline.PlannedContainer]{Runs: true, Items: []pipeline.PlannedContainer{{Name: "app"}}},
+			}},
+			want: "publish-container",
+		},
+		{
+			name: "google play",
+			plan: pipeline.ReleasePublishStagePlan{Targets: pipeline.ReleasePublishTargets{
+				GooglePlay: pipeline.TargetPlan[pipeline.PlannedArtifact]{Runs: true, Items: []pipeline.PlannedArtifact{{Name: "app"}}},
+			}},
+			want: "publish-google-play",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := gitlabpipeline.PublishStagePipeline(tc.plan, gitlabpipeline.BuildPipelineOptions{
+				ComponentBase: "$CI_SERVER_FQDN/diggsweden/reusable-ci",
+				ComponentRef:  "1.0.0",
+			})
+			if !errors.Is(err, errs.ErrUnsupported) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want ErrUnsupported naming absent component %s", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestPublishStagePipeline_RequiresExplicitComponentRef(t *testing.T) {
+	t.Parallel()
+
+	_, err := gitlabpipeline.PublishStagePipeline(pipeline.ReleasePublishStagePlan{}, gitlabpipeline.BuildPipelineOptions{
+		ComponentBase: "catalog.example/components",
+	})
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "component ref") {
+		t.Fatalf("err = %v, want ErrUsage naming the missing component ref", err)
+	}
+}
+
+func TestPublishStagePipeline_RejectsUnsupportedForgePackageProjectType(t *testing.T) {
+	t.Parallel()
+
+	plan := pipeline.ReleasePublishStagePlan{Targets: pipeline.ReleasePublishTargets{
+		ForgePackages: pipeline.TargetPlan[pipeline.PlannedArtifact]{
+			Runs:  true,
+			Items: []pipeline.PlannedArtifact{{Name: "jvm", ProjectType: projecttype.Gradle}},
+		},
+	}}
+
+	_, err := gitlabpipeline.PublishStagePipeline(plan, gitlabpipeline.BuildPipelineOptions{
+		ComponentBase: "$CI_SERVER_FQDN/diggsweden/reusable-ci",
+		ComponentRef:  "1.0.0",
+	})
+	if !errors.Is(err, errs.ErrUnsupported) || !strings.Contains(err.Error(), `cannot represent project type "gradle"`) {
+		t.Fatalf("err = %v, want ErrUnsupported naming the unsupported project type", err)
+	}
+}
+
+func TestPublishStagePipeline_RefusesGitHubSpecificMacOSVersion(t *testing.T) {
+	t.Parallel()
+
+	plan := pipeline.ReleasePublishStagePlan{Targets: pipeline.ReleasePublishTargets{
+		XcodeIOS: pipeline.TargetPlan[pipeline.PlannedArtifact]{
+			Runs: true,
+			Items: []pipeline.PlannedArtifact{{
+				Name: "ios", ProjectType: projecttype.XcodeIOS,
+				XcodeIOS: &config.XcodeIOSConfig{MacOSVersion: "macos-26"},
+			}},
+		},
+	}}
+
+	_, err := gitlabpipeline.PublishStagePipeline(plan, gitlabpipeline.BuildPipelineOptions{
+		ComponentBase: "$CI_SERVER_FQDN/diggsweden/reusable-ci",
+		ComponentRef:  "1.0.0",
+	})
+	if !errors.Is(err, errs.ErrUnsupported) || !strings.Contains(err.Error(), "macos-version") {
+		t.Fatalf("err = %v, want ErrUnsupported naming the untranslatable runner setting", err)
 	}
 }

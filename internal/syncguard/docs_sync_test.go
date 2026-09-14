@@ -4,8 +4,6 @@
 package syncguard
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
@@ -28,11 +26,7 @@ func TestDocsCLIReferenceInSync(t *testing.T) {
 
 	want := cli.Render(cli.New(cli.BuildInfo{Version: "dev"}))
 
-	path := filepath.Join(reporoot.Path(t), "docs", "cli-reference.md")
-	got, err := os.ReadFile(path) //nolint:gosec // test reads repo-local docs file.
-	require.NoErrorf(t, err, "read %s", path)
-
-	require.Equalf(t, want, string(got),
-		"docs/cli-reference.md is out of sync with the CLI surface; "+
-			"run `just gen-cli-reference` to refresh")
+	path := "docs/cli-reference.md"
+	got := reporoot.ReadFile(t, path)
+	require.Empty(t, generatedDifference(path, "just gen-cli-reference", got, []byte(want)))
 }

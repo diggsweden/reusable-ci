@@ -11,7 +11,7 @@ import (
 )
 
 // FuzzFindBuildBOM exercises the include/exclude glob matcher. The
-// patterns ultimately compile to regex; a bad pattern shouldn't take
+// patterns are matched by doublestar; a bad pattern shouldn't take
 // down the binary — at worst no candidate matches.
 func FuzzFindBuildBOM(f *testing.F) {
 	seeds := []struct{ files, includes, excludes string }{

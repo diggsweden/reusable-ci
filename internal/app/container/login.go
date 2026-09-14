@@ -40,22 +40,28 @@ func RegistryLogin(w io.Writer, in RegistryLoginInput) error { //nolint:varnamel
 		return err
 	}
 
-	existing, err := os.ReadFile(path) //nolint:gosec // operator-controlled auth path.
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read auth config %s: %w", path, err)
-	}
-
-	merged, err := container.MergeAuth(existing, in.Registry, in.Username, in.Password)
-	if err != nil {
-		return err // domain error already redaction-safe (no password echoed)
-	}
-
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create auth config dir: %w", err)
 	}
 
-	if err := cliio.WriteFile(path, merged, 0o600); err != nil {
-		return fmt.Errorf("write auth config %s: %w", path, err)
+	if err := cliio.WithLock(path, func() error {
+		existing, err := os.ReadFile(path) //nolint:gosec // operator-controlled auth path.
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("read auth config %s: %w", path, err)
+		}
+
+		merged, err := container.MergeAuth(existing, in.Registry, in.Username, in.Password)
+		if err != nil {
+			return err // domain error already redaction-safe (no password echoed)
+		}
+
+		if err := cliio.WriteFile(path, merged, 0o600); err != nil {
+			return fmt.Errorf("write auth config %s: %w", path, err)
+		}
+
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	_, _ = fmt.Fprintf(w, "Logged in to %s as %s → %s\n", in.Registry, in.Username, path)
@@ -76,36 +82,64 @@ type RegistryLogoutInput struct {
 // auth file outlives the job. Idempotent and safe under `if: always()`: a
 // missing config file, or no credential for this registry, is a successful
 // no-op rather than an error. Credentials for other registries are preserved.
-func RegistryLogout(w io.Writer, in RegistryLogoutInput) error { //nolint:varnamelen // idiomatic short name (io conventions).
+func RegistryLogout(w io.Writer, in RegistryLogoutInput) error { //nolint:cyclop,varnamelen // lock-scoped read/remove/write plus idempotent result reporting.
+	if _, _, err := container.RemoveAuth(nil, in.Registry); err != nil {
+		return err
+	}
+
 	path, err := authFilePath(in.AuthFile)
 	if err != nil {
 		return err
 	}
 
-	existing, err := os.ReadFile(path) //nolint:gosec // operator-controlled auth path.
-	if err != nil {
-		if os.IsNotExist(err) {
-			_, _ = fmt.Fprintf(w, "No auth config at %s — nothing to log out of.\n", path)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create auth config dir: %w", err)
+	}
 
+	removed := false
+	missing := false
+
+	if err := cliio.WithLock(path, func() error {
+		existing, err := os.ReadFile(path) //nolint:gosec // operator-controlled auth path.
+		if err != nil {
+			if os.IsNotExist(err) {
+				missing = true
+
+				return nil
+			}
+
+			return fmt.Errorf("read auth config %s: %w", path, err)
+		}
+
+		updated, didRemove, err := container.RemoveAuth(existing, in.Registry)
+		if err != nil {
+			return err
+		}
+
+		removed = didRemove
+		if !removed {
 			return nil
 		}
 
-		return fmt.Errorf("read auth config %s: %w", path, err)
+		if err := cliio.WriteFile(path, updated, 0o600); err != nil {
+			return fmt.Errorf("write auth config %s: %w", path, err)
+		}
+
+		return nil
+	}); err != nil {
+		return err
 	}
 
-	updated, removed, err := container.RemoveAuth(existing, in.Registry)
-	if err != nil {
-		return err
+	if missing {
+		_, _ = fmt.Fprintf(w, "No auth config at %s — nothing to log out of.\n", path)
+
+		return nil
 	}
 
 	if !removed {
 		_, _ = fmt.Fprintf(w, "Not logged in to %s — nothing to do.\n", in.Registry)
 
 		return nil
-	}
-
-	if err := cliio.WriteFile(path, updated, 0o600); err != nil {
-		return fmt.Errorf("write auth config %s: %w", path, err)
 	}
 
 	_, _ = fmt.Fprintf(w, "Logged out of %s → %s\n", in.Registry, path)

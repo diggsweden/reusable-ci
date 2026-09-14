@@ -9,9 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
+
+	adapteropenpgp "github.com/diggsweden/reusable-ci/v3/internal/pgp"
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
@@ -22,10 +25,34 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
 )
 
-// RevParse resolves ref to a SHA. In-process via go-git when the repo
-// is available; falls back to `git rev-parse` for unusual revisions
+// RevParse resolves ref to a SHA. HEAD uses native Git to match the mutation
+// context. Other lookups use go-git when available, falling back for revisions
 // (e.g. `HEAD~5^2`) the in-process resolver doesn't support natively.
 func (r *Repo) RevParse(ctx context.Context, ref string) (string, error) {
+	// Release guards/capture must read the same native checkout as git commit,
+	// including GIT_DIR/worktree semantics, not a tag that happens to be named HEAD.
+	if ref == "HEAD" {
+		return r.Run(ctx, headCommitArgs()...)
+	}
+	// An annotated tag resolves to the TAG OBJECT, not the commit it points
+	// at: that is what `git rev-parse refs/tags/v1.2.3` returns, and only an
+	// explicit peel suffix (^{commit}, ^{}) asks for the commit.
+	//
+	// go-git's ResolveRevision always peels, so consulting it first made this
+	// adapter disagree with the command it stands in for — silently, and only
+	// for annotated tags. Callers comparing a local tag object against a
+	// remote one then compared a commit against a tag object and could never
+	// match.
+	//
+	// Every caller in this repository that wants the commit already spells
+	// ^{commit} (validate/tags.go, prerequisites.go, changelogrender.go,
+	// pinreachability.go), exactly as they would against git itself. Those
+	// spellings carry a suffix, so they do not resolve as a tag name here and
+	// fall through to ResolveRevision, which peels them correctly.
+	if tagObj, found, tagErr := r.lookupTagObject(ref); tagErr == nil && found {
+		return tagObj.Hash.String(), nil
+	}
+
 	repo, err := r.openGoGit()
 	if err == nil {
 		hash, err := repo.ResolveRevision(plumbing.Revision(ref))
@@ -34,7 +61,56 @@ func (r *Repo) RevParse(ctx context.Context, ref string) (string, error) {
 		}
 	}
 
-	return r.Run(ctx, "-c", "core.hooksPath=/dev/null", "rev-parse", ref)
+	return r.Run(ctx, "-c", hooksDisabledConfig, "rev-parse", ref)
+}
+
+func headCommitArgs() []string {
+	return []string{"--no-replace-objects", "-c", hooksDisabledConfig, "rev-parse", "--verify", "HEAD^{commit}"} //nolint:goconst // Keep the object-resolution policy visible in native argv.
+}
+
+// CommitParents reads the captured object's raw parents, ignoring replacement
+// refs and without traversal (so shallow boundaries do not hide its parent).
+func (r *Repo) CommitParents(ctx context.Context, commitSHA string) ([]string, error) {
+	args, err := commitParentsArgs(commitSHA)
+	if err != nil {
+		return nil, err
+	}
+
+	body, err := r.Run(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	return commitParentsFromObject(body)
+}
+
+func commitParentsArgs(commitSHA string) ([]string, error) {
+	if !domaingit.ValidCommitSHA(commitSHA) {
+		return nil, fmt.Errorf("parent inspection requires a full commit OID: %w", errs.ErrUsage)
+	}
+
+	return []string{"--no-replace-objects", "-c", hooksDisabledConfig, "cat-file", "commit", commitSHA}, nil //nolint:goconst // Native Git object type, not application vocabulary.
+}
+
+func commitParentsFromObject(body string) ([]string, error) {
+	headers, _, found := strings.Cut(body, "\n\n")
+	if !found {
+		return nil, fmt.Errorf("commit object has no header separator: %w", errs.ErrValidation)
+	}
+
+	var parents []string
+
+	for _, line := range strings.Split(headers, "\n") {
+		if parent, ok := strings.CutPrefix(line, "parent "); ok {
+			if !domaingit.ValidCommitSHA(parent) {
+				return nil, fmt.Errorf("commit object has a malformed parent: %w", errs.ErrValidation)
+			}
+
+			parents = append(parents, parent)
+		}
+	}
+
+	return parents, nil
 }
 
 // DescribeLatestTag returns the most recent tag reachable from HEAD,
@@ -82,7 +158,12 @@ func (r *Repo) StatusPorcelain(ctx context.Context, pathspec string) (string, er
 // tag at the trust boundary. Returns ErrValidation when the tag is
 // absent on the remote.
 func (r *Repo) RemoteTagCommit(ctx context.Context, repoURL, tag string, cred runcontext.Credential) (string, error) {
-	out, err := r.runEnvOutput(ctx, authEnv(repoURL, cred), "ls-remote", "--tags", repoURL, refsTagsPrefix+tag+"^{}", refsTagsPrefix+tag)
+	env, err := r.remoteAuthEnv(ctx, repoURL, cred)
+	if err != nil {
+		return "", err
+	}
+
+	out, err := r.runEnvOutput(ctx, env, remoteTagQueryArgs(repoURL, tag, true)...)
 	if err != nil {
 		return "", err
 	}
@@ -102,7 +183,7 @@ func (r *Repo) RemoteTagCommitIfExists(ctx context.Context, remote, tag string, 
 		return "", false, err
 	}
 
-	out, err := r.runEnvOutput(ctx, env, "ls-remote", "--tags", remote, refsTagsPrefix+tag+"^{}", refsTagsPrefix+tag)
+	out, err := r.runEnvOutput(ctx, env, remoteTagQueryArgs(remote, tag, true)...)
 	if err != nil {
 		return "", false, err
 	}
@@ -119,32 +200,102 @@ func (r *Repo) RemoteTagCommitIfExists(ctx context.Context, remote, tag string, 
 	return commit, true, nil
 }
 
-func remoteTagCommitFromOutput(out, repoURL, tag string) (string, error) {
-	var peeled, plain string
+func remoteTagQueryArgs(repository, tag string, peel bool) []string {
+	args := []string{"ls-remote", "--tags", "--", repository} //nolint:goconst // Keep native argv and the original repository argument visible.
+	if peel {
+		args = append(args, refsTagsPrefix+tag+"^{}")
+	}
+
+	return append(args, refsTagsPrefix+tag)
+}
+
+// RemoteBranchCommit resolves refs/heads/<branch> on a named remote. Absence
+// is reported separately so release preparation can distinguish a deleted
+// branch from a transport or authentication failure.
+func (r *Repo) RemoteBranchCommit(ctx context.Context, remote, branch string, cred runcontext.Credential) (string, bool, error) {
+	if remote == "" {
+		remote = defaultRemote
+	}
+
+	env, err := r.remoteAuthEnv(ctx, remote, cred)
+	if err != nil {
+		return "", false, err
+	}
+
+	ref := "refs/heads/" + branch
+
+	out, err := r.runEnvOutput(ctx, env, "-c", hooksDisabledConfig, "ls-remote", "--heads", remote, ref)
+	if err != nil {
+		return "", false, err
+	}
 
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-
-		switch {
-		case strings.HasSuffix(fields[1], "^{}"):
-			peeled = fields[0]
-		case fields[1] == refsTagsPrefix+tag:
-			plain = fields[0]
+		if len(fields) >= 2 && fields[1] == ref {
+			return fields[0], true, nil
 		}
 	}
 
-	if peeled != "" {
+	return "", false, nil
+}
+
+func remoteTagCommitFromOutput(out, repoURL, tag string) (string, error) {
+	plainRef, peeledRef := refsTagsPrefix+tag, refsTagsPrefix+tag+"^{}"
+
+	ids, err := remoteRefIDs(out, plainRef, peeledRef)
+	if err != nil {
+		return "", err
+	}
+
+	if peeled := ids[peeledRef]; peeled != "" {
 		return peeled, nil
 	}
 
-	if plain != "" {
+	if plain := ids[plainRef]; plain != "" {
 		return plain, nil
 	}
 
 	return "", fmt.Errorf("remote tag %q not found on %s: %w", tag, repoURL, errs.ErrValidation)
+}
+
+// remoteRefIDs collects the object IDs `git ls-remote` reported for the wanted
+// refs, ignoring every other ref.
+//
+// Both refusals exist because this output decides which commit a release signs
+// and neither case has a right answer to pick. An ID that is not a full object
+// hash used to be returned as the answer -- including one shaped like a git
+// option -- and a ref reported twice with different IDs silently resolved to
+// whichever line the scan kept, which was the last line for commits and the
+// first for tag objects, so the two readers of one response could disagree.
+//
+// The class is deliberately ErrMalformedInput, not ErrValidation: the
+// *IfExists callers read ErrValidation as "the tag is not there", and a remote
+// answering nonsense must not be mistaken for a tag that can be created.
+func remoteRefIDs(out string, wanted ...string) (map[string]string, error) {
+	ids := make(map[string]string, len(wanted))
+
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 || !slices.Contains(wanted, fields[1]) {
+			continue
+		}
+
+		ref, id := fields[1], fields[0]
+
+		// Object IDs share the commit-hash shape: 40 hex for SHA-1
+		// repositories, 64 for SHA-256.
+		if !domaingit.ValidCommitSHA(id) {
+			return nil, fmt.Errorf("remote reported a malformed object id for %s: %q: %w", ref, id, errs.ErrMalformedInput)
+		}
+
+		if prior, seen := ids[ref]; seen && prior != id {
+			return nil, fmt.Errorf("remote reported %s twice with different object ids (%s, %s): %w", ref, prior, id, errs.ErrMalformedInput)
+		}
+
+		ids[ref] = id
+	}
+
+	return ids, nil
 }
 
 // CommitSubject returns `git log -1 --format=%s <commit>`.
@@ -171,7 +322,12 @@ func (r *Repo) RecentLogOneline(ctx context.Context, ref string, limit int) (str
 // narrowing only; deciding which of these are valid release tags (and
 // which is highest) is the domain's job — see domain/version.
 func (r *Repo) RemoteVersionTags(ctx context.Context, repoURL string, cred runcontext.Credential) ([]string, error) {
-	out, err := r.runEnvOutput(ctx, authEnv(repoURL, cred), "ls-remote", "--tags", "--refs", repoURL, refsTagsPrefix+"v*")
+	env, err := r.remoteAuthEnv(ctx, repoURL, cred)
+	if err != nil {
+		return nil, err
+	}
+
+	out, err := r.runEnvOutput(ctx, env, "ls-remote", "--tags", "--refs", "--", repoURL, refsTagsPrefix+"v*")
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +355,7 @@ func (r *Repo) FetchTagFromRemote(ctx context.Context, remote, tag string) error
 	}
 
 	ref := refsTagsPrefix + tag
-	_, err := r.Run(ctx, "-c", "core.hooksPath=/dev/null", "fetch", "--no-tags", remote, ref+":"+ref)
+	_, err := r.Run(ctx, "-c", hooksDisabledConfig, "fetch", "--no-tags", remote, ref+":"+ref)
 
 	return err
 }
@@ -213,7 +369,7 @@ func (r *Repo) RemoteTagObject(ctx context.Context, remote, tag string) (string,
 		remote = defaultRemote
 	}
 
-	out, err := r.Run(ctx, "-c", "core.hooksPath=/dev/null", "ls-remote", "--tags", remote, refsTagsPrefix+tag)
+	out, err := r.Run(ctx, "-c", hooksDisabledConfig, "ls-remote", "--tags", remote, refsTagsPrefix+tag)
 	if err != nil {
 		return "", err
 	}
@@ -228,6 +384,66 @@ func (r *Repo) RemoteTagObject(ctx context.Context, remote, tag string) (string,
 	return "", fmt.Errorf("remote tag %q not found on %s: %w", tag, remote, errs.ErrValidation)
 }
 
+// RemoteTagObjectAtURL returns the unpeeled object id published at
+// refs/tags/<tag> on repoURL, authenticating with cred when supplied.
+func (r *Repo) RemoteTagObjectAtURL(ctx context.Context, repoURL, tag string, cred runcontext.Credential) (string, error) {
+	env, err := r.remoteAuthEnv(ctx, repoURL, cred)
+	if err != nil {
+		return "", err
+	}
+
+	out, err := r.runEnvOutput(ctx, env, remoteTagQueryArgs(repoURL, tag, false)...)
+	if err != nil {
+		return "", err
+	}
+
+	return remoteTagObjectFromOutput(out, repoURL, tag)
+}
+
+// RemoteTagObjectIfExists is the named-remote counterpart used by create-once
+// tag recovery. Absence is a boolean; auth and transport errors still surface.
+func (r *Repo) RemoteTagObjectIfExists(ctx context.Context, remote, tag string, cred runcontext.Credential) (string, bool, error) {
+	if remote == "" {
+		remote = defaultRemote
+	}
+
+	env, err := r.remoteAuthEnv(ctx, remote, cred)
+	if err != nil {
+		return "", false, err
+	}
+
+	out, err := r.runEnvOutput(ctx, env, remoteTagQueryArgs(remote, tag, false)...)
+	if err != nil {
+		return "", false, err
+	}
+
+	if strings.TrimSpace(out) == "" {
+		return "", false, nil
+	}
+
+	object, err := remoteTagObjectFromOutput(out, remote, tag)
+	if err != nil {
+		return "", false, err
+	}
+
+	return object, true, nil
+}
+
+func remoteTagObjectFromOutput(out, repoURL, tag string) (string, error) {
+	ref := refsTagsPrefix + tag
+
+	ids, err := remoteRefIDs(out, ref)
+	if err != nil {
+		return "", err
+	}
+
+	if id := ids[ref]; id != "" {
+		return id, nil
+	}
+
+	return "", fmt.Errorf("remote tag %q not found on %s: %w", tag, repoURL, errs.ErrValidation)
+}
+
 // RemoteTagExists reports whether refs/tags/<tag> is present on remote.
 // It intentionally avoids --exit-code so absence is a boolean, not a wrapped
 // git failure, while transport/auth failures still surface as errors.
@@ -236,12 +452,21 @@ func (r *Repo) RemoteTagExists(ctx context.Context, remote, tag string) (bool, e
 		remote = defaultRemote
 	}
 
-	out, err := r.Run(ctx, "-c", "core.hooksPath=/dev/null", "ls-remote", "--tags", remote, refsTagsPrefix+tag)
+	out, err := r.Run(ctx, "-c", hooksDisabledConfig, "ls-remote", "--tags", remote, refsTagsPrefix+tag)
 	if err != nil {
 		return false, err
 	}
 
 	return strings.TrimSpace(out) != "", nil
+}
+
+// VerifyConfiguredTagSignature asks git to verify an annotated tag with the
+// configured GPG keyring or SSH allowed-signers file. Release preparation sets
+// that configuration before creating or reusing a final tag.
+func (r *Repo) VerifyConfiguredTagSignature(ctx context.Context, tag string) error {
+	_, err := r.Run(ctx, "-c", hooksDisabledConfig, "verify-tag", tag)
+
+	return err
 }
 
 // refsTagsPrefix is the git ref namespace for tags.
@@ -272,7 +497,7 @@ func (r *Repo) ListTags(ctx context.Context, pattern string) ([]string, error) {
 // result is an exact-match existence check. Used by the create-once
 // release-tag path to refuse clobbering/moving an existing tag.
 func (r *Repo) TagExists(ctx context.Context, tag string) (bool, error) {
-	out, err := r.Run(ctx, "-c", "core.hooksPath=/dev/null", "tag", "-l", tag)
+	out, err := r.Run(ctx, "-c", hooksDisabledConfig, "tag", "-l", tag)
 	if err != nil {
 		return false, err
 	}
@@ -401,7 +626,7 @@ func (r *Repo) runIsAncestor(ctx context.Context, ancestor, descendant string) (
 		return false, fmt.Errorf("git merge-base --is-ancestor: exit %d\n%s: %w", exitErr.ExitCode(), exitErr.Stderr, errs.ErrValidation)
 	}
 
-	return false, err
+	return false, safeexec.WrapError(err, bin, "merge-base")
 }
 
 // CatFileType returns the object type for ref. For tag refs:
@@ -486,6 +711,11 @@ func (r *Repo) VerifyTagSignature(_ context.Context, tag string, armoredKeyring 
 		return "", "", false, nil
 	}
 
+	keys, err := adapteropenpgp.PrimaryFingerprints(armoredKeyring)
+	if err != nil || len(keys) == 0 {
+		return "", "", false, fmt.Errorf("parse tag verification keyring: %w", errs.ErrMalformedInput)
+	}
+
 	tagObj, found, err := r.lookupTagObject(tag)
 	if err != nil {
 		return "", "", false, fmt.Errorf("read tag %q: %w", tag, err)
@@ -499,12 +729,12 @@ func (r *Repo) VerifyTagSignature(_ context.Context, tag string, armoredKeyring 
 		return "", "", false, nil
 	}
 
-	entity, verifyErr := tagObj.Verify(string(armoredKeyring))
-	if verifyErr != nil || entity == nil {
+	entity := verifyTagAgainstAnyBlock(tagObj, armoredKeyring)
+	if entity == nil {
 		// Contract: report (signer, fingerprint, verified). A failed
 		// verify is not a function-level error — it's "no Good signer,"
 		// ok=false.
-		return "", "", false, nil //nolint:nilerr // verify failure → unverified, by contract
+		return "", "", false, nil
 	}
 
 	fingerprint := strings.ToUpper(hex.EncodeToString(entity.PrimaryKey.Fingerprint))
@@ -533,7 +763,7 @@ func (r *Repo) VerifyTagSignature(_ context.Context, tag string, armoredKeyring 
 //     case so the prerequisites orchestrator can map it to exit 77.
 func (r *Repo) VerifyTagSSHAgainstAllowedSigners(ctx context.Context, tag, allowedSignersPath string) (bool, string, error) {
 	out, err := r.Run(ctx,
-		"-c", "core.hooksPath=/dev/null",
+		"-c", hooksDisabledConfig,
 		"-c", "gpg.format=ssh",
 		"-c", "gpg.ssh.allowedSignersFile="+allowedSignersPath,
 		"tag", "-v", tag)
@@ -546,6 +776,10 @@ func (r *Repo) VerifyTagSSHAgainstAllowedSigners(ctx context.Context, tag, allow
 	// ssh-keygen -Y verify message when the signature is valid but the
 	// signer isn't in allowed_signers — distinct from "no signature".
 	msg := err.Error()
+	if strings.Contains(msg, "Unable to open allowed keys file") || strings.Contains(msg, "No such file or directory") {
+		return false, msg, fmt.Errorf("read SSH allowed_signers file for tag %q: %w: %w", tag, err, errs.ErrMissingInput)
+	}
+
 	if strings.Contains(msg, "No principal matched") {
 		return false, msg, fmt.Errorf("tag %q signature is valid but signer is not in allowed_signers: %w", tag, errs.ErrPermissionDenied)
 	}
@@ -584,7 +818,11 @@ func identityDisplayString(ident *openpgp.Identity) string {
 // with a single tag-object read.
 func (r *Repo) TaggerInfo(ctx context.Context, tag string) (domaingit.TaggerInfo, error) {
 	tagObj, found, err := r.lookupTagObject(tag)
-	if err == nil && found {
+	if err == nil {
+		if !found {
+			return domaingit.TaggerInfo{}, nil
+		}
+
 		who := fmt.Sprintf("%s <%s>", tagObj.Tagger.Name, tagObj.Tagger.Email)
 		date := tagObj.Tagger.When.Format("2006-01-02 15:04:05 -0700")
 
@@ -601,6 +839,10 @@ func (r *Repo) TaggerInfo(ctx context.Context, tag string) (domaingit.TaggerInfo
 		"--format=%(taggerdate:iso8601)")
 	if err != nil {
 		return domaingit.TaggerInfo{}, err
+	}
+
+	if strings.TrimSpace(tagger) == "<>" {
+		tagger = ""
 	}
 
 	return domaingit.TaggerInfo{Tagger: tagger, Date: date}, nil
@@ -674,13 +916,51 @@ func (r *Repo) TagMessage(ctx context.Context, tag string) (string, error) {
 // lookupTagObject resolves tag to a refs/tags/<tag> ref and returns
 // the annotated tag object. found=false when the ref exists but
 // points at a lightweight tag (a commit, not a tag object).
+// verifyTagAgainstAnyBlock tries each armor block in a concatenated bundle and
+// returns the entity of the first that verifies the tag, or nil.
+//
+// go-git's Verify hands the keyring to openpgp.ReadArmoredKeyRing, which
+// decodes exactly ONE block, so passing a bundle silently verifies against only
+// its first key. That is the key-rotation case: docs/verification.md tells
+// operators to add a key with `>>`, so during a rotation the incoming key is
+// the appended block — and a tag signed with it was reported unverified, then
+// refused with EX_NOPERM. Trying each block restores the documented contract
+// ("one or more blocks concatenated") without widening it: a key still has to
+// be committed to the bundle to be used at all.
+func verifyTagAgainstAnyBlock(tagObj *object.Tag, armoredKeyring []byte) *openpgp.Entity {
+	for _, block := range adapteropenpgp.SplitArmorBlocks(armoredKeyring) {
+		if entity, err := tagObj.Verify(string(block)); err == nil && entity != nil {
+			return entity
+		}
+	}
+
+	return nil
+}
+
+// tagRefName accepts either spelling of a tag — the short name ("v1.2.3") or
+// the full ref path ("refs/tags/v1.2.3") — and returns the short name.
+//
+// go-git's Repository.Tag builds refs/tags/<name> itself, so handing it a full
+// ref path looks up refs/tags/refs/tags/<name> and finds nothing. git accepts
+// both spellings, so this adapter does too, and it normalises here rather than
+// asking every call site to remember: the failure mode is silent. The lookup
+// misses, resolution falls through to a peeling resolver, and an annotated tag
+// is reported as its commit — which is how `release validate-tag` came to
+// refuse every annotated release tag as "not an annotated tag object".
+//
+// A revision expression ("v1.2.3^{commit}") keeps its suffix, so it is not
+// found as a tag name and falls through to the resolver that understands it.
+func tagRefName(ref string) string {
+	return strings.TrimPrefix(ref, "refs/tags/")
+}
+
 func (r *Repo) lookupTagObject(tag string) (*object.Tag, bool, error) {
 	repo, err := r.openGoGit()
 	if err != nil {
 		return nil, false, err
 	}
 
-	ref, err := repo.Tag(tag)
+	ref, err := repo.Tag(tagRefName(tag))
 	if err != nil {
 		if errors.Is(err, gogit.ErrTagNotFound) {
 			return nil, false, nil
@@ -729,4 +1009,13 @@ func renderTagObject(t *object.Tag) string { //nolint:varnamelen // idiomatic sh
 	}
 
 	return b.String()
+}
+
+// HasPathspecChanges reads tracked and untracked changes without refreshing the
+// index or invoking repository filesystem-monitor hooks. Used by dry-run plans.
+func (r *Repo) HasPathspecChanges(ctx context.Context, pathspecs []string) (bool, error) {
+	args := []string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "status", "--porcelain=v1", "--"}
+	out, err := r.Run(ctx, append(args, pathspecs...)...)
+
+	return out != "", err
 }

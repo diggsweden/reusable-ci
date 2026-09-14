@@ -18,12 +18,12 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/cliflags"
 )
 
-// TestPlanScopedVerbsResolveFromPlan proves, for every plan-wired verb, that
+// TestPlanScopedVerbs_ResolveFromPlan proves, for every plan-wired verb, that
 // a representative flag resolves from a $REUSABLE_CI_PLAN plan file written
 // under the verb's scope string (the command path). It walks the REAL
 // assembled command tree, so a scope const drifting from its command path,
 // or a flag losing its planfile source, fails here.
-func TestPlanScopedVerbsResolveFromPlan(t *testing.T) {
+func TestPlanScopedVerbs_ResolveFromPlan(t *testing.T) {
 	tests := []struct {
 		scope string // plan scope == command path under the root
 		flag  string // representative flag fed from the plan

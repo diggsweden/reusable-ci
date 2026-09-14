@@ -30,6 +30,11 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/livetest"
 )
 
+// refusedToken is the deliberately invalid credential the refused-credential
+// case hands the product; like the target's own token, no form of it may be
+// echoed back.
+const refusedToken = "gpl-0000000000000000000000000000000000000000000000000000000000000bad" //nolint:gosec // Synthetic invalid token.
+
 func TestErrors_SameFailureClass_ExitsTheSameOnEveryForge(t *testing.T) {
 	// Each case is a failure every forge can produce, driven through the same
 	// verb, so a difference in outcome is a difference in the adapter rather
@@ -37,24 +42,30 @@ func TestErrors_SameFailureClass_ExitsTheSameOnEveryForge(t *testing.T) {
 	cases := []struct {
 		name string
 
+		// want is the semantic exit every forge must give, beside parity:
+		// agreeing on the wrong class would still mislead every caller.
+		want errs.ExitCodeType
+
 		// args builds the invocation for one forge. The bad ingredient differs
 		// per case; everything else is held constant.
 		args func(t *testing.T, target livetest.Target, repo string) []string
 	}{
 		{
 			name: "refused credential",
+			want: errs.ExitCodeNoPerm,
 			args: func(t *testing.T, target livetest.Target, repo string) []string {
 				t.Helper()
 
 				return []string{
 					"validate", "auth", "token",
-					"--token-file", writeToken(t, "gpl-0000000000000000000000000000000000000000000000000000000000000bad"),
+					"--token-file", writeToken(t, refusedToken),
 					"--repository", livetest.RepoSlug(target, repo),
 				}
 			},
 		},
 		{
 			name: "repository that does not exist",
+			want: errs.ExitCodeNoInput,
 			args: func(t *testing.T, target livetest.Target, _ string) []string {
 				t.Helper()
 
@@ -85,6 +96,18 @@ func TestErrors_SameFailureClass_ExitsTheSameOnEveryForge(t *testing.T) {
 
 				exits[forge] = run.ExitCode
 				assertReadableFailure(t, forge, testCase.name, run)
+
+				// The target's own token is checked for every CLI run by the
+				// harness; the refused token is this scenario's to check.
+				for _, form := range livetest.SecretForms(target.CredentialUsername, refusedToken) {
+					if strings.Contains(run.Combined(), form) {
+						t.Errorf("%s: %s echoed a form of the refused token", forge, testCase.name)
+					}
+				}
+
+				if run.ExitCode != int(testCase.want) {
+					t.Errorf("%s: %s exits %d, want %d\nstderr: %s", forge, testCase.name, run.ExitCode, testCase.want, run.Stderr)
+				}
 			}
 
 			// The parity claim. Reported separately from the per-forge checks
@@ -92,8 +115,8 @@ func TestErrors_SameFailureClass_ExitsTheSameOnEveryForge(t *testing.T) {
 			reference := forges[0]
 			for _, forge := range forges[1:] {
 				if exits[forge] != exits[reference] {
-					t.Errorf("%s: %s exits %d on %s but %d on %s — a caller cannot handle this failure the same way on both",
-						testCase.name, testCase.name, exits[forge], forge, exits[reference], reference)
+					t.Errorf("%s exits %d on %s but %d on %s — a caller cannot handle this failure the same way on both",
+						testCase.name, exits[forge], forge, exits[reference], reference)
 				}
 			}
 		})

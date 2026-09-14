@@ -6,11 +6,13 @@ package summary_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/github"
 	appsummary "github.com/diggsweden/reusable-ci/v3/internal/app/summary"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
@@ -150,7 +152,17 @@ func TestSnapshotReleaseSummary_NonNPMProjectHidesNPMSections(t *testing.T) {
 	}
 }
 
-func TestSnapshotReleaseSummary_ShowsContainerRowAndResources(t *testing.T) {
+// TestSnapshotReleaseSummary_RendersBuildInformationAndResources covers the
+// header block and the resource links, which are derived from the release ref,
+// SHA, actor and repository rather than from any stage result.
+//
+// It was previously named for a container row, and the assertions never
+// looked for one. There is none to look for, and that is correct rather than a
+// gap: pipeline.DevPublishTargets has no containers field, because the dev
+// flow builds no containers -- they are promoted to :dev on the release path
+// by the build-once/promote-many ladder. ReleaseSummary renders a "Containers"
+// row because its stage plan has that target; this one does not.
+func TestSnapshotReleaseSummary_RendersBuildInformationAndResources(t *testing.T) {
 	t.Parallel()
 
 	sink := &fakeSummarySink{}
@@ -162,7 +174,7 @@ func TestSnapshotReleaseSummary_ShowsContainerRowAndResources(t *testing.T) {
 		ReleaseActor:          "dev-user",
 		ReleaseRepository:     "org/repo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RunURL:                "https://example.com/run/1",
-		PublishStageJSON:      stageResultJSON(t, "dev-publish", map[string]string{"containers": "success", "npm": "success"}),
+		PublishStageJSON:      stageResultJSON(t, "dev-publish", map[string]string{"npm": "success"}),
 		SnapshotArtifactsJSON: `{"npm_package_name":"@org/pkg","npm_package_version":"1.0.0-dev","npm_publish_status":"published"}`,
 		URLs:                  github.New(),
 		ServerURL:             "https://github.com",
@@ -172,10 +184,20 @@ func TestSnapshotReleaseSummary_ShowsContainerRowAndResources(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Whole rows and whole links. The bare words "Resources" and "Packages"
+	// appear in the block whatever the repository is, so they said nothing
+	// about the ref, actor or repository the fixture supplies.
 	body := sink.buf.String()
-	for _, want := range []string{"Build Xcode", "Resources", "Packages", "Workflow Run"} {
+	for _, want := range []string{
+		"| **Branch** | `feat/dev-branch` |",
+		"| **Commit** | `def7890` |", // truncated to 7
+		"| **Built By** | @dev-user |",
+		"| **Built At** | 2026-05-10 14:30:00 UTC |",
+		"- [Packages](https://github.com/org/repo/packages)",
+		"- [Workflow Run](https://example.com/run/1)",
+	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("missing %q in %s", want, body)
+			t.Errorf("missing %q\nfull:\n%s", want, body)
 		}
 	}
 }
@@ -204,10 +226,20 @@ func TestSnapshotReleaseSummary_NPMNotPublishedFallback(t *testing.T) {
 func TestSnapshotReleaseSummary_RejectsMalformedStageResultJSON(t *testing.T) {
 	t.Parallel()
 
-	err := appsummary.SnapshotReleaseSummary(context.Background(), &fakeSummarySink{}, &bytes.Buffer{}, appsummary.SnapshotReleaseSummaryInput{
+	sink := &fakeSummarySink{}
+
+	err := appsummary.SnapshotReleaseSummary(context.Background(), sink, &bytes.Buffer{}, appsummary.SnapshotReleaseSummaryInput{
 		BuildStageJSON: `{"stage":"dev-build","targets":{}}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "snapshot-build-stage result-json") {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, errs.ErrMalformedInput) {
+		t.Fatalf("err = %v, want ErrMalformedInput", err)
+	}
+
+	if !strings.Contains(err.Error(), "snapshot-build-stage result-json") {
+		t.Errorf("err = %v, want it to name the build stage", err)
+	}
+
+	if sink.buf.Len() != 0 {
+		t.Errorf("appended a summary despite the rejected input:\n%s", sink.buf.String())
 	}
 }

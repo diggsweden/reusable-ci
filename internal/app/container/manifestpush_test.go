@@ -12,7 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -47,9 +47,15 @@ func (f *fakeManifestPushTool) PushManifestToRefWithDigest(_ context.Context, au
 type fakeManifestPushRegistry struct {
 	raw      []byte
 	failures int
+	// queried records every reference the registry was asked about. It used
+	// to be discarded, which meant the push could verify a different image
+	// than the one it published and no test could tell.
+	queried []string
 }
 
-func (f *fakeManifestPushRegistry) Manifest(_ context.Context, _ string) ([]byte, error) {
+func (f *fakeManifestPushRegistry) Manifest(_ context.Context, ref string) ([]byte, error) {
+	f.queried = append(f.queried, ref)
+
 	if f.failures > 0 {
 		f.failures--
 
@@ -102,7 +108,7 @@ func TestPushManifest_ReportsTheDigestTheRegistryHolds(t *testing.T) {
 
 	// The double records auth file, source and destination; counting the
 	// pushes said nothing about where they went or what they carried.
-	if want := []string{"auth.json|localhost/app:candidate|registry.example/app:staging-v1", "auth.json|localhost/app:candidate|registry.example/app:staging-v1"}; !reflect.DeepEqual(tool.pushes, want) {
+	if want := []string{"auth.json|localhost/app:candidate|registry.example/app:staging-v1", "auth.json|localhost/app:candidate|registry.example/app:staging-v1"}; !slices.Equal(tool.pushes, want) {
 		t.Errorf("pushes = %v, want the same push retried once: %v", tool.pushes, want)
 	}
 
@@ -117,18 +123,39 @@ func TestPushManifest_ReportsTheDigestTheRegistryHolds(t *testing.T) {
 	if !strings.Contains(log.String(), "attempt 1/2") {
 		t.Fatalf("log missing retry message: %q", log.String())
 	}
+
+	// Both attempts must have asked about the same ref. The fixture fails the
+	// first lookup on purpose, so this is the only place a retry that rebuilt
+	// its target would show: the digest that comes back would be a real digest
+	// of a real manifest, just not of the image that was pushed.
+	if want := []string{"registry.example/app:staging-v1", "registry.example/app:staging-v1"}; !slices.Equal(registry.queried, want) {
+		t.Errorf("registry queried %v, want the same ref on both attempts (%v)", registry.queried, want)
+	}
 }
 
 func TestPushManifest_RejectsDigestMismatch(t *testing.T) {
 	registry := &fakeManifestPushRegistry{raw: []byte(`{"schemaVersion":2}`)}
+	sink := fakeoutputsink.New(t)
 
-	_, err := appcontainer.PushManifest(context.Background(), &fakeManifestPushTool{digest: "sha256:" + strings.Repeat("0", 64)}, registry, fakeoutputsink.New(t), io.Discard, appcontainer.PushManifestInput{
+	got, err := appcontainer.PushManifest(context.Background(), &fakeManifestPushTool{digest: "sha256:" + strings.Repeat("0", 64)}, registry, sink, io.Discard, appcontainer.PushManifestInput{
 		LocalManifest: "localhost/app:candidate",
 		Destination:   "registry.example/app:staging-v1",
 		TLSVerify:     "true",
 	})
 	if !errors.Is(err, errs.ErrValidation) {
 		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+
+	if got != nil {
+		t.Errorf("a rejected push returned %+v", got)
+	}
+
+	// Nothing may be published. The mismatch means Buildah and the registry
+	// disagree about what was just pushed, and a digest emitted anyway is
+	// consumed by the next workflow step as the thing to sign and record —
+	// which is the one case where publishing the wrong digest matters most.
+	if keys := sink.Keys(); len(keys) != 0 {
+		t.Errorf("a rejected push published %v", keys)
 	}
 }
 
@@ -194,6 +221,14 @@ func TestResolvePushedManifestDigest_EmitsOutputsAndRetries(t *testing.T) {
 
 	if !strings.Contains(log.String(), "attempt 1/2") {
 		t.Fatalf("log missing retry message: %q", log.String())
+	}
+
+	// Both attempts must have asked about the same ref. The fixture fails the
+	// first lookup on purpose, so this is the only place a retry that rebuilt
+	// its target would show: the digest that comes back would be a real digest
+	// of a real manifest, just not of the image that was pushed.
+	if want := []string{"registry.example/app:staging-v1", "registry.example/app:staging-v1"}; !slices.Equal(registry.queried, want) {
+		t.Errorf("registry queried %v, want the same ref on both attempts (%v)", registry.queried, want)
 	}
 }
 
@@ -346,10 +381,22 @@ func TestResolvePushedManifestDigest_InputRefusals(t *testing.T) {
 
 	for _, ref := range []string{"", "   ", "registry.example/app:v1 extra", "registry.example/app:v1\nevil", "registry.example/app:v1\ttab"} {
 		registry := &fakeManifestPushRegistry{}
+		sink := fakeoutputsink.New(t)
 
-		_, err := appcontainer.ResolvePushedManifestDigest(context.Background(), registry, fakeoutputsink.New(t), io.Discard, appcontainer.PushedManifestDigestInput{Ref: ref, RetryAttempts: 1, RetryDelay: time.Nanosecond})
+		_, err := appcontainer.ResolvePushedManifestDigest(context.Background(), registry, sink, io.Discard, appcontainer.PushedManifestDigestInput{Ref: ref, RetryAttempts: 1, RetryDelay: time.Nanosecond})
 		if !errors.Is(err, errs.ErrUsage) {
 			t.Errorf("ref %q: err = %v, want ErrUsage", ref, err)
+		}
+
+		// The refused refs are refused because they are unsafe to send —
+		// embedded whitespace and newlines are what a ref must not carry — so
+		// the error alone is not the guarantee. Not reaching the registry is.
+		if len(registry.queried) != 0 {
+			t.Errorf("ref %q: refused but the registry was queried %d time(s) for %q", ref, len(registry.queried), registry.queried)
+		}
+
+		if keys := sink.Keys(); len(keys) != 0 {
+			t.Errorf("ref %q: refused but published %v", ref, keys)
 		}
 	}
 }

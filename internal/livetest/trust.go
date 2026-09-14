@@ -4,6 +4,7 @@
 package livetest
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -157,7 +158,7 @@ func newAuthorityTransport(authorities []string, caPEM []byte) (*authorityTransp
 
 	return &authorityTransport{
 		allowed: allowed,
-		inner:   httpretry.NewTransport(httpretry.Config{Inner: base}),
+		inner:   base,
 	}, nil
 }
 
@@ -178,15 +179,44 @@ func credentialAuthorityKey(value *url.URL) (string, error) {
 // authorities. It never parses or logs tunneled request bytes.
 type CredentialProxy struct {
 	allowed map[string]struct{}
+	dial    func(ctx context.Context, network, address string) (net.Conn, error)
 	server  *http.Server
 	url     string
 	done    chan error
+	stop    context.CancelFunc
 	mu      sync.Mutex
+	closed  bool
 	open    map[net.Conn]struct{}
 }
 
 // StartCredentialProxy starts a loopback-only credential containment proxy.
-func StartCredentialProxy(authorities []string) (*CredentialProxy, error) { //nolint:cyclop // Listener and authority checks stay in one setup transaction.
+func StartCredentialProxy(authorities []string) (*CredentialProxy, error) {
+	proxy, err := newCredentialProxy(authorities, (&net.Dialer{Timeout: 10 * time.Second}).DialContext)
+	if err != nil {
+		return nil, err
+	}
+
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("listen for credential containment proxy: %w", err)
+	}
+
+	address, ok := listener.Addr().(*net.TCPAddr)
+	if !ok || !address.IP.IsLoopback() {
+		_ = listener.Close()
+
+		return nil, fmt.Errorf("credential containment proxy did not bind loopback: %w", errs.ErrValidation)
+	}
+
+	proxy.serve(listener)
+
+	return proxy, nil
+}
+
+// newCredentialProxy validates the approved authorities and prepares a proxy
+// that reaches them through dial. Its lifetime context is the base of every
+// request, so Close also ends dials still in flight.
+func newCredentialProxy(authorities []string, dial func(context.Context, string, string) (net.Conn, error)) (*CredentialProxy, error) {
 	allowed := make(map[string]struct{}, len(authorities))
 	for _, authority := range authorities {
 		parsed, err := url.Parse(authority)
@@ -210,22 +240,13 @@ func StartCredentialProxy(authorities []string) (*CredentialProxy, error) { //no
 		return nil, fmt.Errorf("target contract approves no credential authorities: %w", errs.ErrValidation)
 	}
 
-	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, fmt.Errorf("listen for credential containment proxy: %w", err)
-	}
-
-	address, ok := listener.Addr().(*net.TCPAddr)
-	if !ok || !address.IP.IsLoopback() {
-		_ = listener.Close()
-
-		return nil, fmt.Errorf("credential containment proxy did not bind loopback: %w", errs.ErrValidation)
-	}
+	lifetime, stop := context.WithCancel(context.Background())
 
 	proxy := &CredentialProxy{
 		allowed: allowed,
-		url:     "http://" + listener.Addr().String(),
+		dial:    dial,
 		done:    make(chan error, 1),
+		stop:    stop,
 		open:    make(map[net.Conn]struct{}),
 	}
 
@@ -234,17 +255,8 @@ func StartCredentialProxy(authorities []string) (*CredentialProxy, error) { //no
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       15 * time.Second,
 		ErrorLog:          log.New(io.Discard, "", 0),
+		BaseContext:       func(net.Listener) context.Context { return lifetime },
 	}
-	go func() {
-		serveErr := proxy.server.Serve(listener)
-		if errors.Is(serveErr, http.ErrServerClosed) {
-			serveErr = nil
-		}
-
-		proxy.done <- serveErr
-
-		close(proxy.done)
-	}()
 
 	return proxy, nil
 }
@@ -256,20 +268,28 @@ func (proxy *CredentialProxy) URL() string { return proxy.url }
 func (proxy *CredentialProxy) Done() <-chan error { return proxy.done }
 
 // Close stops acceptance and closes every active tunnel within ctx's bound.
+// Tunnels are closed first and no tunnel can be registered afterwards, so one
+// whose dial or hijack completes during shutdown is refused rather than left
+// running; cancelling the lifetime ends dials that are still waiting.
 func (proxy *CredentialProxy) Close(ctx context.Context) error {
-	shutdownErr := proxy.server.Shutdown(ctx)
-
 	proxy.mu.Lock()
+
+	proxy.closed = true
 
 	connections := make([]net.Conn, 0, len(proxy.open))
 	for connection := range proxy.open {
 		connections = append(connections, connection)
 	}
+
 	proxy.mu.Unlock()
+
+	proxy.stop()
 
 	for _, connection := range connections {
 		_ = connection.Close()
 	}
+
+	shutdownErr := proxy.server.Shutdown(ctx)
 
 	select {
 	case serveErr := <-proxy.done:
@@ -308,7 +328,7 @@ func (proxy *CredentialProxy) ServeHTTP(response http.ResponseWriter, request *h
 		return
 	}
 
-	upstream, err := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(request.Context(), "tcp", authority)
+	upstream, err := proxy.dial(request.Context(), "tcp", authority)
 	if err != nil {
 		http.Error(response, "approved authority is unavailable", http.StatusBadGateway)
 
@@ -331,22 +351,44 @@ func (proxy *CredentialProxy) ServeHTTP(response http.ResponseWriter, request *h
 		return
 	}
 
-	proxy.track(downstream, true)
+	proxy.tunnel(downstream, buffered, upstream)
+}
 
-	proxy.track(upstream, true)
+func (proxy *CredentialProxy) serve(listener net.Listener) {
+	proxy.url = "http://" + listener.Addr().String()
+
+	go func() {
+		serveErr := proxy.server.Serve(listener)
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			serveErr = nil
+		}
+
+		proxy.done <- serveErr
+
+		close(proxy.done)
+	}()
+}
+
+// tunnel copies bytes both ways until either side ends, then closes both. A
+// tunnel that cannot register because Close has begun is closed before the
+// client is told it is established.
+func (proxy *CredentialProxy) tunnel(downstream net.Conn, buffered *bufio.ReadWriter, upstream net.Conn) {
 	defer func() {
-		proxy.track(downstream, false)
-		proxy.track(upstream, false)
+		proxy.untrack(downstream, upstream)
 
 		_ = downstream.Close()
 		_ = upstream.Close()
 	}()
 
-	if _, err = buffered.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+	if !proxy.track(downstream, upstream) {
 		return
 	}
 
-	if err = buffered.Flush(); err != nil {
+	if _, err := buffered.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+		return
+	}
+
+	if err := buffered.Flush(); err != nil {
 		return
 	}
 
@@ -366,13 +408,28 @@ func (proxy *CredentialProxy) ServeHTTP(response http.ResponseWriter, request *h
 	<-done
 }
 
-func (proxy *CredentialProxy) track(connection net.Conn, add bool) {
+// track registers a tunnel's connections for Close, refusing once Close has
+// begun so a tunnel cannot start after its connections were collected.
+func (proxy *CredentialProxy) track(connections ...net.Conn) bool {
 	proxy.mu.Lock()
 	defer proxy.mu.Unlock()
 
-	if add {
+	if proxy.closed {
+		return false
+	}
+
+	for _, connection := range connections {
 		proxy.open[connection] = struct{}{}
-	} else {
+	}
+
+	return true
+}
+
+func (proxy *CredentialProxy) untrack(connections ...net.Conn) {
+	proxy.mu.Lock()
+	defer proxy.mu.Unlock()
+
+	for _, connection := range connections {
 		delete(proxy.open, connection)
 	}
 }
@@ -395,7 +452,7 @@ func targetHTTPClient(target Target, timeout time.Duration) (*http.Client, error
 
 	return &http.Client{
 		Timeout:   timeout,
-		Transport: transport,
+		Transport: httpretry.NewTransport(httpretry.Config{Inner: transport}),
 		CheckRedirect: func(request *http.Request, _ []*http.Request) error {
 			return transport.validateURL(request.URL)
 		},
@@ -500,8 +557,13 @@ func validateCertificatePEM(body []byte) error {
 	certificates := 0
 
 	for len(rest) > 0 {
-		block, remaining := pem.Decode(rest)
-		if block == nil || block.Type != certificatePEMType || len(block.Headers) != 0 {
+		end := leadingCertificateBlockEnd(rest)
+		if end == 0 {
+			return fmt.Errorf("ca_file must contain only PEM CERTIFICATE blocks: %w", errs.ErrValidation)
+		}
+
+		block, remaining := pem.Decode(rest[:end])
+		if block == nil || block.Type != certificatePEMType || len(block.Headers) != 0 || len(remaining) != 0 {
 			return fmt.Errorf("ca_file must contain only PEM CERTIFICATE blocks: %w", errs.ErrValidation)
 		}
 
@@ -510,7 +572,7 @@ func validateCertificatePEM(body []byte) error {
 		}
 
 		certificates++
-		rest = bytes.TrimSpace(remaining)
+		rest = bytes.TrimSpace(rest[end:])
 	}
 
 	if certificates == 0 {
@@ -518,6 +580,23 @@ func validateCertificatePEM(body []byte) error {
 	}
 
 	return nil
+}
+
+// leadingCertificateBlockEnd returns the length of the CERTIFICATE block rest
+// starts with, or 0 when it does not start with exactly one BEGIN before its
+// END marker. Only that first block is decoded afterwards: pem.Decode skips a
+// malformed leading block, even within the slice, so a stray BEGIN line before
+// a certificate would otherwise pass.
+func leadingCertificateBlockEnd(rest []byte) int {
+	const endMarker = "-----END CERTIFICATE-----"
+
+	end := bytes.Index(rest, []byte(endMarker)) + len(endMarker)
+	if !bytes.HasPrefix(rest, []byte("-----BEGIN CERTIFICATE-----")) || end < len(endMarker) ||
+		bytes.Count(rest[:end], []byte("-----BEGIN ")) != 1 {
+		return 0
+	}
+
+	return end
 }
 
 func targetTrustEnvironment(target Target) map[string]string {

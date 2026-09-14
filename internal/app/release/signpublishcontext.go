@@ -5,6 +5,7 @@ package release
 
 import (
 	"fmt"
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"io"
 	"os"
 	"path/filepath"
@@ -99,17 +100,8 @@ func appendReleaseEnvFile(path string, entries ...string) error {
 		return fmt.Errorf("sign-publish-context: create env file dir %s: %w", filepath.Dir(path), err)
 	}
 
-	envFile, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // CI runner env file chosen by caller.
-	if err != nil {
-		return fmt.Errorf("sign-publish-context: open env file %s: %w", path, err)
-	}
-
-	defer func() { _ = envFile.Close() }()
-
-	for _, entry := range entries {
-		if _, err := fmt.Fprintln(envFile, entry); err != nil {
-			return fmt.Errorf("sign-publish-context: append env entry to %s: %w", path, err)
-		}
+	if err := cliio.AppendLines(path, entries...); err != nil {
+		return fmt.Errorf("sign-publish-context: append env entries: %w", err)
 	}
 
 	return nil

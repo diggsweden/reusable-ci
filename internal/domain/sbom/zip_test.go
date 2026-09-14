@@ -21,7 +21,7 @@ func TestZipName_CanonicalShape(t *testing.T) {
 		want    string
 	}{
 		{"simple", "my-app", "1.2.3", "my-app-1.2.3-sboms.zip"},
-		{"scoped_npm", "@org/pkg", "0.1.0", "@org/pkg-0.1.0-sboms.zip"},
+		{"scoped_npm", "@org/pkg", "0.1.0", "org-pkg-0.1.0-sboms.zip"},
 		{"prerelease_with_v_prefix", "lib", "v2.0.0-rc.1", "lib-v2.0.0-rc.1-sboms.zip"},
 		{"empty_version_keeps_separator", "x", "", "x--sboms.zip"},
 	}

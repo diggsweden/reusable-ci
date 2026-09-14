@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
+	domsummary "github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 // GoBuildInput drives GoBuild.
@@ -30,10 +31,10 @@ func GoBuild(ctx context.Context, sink ci.SummarySink, in GoBuildInput) error {
 	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 
 	_, _ = fmt.Fprintf(&b, "## Go Build Summary\n")
-	_, _ = fmt.Fprintf(&b, "- **Module:** %s\n", in.Module)
-	_, _ = fmt.Fprintf(&b, "- **Binary:** %s\n", in.BinaryName)
-	_, _ = fmt.Fprintf(&b, "- **Version:** %s\n", in.Version)
-	_, _ = fmt.Fprintf(&b, "- **Platforms:** %s\n", in.Platforms)
+	_, _ = fmt.Fprintf(&b, "- **Module:** %s\n", domsummary.LiteralText(in.Module))
+	_, _ = fmt.Fprintf(&b, "- **Binary:** %s\n", domsummary.LiteralText(in.BinaryName))
+	_, _ = fmt.Fprintf(&b, "- **Version:** %s\n", domsummary.LiteralText(in.Version))
+	_, _ = fmt.Fprintf(&b, "- **Platforms:** %s\n", domsummary.LiteralText(in.Platforms))
 	_, _ = fmt.Fprintf(&b, "- **Tests:** %s\n", testStatus)
 
 	return sink.Append(ctx, b.String())

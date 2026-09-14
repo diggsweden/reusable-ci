@@ -39,6 +39,8 @@ type requiredImageLabel struct {
 
 // UsableImageDigest resolves an existing image digest only when the image's
 // architecture and caller-provided labels match exactly.
+//
+//nolint:cyclop // digest, architecture, label presence/value and output failures remain separate guards.
 func UsableImageDigest(ctx context.Context, registry UsableImageDigestRegistry, sink ci.OutputSink, in UsableImageDigestInput) (*UsableImageDigestOutput, error) {
 	labels, err := validateUsableImageDigestInput(registry, in)
 	if err != nil {
@@ -63,7 +65,7 @@ func UsableImageDigest(ctx context.Context, registry UsableImageDigestRegistry, 
 	}
 
 	for _, want := range labels {
-		if gotLabels[want.key] != want.value {
+		if value, present := gotLabels[want.key]; !present || value != want.value {
 			return nil, fmt.Errorf("existing image is not reusable: %s: label %s does not match required value: %w", ref, want.key, errs.ErrValidation)
 		}
 	}

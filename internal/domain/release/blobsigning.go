@@ -155,5 +155,9 @@ func (in BlobVerifyRequest) Validate() error {
 		return fmt.Errorf("cosign verify: non-keyless mode requires --key: %w", errs.ErrUsage)
 	}
 
+	if in.CertIdentityRegexp != "" || in.CertOIDCIssuer != "" {
+		return fmt.Errorf("cosign verify: certificate identity fields require keyless mode: %w", errs.ErrUsage)
+	}
+
 	return nil
 }

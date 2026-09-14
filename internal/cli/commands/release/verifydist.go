@@ -13,18 +13,16 @@ import (
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
 )
 
-// distDigestCmd exposes the current release hand-off digest contract used by
-// forgejo-ci's build-to-sign boundary. It intentionally differs from `artifact
-// digest`, which is the future canonical content digest; this command preserves
-// today's release value while moving the implementation out of shell.
+// distDigestCmd exposes the release hand-off digest contract used by
+// cross-job build-to-sign boundaries. It intentionally differs from `artifact
+// digest`, which has a separate content-digest scheme.
 func distDigestCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "dist-digest",
 		Usage: "print the current release dist/ hand-off digest",
 		Description: `Computes the digest used by release validate-dist: the SHA-256 of
-the sorted sha256sum manifest for every regular file under --dist-dir. This is
-byte-compatible with forgejo-ci's dist-digest.sh and exists for compatibility
-while release hand-offs migrate to the reusable-ci binary.
+the sorted sha256sum manifest for every regular file under --dist-dir. Producer
+and verifier use this canonical algorithm at the reusable-workflow hand-off.
 
 Set --manifest-root to override the path prefix written into the manifest; use
 --manifest-root . for artifact contents that are staged under different
@@ -49,10 +47,9 @@ EXAMPLE:
 	}
 }
 
-// verifyDistCmd is the Go port of forgejo-ci's verify-dist.sh: a
-// cross-job-boundary integrity check that the dist/ tree handed from the
-// (keyless) build job to the signing job is structurally safe and
-// byte-identical to what was built — refusing to sign tampered artifacts.
+// verifyDistCmd checks that a dist/ tree handed from the (keyless) build job to
+// the signing job is structurally safe and byte-identical to what was built,
+// refusing to sign tampered artifacts.
 func verifyDistCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "validate-dist",
@@ -60,7 +57,7 @@ func verifyDistCmd() *cli.Command {
 		Description: `Rejects a dist/ that is a symlink, contains symlinks, contains
 non-regular entries, or has control characters in any path, then
 recomputes its canonical digest and fails on mismatch. The digest
-algorithm is byte-compatible with forgejo-ci's dist-digest.sh.
+algorithm is shared with release dist-digest.
 
 Set --manifest-root to override the path prefix written into the manifest during
 digest recomputation; use --manifest-root . for artifact contents that are

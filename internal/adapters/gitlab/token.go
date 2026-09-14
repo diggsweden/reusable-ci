@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"sync"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -30,7 +29,7 @@ func (p *Provider) ValidateToken(ctx context.Context, token, repo string) error 
 	endpoint := projectEndpoint(apiBase, repo)
 
 	_, err := getJSON(ctx, p.HTTPClient, endpoint, map[string]string{
-		"PRIVATE-TOKEN": token, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+		headerPrivateToken: token,
 	})
 	if err != nil {
 		return fmt.Errorf("gitlab token validation: %w", err)
@@ -58,30 +57,25 @@ func (p *Provider) ValidateBotPermissions(ctx context.Context, repo string) (*pr
 		return nil, fmt.Errorf("repo is empty: %w", errs.ErrUsage)
 	}
 
-	apiBase, headers := p.apiContext()
-	encoded := url.PathEscape(repo)
-	probe := func(path string) bool {
-		_, err := getJSON(ctx, p.HTTPClient, strings.TrimRight(apiBase, "/")+path, headers)
-
-		return err == nil
+	token := strings.TrimSpace(p.envFunc()("GITLAB_TOKEN"))
+	if token == "" {
+		return nil, fmt.Errorf("GitLab user-level bot permission checks require GITLAB_TOKEN; CI_JOB_TOKEN cannot access the user API: %w", errs.ErrPermissionDenied)
 	}
 
-	var (
-		bp provider.BotPermissions
-		wg sync.WaitGroup
+	apiBase, _ := p.apiContext()
+	headers := map[string]string{headerPrivateToken: token}
+	encoded := url.PathEscape(repo)
+	probe := func(path string) func() error {
+		return func() error {
+			_, err := getJSON(ctx, p.HTTPClient, strings.TrimRight(apiBase, "/")+path, headers)
+
+			return err
+		}
+	}
+
+	return provider.ProbeBotPermissions(
+		probe("/api/v4/user"),
+		probe("/api/v4/projects/"+encoded),
+		probe("/api/v4/projects/"+encoded+"/repository/branches"),
 	)
-
-	wg.Add(3)
-
-	go func() { defer wg.Done(); bp.UserAccessible = probe("/api/v4/user") }()
-	go func() { defer wg.Done(); bp.RepoAccessible = probe("/api/v4/projects/" + encoded) }()
-	go func() {
-		defer wg.Done()
-
-		bp.BranchesAccessible = probe("/api/v4/projects/" + encoded + "/repository/branches")
-	}()
-
-	wg.Wait()
-
-	return &bp, nil
 }

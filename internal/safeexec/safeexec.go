@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os/exec"
 	"time"
 
@@ -57,6 +58,8 @@ func Command(ctx context.Context, bin string, args ...string) *exec.Cmd {
 //   - nil                    → nil (passthrough)
 //   - exec.ErrNotFound       → ErrDependencyUnavailable (exit 69)
 //     "operator forgot to install the toolchain"
+//   - fs.ErrNotExist         → ErrDependencyUnavailable (exit 69)
+//     "an explicitly selected executable could not start"
 //   - any other error        → ErrValidation (exit 1)
 //     "the work the user asked for failed"
 //
@@ -73,6 +76,10 @@ func WrapError(err error, bin, action string) error {
 
 	if errors.Is(err, exec.ErrNotFound) {
 		return fmt.Errorf("%s not found in $PATH: %w", bin, errs.ErrDependencyUnavailable)
+	}
+
+	if errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("%s could not start: %w: %w", bin, err, errs.ErrDependencyUnavailable)
 	}
 
 	if action == "" {

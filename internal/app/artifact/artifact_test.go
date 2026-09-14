@@ -18,6 +18,7 @@ import (
 type fakeArtifacts struct {
 	gotUpload   provider.RunArtifactUpload
 	gotDownload provider.RunArtifactDownload
+	downloads   int
 	info        provider.RunArtifactInfo
 	err         error
 }
@@ -29,12 +30,15 @@ func (f *fakeArtifacts) UploadRunArtifact(_ context.Context, in provider.RunArti
 }
 
 func (f *fakeArtifacts) DownloadRunArtifact(_ context.Context, in provider.RunArtifactDownload) (provider.RunArtifactInfo, error) {
+	f.downloads++
 	f.gotDownload = in
 
 	return f.info, f.err
 }
 
 func TestDownload_HappyPath(t *testing.T) {
+	t.Parallel()
+
 	fake := &fakeArtifacts{info: provider.RunArtifactInfo{Name: "dist", ID: "42", Bytes: 123, FileCount: 3}}
 	sink := fakeoutputsink.New(t)
 
@@ -52,7 +56,25 @@ func TestDownload_HappyPath(t *testing.T) {
 	}
 }
 
+func TestDownload_PropagatesOutputSinkFailure(t *testing.T) {
+	t.Parallel()
+
+	sink := fakeoutputsink.New(t)
+	if err := sink.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &fakeArtifacts{info: provider.RunArtifactInfo{Name: "dist", ID: "42"}}
+
+	_, err := appartifact.Download(context.Background(), fake, sink, nil, provider.RunArtifactDownload{Name: "dist", Dir: "out"})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("output failure = %v, want ErrValidation", err)
+	}
+}
+
 func TestDownload_Validation(t *testing.T) {
+	t.Parallel()
+
 	sink := fakeoutputsink.New(t)
 	ctx := context.Background()
 
@@ -79,6 +101,8 @@ func TestDownload_Validation(t *testing.T) {
 }
 
 func TestUpload_Validation(t *testing.T) {
+	t.Parallel()
+
 	sink := fakeoutputsink.New(t)
 	ctx := context.Background()
 
@@ -95,6 +119,8 @@ func TestUpload_Validation(t *testing.T) {
 // TestUpload_DefaultsIfNoFilesPolicy proves the safe default is applied
 // when the caller leaves the policy empty.
 func TestUpload_DefaultsIfNoFilesPolicy(t *testing.T) {
+	t.Parallel()
+
 	fake := &fakeArtifacts{info: provider.RunArtifactInfo{Name: "dist"}}
 
 	if _, err := appartifact.Upload(context.Background(), fake, fakeoutputsink.New(t), nil, provider.RunArtifactUpload{Name: "dist", Dir: "d"}); err != nil {
@@ -103,5 +129,29 @@ func TestUpload_DefaultsIfNoFilesPolicy(t *testing.T) {
 
 	if fake.gotUpload.IfNoFiles != provider.IfNoFilesError {
 		t.Errorf("IfNoFiles default = %q, want %q", fake.gotUpload.IfNoFiles, provider.IfNoFilesError)
+	}
+}
+
+// TestUpload_RetentionPolicy: zero (the forge default) and a positive value
+// reach the uploader unchanged; a negative retention is a usage error and no
+// upload is attempted.
+func TestUpload_RetentionPolicy(t *testing.T) {
+	t.Parallel()
+
+	for days, wantErr := range map[int]bool{0: false, 30: false, -1: true} {
+		fake := &fakeArtifacts{info: provider.RunArtifactInfo{Name: "dist"}}
+		_, err := appartifact.Upload(context.Background(), fake, fakeoutputsink.New(t), nil, provider.RunArtifactUpload{Name: "dist", Dir: "d", RetentionDays: days})
+
+		if wantErr {
+			if !errors.Is(err, errs.ErrUsage) || fake.gotUpload.Name != "" {
+				t.Errorf("retention %d: err = %v, upload = %+v; want ErrUsage and no upload", days, err, fake.gotUpload)
+			}
+
+			continue
+		}
+
+		if err != nil || fake.gotUpload.RetentionDays != days {
+			t.Errorf("retention %d: err = %v, forwarded %d", days, err, fake.gotUpload.RetentionDays)
+		}
 	}
 }

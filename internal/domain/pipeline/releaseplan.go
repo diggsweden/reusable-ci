@@ -5,7 +5,6 @@ package pipeline
 
 import (
 	"cmp"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -161,9 +160,12 @@ func ValidateArtifactTransferItem(item ArtifactTransfer) error {
 // entry point, which also stops them disagreeing about what a valid item is --
 // only one of them checked the path.
 func ParseArtifactTransferPlan(raw string) (ArtifactTransferPlan, error) {
+	// A transfer plan is produced and consumed by the same release, like a
+	// stage plan, and it names the files a download lands on disk: an unknown
+	// or repeated member is a stale shape, never something to read past.
 	var plan ArtifactTransferPlan
-	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-		return ArtifactTransferPlan{}, fmt.Errorf("parse artifact-transfer-plan-json: %w: %w", err, errs.ErrInvalidConfig)
+	if err := DecodeStagePlan(raw, "artifact-transfer-plan-json", &plan); err != nil {
+		return ArtifactTransferPlan{}, err
 	}
 
 	if plan.Version != ArtifactTransferPlanVersion {
@@ -240,8 +242,8 @@ type ReleasePublishTargets struct {
 
 // NewReleasePlan builds the production release setup contract.
 func NewReleasePlan(in ReleasePlanInput) (ReleasePlan, error) {
-	if in.ConfigPlan.Version != ConfigPlanVersion {
-		return ReleasePlan{}, fmt.Errorf("unsupported config-plan version %d: %w", in.ConfigPlan.Version, errs.ErrInvalidConfig)
+	if err := ValidateConfigPlan(in.ConfigPlan); err != nil {
+		return ReleasePlan{}, err
 	}
 
 	policy, err := resolveReleasePolicy(releasePolicyInputs{
@@ -276,6 +278,11 @@ func NewReleasePlan(in ReleasePlanInput) (ReleasePlan, error) {
 		return ReleasePlan{}, err
 	}
 
+	transfers := newReleaseArtifactTransferPlan(in.ConfigPlan, policy)
+	if err := validateConcreteTransferNames(transfers); err != nil {
+		return ReleasePlan{}, err
+	}
+
 	return ReleasePlan{
 		Version: ReleasePlanVersion,
 		Context: ReleaseContext{
@@ -288,16 +295,16 @@ func NewReleasePlan(in ReleasePlanInput) (ReleasePlan, error) {
 		},
 		Policy: policy,
 		Stages: ReleaseStagePlans{
-			Prepare: NewReleasePrepareStagePlan(in.ConfigPlan, policy, in.FilePattern),
-			Build:   NewReleaseBuildStagePlan(in.ConfigPlan),
-			Publish: NewReleasePublishStagePlan(in.ConfigPlan, buildSBOM),
+			Prepare: newReleasePrepareStagePlan(in.ConfigPlan, policy, in.FilePattern),
+			Build:   newReleaseBuildStagePlan(in.ConfigPlan),
+			Publish: newReleasePublishStagePlan(in.ConfigPlan, buildSBOM),
 		},
-		ArtifactTransfers: NewReleaseArtifactTransferPlan(in.ConfigPlan, policy),
+		ArtifactTransfers: transfers,
 	}, nil
 }
 
-// NewReleasePrepareStagePlan builds the standalone release prepare-stage plan.
-func NewReleasePrepareStagePlan(configPlan ConfigPlan, policy ReleasePolicy, filePattern string) ReleasePrepareStagePlan {
+// newReleasePrepareStagePlan builds the standalone release prepare-stage plan.
+func newReleasePrepareStagePlan(configPlan ConfigPlan, policy ReleasePolicy, filePattern string) ReleasePrepareStagePlan {
 	return ReleasePrepareStagePlan{
 		Version:     ReleasePlanVersion,
 		Stage:       "prepare",
@@ -308,8 +315,8 @@ func NewReleasePrepareStagePlan(configPlan ConfigPlan, policy ReleasePolicy, fil
 	}
 }
 
-// NewReleaseBuildStagePlan builds the standalone release build-stage plan.
-func NewReleaseBuildStagePlan(configPlan ConfigPlan) ReleaseBuildStagePlan {
+// newReleaseBuildStagePlan builds the standalone release build-stage plan.
+func newReleaseBuildStagePlan(configPlan ConfigPlan) ReleaseBuildStagePlan {
 	artifacts := configPlan.Artifacts
 
 	return ReleaseBuildStagePlan{
@@ -327,8 +334,8 @@ func NewReleaseBuildStagePlan(configPlan ConfigPlan) ReleaseBuildStagePlan {
 	}
 }
 
-// NewReleasePublishStagePlan builds the standalone release publish-stage plan.
-func NewReleasePublishStagePlan(configPlan ConfigPlan, buildSBOM bool) ReleasePublishStagePlan {
+// newReleasePublishStagePlan builds the standalone release publish-stage plan.
+func newReleasePublishStagePlan(configPlan ConfigPlan, buildSBOM bool) ReleasePublishStagePlan {
 	artifacts := configPlan.Artifacts
 	cargoContainerFirst := []PlannedArtifact{}
 	goContainerFirst := []PlannedArtifact{}
@@ -357,11 +364,11 @@ func NewReleasePublishStagePlan(configPlan ConfigPlan, buildSBOM bool) ReleasePu
 	}
 }
 
-// NewReleaseArtifactTransferPlan builds the release-create artifact download
+// newReleaseArtifactTransferPlan builds the release-create artifact download
 // plan without wildcard artifact names.
 //
 //nolint:cyclop // plans transfers with one branch per artifact category.
-func NewReleaseArtifactTransferPlan(configPlan ConfigPlan, policy ReleasePolicy) ArtifactTransferPlan {
+func newReleaseArtifactTransferPlan(configPlan ConfigPlan, policy ReleasePolicy) ArtifactTransferPlan {
 	items := make([]ArtifactTransfer, 0)
 
 	for _, artifact := range configPlan.Artifacts.All {
@@ -379,7 +386,7 @@ func NewReleaseArtifactTransferPlan(configPlan ConfigPlan, policy ReleasePolicy)
 				Kind:     ArtifactTransferBuildSBOM,
 				Name:     artifact.BuildSBOMArtifactName,
 				Path:     "./release-artifacts/",
-				Required: false,
+				Required: true,
 			})
 		}
 	}
@@ -395,7 +402,7 @@ func NewReleaseArtifactTransferPlan(configPlan ConfigPlan, policy ReleasePolicy)
 					Kind:         ArtifactTransferAnalyzedContainerSBOM,
 					NameTemplate: fmt.Sprintf("analyzed-container-sbom-{run_id}-%s-%s", transferContainerName(container.Name), suffix),
 					Path:         "./sbom-artifacts/",
-					Required:     false,
+					Required:     true,
 				})
 			}
 		}
@@ -417,6 +424,25 @@ func NewReleaseArtifactTransferPlan(configPlan ConfigPlan, policy ReleasePolicy)
 	}
 
 	return ArtifactTransferPlan{Version: ArtifactTransferPlanVersion, Items: items}
+}
+
+// Check the selected transfers, not all potential uploads. Templates remain
+// unresolved here; this is not a runtime or provider-normalization guarantee.
+func validateConcreteTransferNames(plan ArtifactTransferPlan) error {
+	seen := make(map[string]int, len(plan.Items))
+	for index, item := range plan.Items {
+		if item.Name == "" {
+			continue
+		}
+
+		if previous, ok := seen[item.Name]; ok {
+			return fmt.Errorf("artifact_transfers.items[%d].name has duplicate concrete name %q (also items[%d]): %w", index, item.Name, previous, errs.ErrInvalidConfig)
+		}
+
+		seen[item.Name] = index
+	}
+
+	return nil
 }
 
 func policyIncludesSBOMLayer(value string, layer config.SBOMLayer) bool {
@@ -444,12 +470,15 @@ func artifactIncludesSBOMLayer(artifact PlannedArtifact, layer config.SBOMLayer)
 	return false
 }
 
+// Deduplicate suffixes within one container's expansion, never whole transfer
+// records from potentially different producers. Preserve first occurrence order.
 func transferPlatformSuffixes(platforms string) []string {
 	if strings.TrimSpace(platforms) == "" {
 		return []string{"amd64"}
 	}
 
 	out := make([]string, 0)
+	seen := make(map[string]bool)
 
 	for _, raw := range listval.Tokens(platforms) {
 		platform := strings.TrimSpace(raw)
@@ -458,8 +487,12 @@ func transferPlatformSuffixes(platforms string) []string {
 		}
 
 		platform = strings.TrimPrefix(platform, "linux/")
+
 		platform = strings.ReplaceAll(platform, "/", "-")
-		out = append(out, platform)
+		if !seen[platform] {
+			seen[platform] = true
+			out = append(out, platform)
+		}
 	}
 
 	if len(out) == 0 {

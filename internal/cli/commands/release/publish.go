@@ -105,6 +105,7 @@ func runPublishReconcile(ctx context.Context, cmd *cli.Command) error {
 			ReleaseNameFromRepository: cmd.Bool("release-name-from-repository"),
 			ReleaseNotesFile:          cmd.String("release-notes-file"),
 			Draft:                     cmd.Bool("draft"),
+			Prerelease:                domainrelease.IsPrereleaseTag(cmd.String(flagTag)),
 			Assets:                    assets,
 		})
 	})

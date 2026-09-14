@@ -4,14 +4,18 @@
 package security_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
 )
 
-func TestNormalizeOpengrepFailSeverity(t *testing.T) {
+func TestNormalizeOpengrepFailSeverity_MapsKnownSpellingsIgnoringCaseAndSpace(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		in   string
 		want security.OpengrepSeverity
@@ -41,14 +45,24 @@ func TestNormalizeOpengrepFailSeverity(t *testing.T) {
 	}
 }
 
-func TestNormalizeOpengrepFailSeverity_Unknown(t *testing.T) {
+func TestNormalizeOpengrepFailSeverity_RejectsUnknownSpelling(t *testing.T) {
+	t.Parallel()
+
 	_, err := security.NormalizeOpengrepFailSeverity("severe")
-	if err == nil {
-		t.Fatal("expected error")
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+
+	// The rejected spelling has to appear, or the operator cannot tell
+	// which of several severity flags they got wrong.
+	if !strings.Contains(err.Error(), "severe") {
+		t.Errorf("err = %v, want it to quote the rejected value", err)
 	}
 }
 
-func TestOpengrepHasFindingsMeetingThreshold(t *testing.T) {
+func TestOpengrepHasFindingsMeetingThreshold_GatesAtOrAboveTheThreshold(t *testing.T) {
+	t.Parallel()
+
 	cases := []struct {
 		name      string
 		threshold security.OpengrepSeverity
@@ -68,6 +82,8 @@ func TestOpengrepHasFindingsMeetingThreshold(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
 			got := security.OpengrepHasFindingsMeetingThreshold(c.threshold, c.findings, c.errors, c.warnings)
 			if got != c.want {
 				t.Errorf("got %v, want %v", got, c.want)
@@ -76,21 +92,25 @@ func TestOpengrepHasFindingsMeetingThreshold(t *testing.T) {
 	}
 }
 
-func TestCountOpengrepFindings(t *testing.T) {
+func TestCountOpengrepFindings_TalliesEachSeverity(t *testing.T) {
+	t.Parallel()
+
 	body := `{"results":[
-{"check_id":"a","severity":"ERROR"},
-{"check_id":"b","severity":"WARNING"},
-{"check_id":"c","severity":"INFO"},
-{"check_id":"d","severity":"ERROR"}
+{"check_id":"a","extra":{"severity":"ERROR"}},
+{"check_id":"b","extra":{"severity":"WARNING"}},
+{"check_id":"c","extra":{"severity":"INFO"}},
+{"check_id":"d","extra":{"severity":"ERROR"}}
 ]}`
 
-	c := security.CountOpengrepFindings(body)
-	if c.FindingsTotal != 4 || c.ErrorTotal != 2 || c.WarningTotal != 1 || c.InfoTotal != 1 {
-		t.Errorf("counts = %+v", c)
+	want := security.OpengrepCounts{FindingsTotal: 4, ErrorTotal: 2, WarningTotal: 1, InfoTotal: 1}
+	if got, err := security.CountOpengrepFindings(body); err != nil || got != want {
+		t.Errorf("counts = %+v, want %+v", got, want)
 	}
 }
 
 func TestRenderOpengrepSummary_BlockedByThreshold(t *testing.T) {
+	t.Parallel()
+
 	md, result := security.RenderOpengrepSummary(security.OpengrepSummaryInput{
 		Config:           "p/default", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		TargetPath:       ".",
@@ -121,6 +141,8 @@ func TestRenderOpengrepSummary_BlockedByThreshold(t *testing.T) {
 }
 
 func TestRenderOpengrepSummary_PassedWithFindingsBelowThreshold(t *testing.T) {
+	t.Parallel()
+
 	md, result := security.RenderOpengrepSummary(security.OpengrepSummaryInput{
 		FailOnSeverity:   security.OpengrepSeverityHigh,
 		Counts:           security.OpengrepCounts{FindingsTotal: 2, WarningTotal: 1, InfoTotal: 1},
@@ -136,6 +158,8 @@ func TestRenderOpengrepSummary_PassedWithFindingsBelowThreshold(t *testing.T) {
 }
 
 func TestRenderOpengrepSummary_CleanPass(t *testing.T) {
+	t.Parallel()
+
 	md, result := security.RenderOpengrepSummary(security.OpengrepSummaryInput{
 		FailOnSeverity: security.OpengrepSeverityHigh,
 		Counts:         security.OpengrepCounts{},
@@ -154,6 +178,8 @@ func TestRenderOpengrepSummary_CleanPass(t *testing.T) {
 }
 
 func TestRenderOpengrepSummary_GitHubWithoutCodeScanningToken(t *testing.T) {
+	t.Parallel()
+
 	md, result := security.RenderOpengrepSummary(security.OpengrepSummaryInput{
 		Config:         "p/default",
 		TargetPath:     ".",
@@ -182,6 +208,8 @@ func TestRenderOpengrepSummary_GitHubWithoutCodeScanningToken(t *testing.T) {
 }
 
 func TestRenderOpengrepSummary_EmbedsExcerpt(t *testing.T) {
+	t.Parallel()
+
 	md, _ := security.RenderOpengrepSummary(security.OpengrepSummaryInput{
 		Counts:      security.OpengrepCounts{FindingsTotal: 1, ErrorTotal: 1},
 		TextExcerpt: "rule X matched at foo.go:42",
@@ -191,7 +219,9 @@ func TestRenderOpengrepSummary_EmbedsExcerpt(t *testing.T) {
 	}
 }
 
-func TestRenderOpengrepFailureSummary(t *testing.T) {
+func TestRenderOpengrepFailureSummary_NamesTheExitCodeAndScanResult(t *testing.T) {
+	t.Parallel()
+
 	md := security.RenderOpengrepFailureSummary(security.OpengrepFailureSummaryInput{
 		Config:     "p/default",
 		TargetPath: ".",
@@ -212,6 +242,8 @@ func TestRenderOpengrepFailureSummary(t *testing.T) {
 }
 
 func TestRenderOpengrepSummary_Forgejo(t *testing.T) {
+	t.Parallel()
+
 	md, result := security.RenderOpengrepSummary(security.OpengrepSummaryInput{
 		Config:         "p/default",
 		TargetPath:     ".",
@@ -236,7 +268,9 @@ func TestRenderOpengrepSummary_Forgejo(t *testing.T) {
 	}
 }
 
-func TestParseConfigList(t *testing.T) {
+func TestParseConfigList_TrimsAndDropsEmptyEntries(t *testing.T) {
+	t.Parallel()
+
 	got, err := security.ParseConfigList(" p/default ,  custom-rules.yaml,  ")
 	if err != nil {
 		t.Fatal(err)
@@ -249,16 +283,24 @@ func TestParseConfigList(t *testing.T) {
 }
 
 func TestParseConfigList_RejectsEmpty(t *testing.T) {
-	if _, err := security.ParseConfigList(""); err == nil {
-		t.Fatal("expected error")
-	}
+	t.Parallel()
 
-	if _, err := security.ParseConfigList(",,  ,"); err == nil {
-		t.Fatal("expected error on whitespace-only entries")
+	// Both spellings of "no configs" are the caller's mistake, not a
+	// rule failure: a scan with no rules would silently pass everything.
+	for _, raw := range []string{"", ",,  ,"} {
+		t.Run("raw="+raw, func(t *testing.T) {
+			t.Parallel()
+
+			if _, err := security.ParseConfigList(raw); !errors.Is(err, errs.ErrUsage) {
+				t.Errorf("ParseConfigList(%q): err = %v, want ErrUsage", raw, err)
+			}
+		})
 	}
 }
 
-func TestHeadN(t *testing.T) {
+func TestHeadN_ReturnsAtMostNLines(t *testing.T) {
+	t.Parallel()
+
 	in := "1\n2\n3\n4\n5"
 	if got := security.HeadN(in, 3); got != "1\n2\n3" {
 		t.Errorf("HeadN(3) = %q", got)

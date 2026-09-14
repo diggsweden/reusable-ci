@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -15,12 +14,10 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// permissionServer answers the three probe endpoints with the supplied
+// permissionServer answers the three probe endpoints in memory with the supplied
 // status codes, so each permission can be denied independently.
-func permissionServer(t *testing.T, user, repo, branches int) *httptest.Server {
-	t.Helper()
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func permissionServer(user, repo, branches int) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The branches endpoint decodes into a slice, the other two into
 		// objects; a body of the wrong shape fails the probe for the
 		// wrong reason.
@@ -39,11 +36,7 @@ func permissionServer(t *testing.T, user, repo, branches int) *httptest.Server {
 		w.WriteHeader(status)
 
 		_, _ = w.Write([]byte(body))
-	}))
-
-	t.Cleanup(srv.Close)
-
-	return srv
+	})
 }
 
 // TestValidateBotPermissions_ReportsEachProbeIndependently covers a
@@ -54,49 +47,74 @@ func permissionServer(t *testing.T, user, repo, branches int) *httptest.Server {
 // diagnostic would point at the wrong scope, which is worse than no
 // diagnostic — someone would widen the wrong permission.
 func TestValidateBotPermissions_ReportsEachProbeIndependently(t *testing.T) {
+	t.Parallel()
+
 	for _, tc := range []struct {
-		name                     string
-		user, repo, branches     int
-		wantUser, wantRepo, want bool
+		name                             string
+		user, repo, branches             int
+		wantUser, wantRepo, wantBranches bool
+		wantErr                          error
 	}{
 		{
 			name: "all granted",
 			user: http.StatusOK, repo: http.StatusOK, branches: http.StatusOK,
-			wantUser: true, wantRepo: true, want: true,
+			wantUser: true, wantRepo: true, wantBranches: true,
 		},
 		{
 			// A token scoped to the repo but not to the user endpoint.
 			name: "user denied",
 			user: http.StatusForbidden, repo: http.StatusOK, branches: http.StatusOK,
-			wantUser: false, wantRepo: true, want: true,
+			wantUser: false, wantRepo: true, wantBranches: true,
 		},
 		{
 			name: "repo denied",
 			user: http.StatusOK, repo: http.StatusNotFound, branches: http.StatusOK,
-			wantUser: true, wantRepo: false, want: true,
+			wantUser: true, wantRepo: false, wantBranches: true,
 		},
 		{
 			// The one that matters for pushing a release branch.
 			name: "branches denied",
 			user: http.StatusOK, repo: http.StatusOK, branches: http.StatusForbidden,
-			wantUser: true, wantRepo: true, want: false,
+			wantUser: true, wantRepo: true, wantBranches: false,
 		},
 		{
 			name: "all denied",
 			user: http.StatusUnauthorized, repo: http.StatusUnauthorized, branches: http.StatusUnauthorized,
-			wantUser: false, wantRepo: false, want: false,
+			wantUser: false, wantRepo: false, wantBranches: false,
+		},
+		{
+			// An outage is not a missing permission: reporting it as one
+			// would send the operator to widen a scope.
+			name: "repo unavailable",
+			user: http.StatusOK, repo: http.StatusServiceUnavailable, branches: http.StatusOK,
+			wantErr: errs.ErrDependencyUnavailable,
+		},
+		{
+			name: "branches rate limited",
+			user: http.StatusOK, repo: http.StatusOK, branches: http.StatusTooManyRequests,
+			wantErr: errs.ErrRateLimited,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := permissionServer(t, tc.user, tc.repo, tc.branches)
+			t.Parallel()
+
+			handler := permissionServer(tc.user, tc.repo, tc.branches)
 
 			p := &forgejo.Provider{
 				Env:             envMap(map[string]string{"FORGEJO_TOKEN": "tok"}),
-				HTTPClient:      srv.Client(),
-				APIBaseOverride: srv.URL,
+				HTTPClient:      inMemoryClient(handler),
+				APIBaseOverride: "https://forgejo.invalid",
 			}
 
 			got, err := p.ValidateBotPermissions(context.Background(), "owner/repo")
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) || errors.Is(err, errs.ErrPermissionDenied) || got != nil {
+					t.Fatalf("got %+v, %v; want only %v", got, err, tc.wantErr)
+				}
+
+				return
+			}
+
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -109,8 +127,8 @@ func TestValidateBotPermissions_ReportsEachProbeIndependently(t *testing.T) {
 				t.Errorf("RepoAccessible = %v, want %v", got.RepoAccessible, tc.wantRepo)
 			}
 
-			if got.BranchesAccessible != tc.want {
-				t.Errorf("BranchesAccessible = %v, want %v", got.BranchesAccessible, tc.want)
+			if got.BranchesAccessible != tc.wantBranches {
+				t.Errorf("BranchesAccessible = %v, want %v", got.BranchesAccessible, tc.wantBranches)
 			}
 		})
 	}
@@ -126,12 +144,14 @@ func TestValidateBotPermissions_ReportsEachProbeIndependently(t *testing.T) {
 // the check changes nothing observable. The cases below assert the
 // behaviour rather than which line produces it.
 func TestValidateBotPermissions_RefusesAnUnusableRepo(t *testing.T) {
-	srv := permissionServer(t, http.StatusOK, http.StatusOK, http.StatusOK)
+	t.Parallel()
+
+	handler := permissionServer(http.StatusOK, http.StatusOK, http.StatusOK)
 
 	p := &forgejo.Provider{
 		Env:             envMap(map[string]string{"FORGEJO_TOKEN": "tok"}),
-		HTTPClient:      srv.Client(),
-		APIBaseOverride: srv.URL,
+		HTTPClient:      inMemoryClient(handler),
+		APIBaseOverride: "https://forgejo.invalid",
 	}
 
 	if _, err := p.ValidateBotPermissions(context.Background(), ""); !errors.Is(err, errs.ErrUsage) {
@@ -139,8 +159,8 @@ func TestValidateBotPermissions_RefusesAnUnusableRepo(t *testing.T) {
 	}
 
 	for _, repo := range []string{"noslash", "owner/", "/repo"} {
-		if _, err := p.ValidateBotPermissions(context.Background(), repo); err == nil {
-			t.Errorf("repo %q was accepted", repo)
+		if _, err := p.ValidateBotPermissions(context.Background(), repo); !errors.Is(err, errs.ErrUsage) {
+			t.Errorf("repo %q: err = %v, want ErrUsage (a caller mistake, not a permissions answer)", repo, err)
 		}
 	}
 }

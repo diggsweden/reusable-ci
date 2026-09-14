@@ -4,14 +4,16 @@
 package imageledger
 
 import (
+	"errors"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"slices"
 	"testing"
 )
 
-// TestStageDestinations locks in the build-once / promote-many tag scheme:
+// TestStageDestinations_ResolvesTagsPerStage locks in the build-once / promote-many tag scheme:
 // every stage (dev, staging, release) promotes to a single <base>:<stage>
 // moving pointer on the same digest; the immutable :<version> is build-only.
-func TestStageDestinations(t *testing.T) {
+func TestStageDestinations_ResolvesTagsPerStage(t *testing.T) {
 	t.Parallel()
 
 	base := "ghcr.io/owner/repo"
@@ -101,7 +103,7 @@ func destRefs(dests []stageDest) []string {
 	return refs
 }
 
-func TestStageIsRelease(t *testing.T) {
+func TestStageIsRelease_TreatsAnEmptyStageAsRelease(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -113,9 +115,13 @@ func TestStageIsRelease(t *testing.T) {
 		{"dev", false},
 		{"stage", false},
 	} {
-		if got := (Stage{Name: tc.name}).IsRelease(); got != tc.want {
-			t.Errorf("Stage{%q}.IsRelease() = %v, want %v", tc.name, got, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := (Stage{Name: tc.name}).IsRelease(); got != tc.want {
+				t.Errorf("Stage{%q}.IsRelease() = %v, want %v", tc.name, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -130,5 +136,24 @@ func TestStageValidate_RejectsEntryReleaseTagsOnNamedStage(t *testing.T) {
 
 	if err := (Stage{Name: "release", UseEntryReleaseTags: true}).Validate(); err != nil {
 		t.Errorf("release stage with UseEntryReleaseTags rejected: %v", err)
+	}
+}
+
+// TestStageValidate_TargetRepoIsAPrefixWithoutTagOrDigest pins the shape of
+// --stage-repo: a registry or registry/namespace prefix. A tag or digest on it
+// would be spliced into every destination ref.
+func TestStageValidate_TargetRepoIsAPrefixWithoutTagOrDigest(t *testing.T) {
+	t.Parallel()
+
+	for _, repo := range []string{"forgejo.example.com", "forgejo.example.com/owner", "localhost:5000/ns", "harbor.example.com:8443", "localhost:5000", "[::1]:5000/ns", "harbor.example.com:8443/team/sub"} {
+		if err := (Stage{TargetRepo: repo}).Validate(); err != nil {
+			t.Errorf("Validate(%q) = %v, want nil", repo, err)
+		}
+	}
+
+	for _, repo := range []string{"forgejo.example.com/owner:v1", "forgejo.example.com/owner@sha256:abc", "forgejo.example.com/owner/", "forgejo.example.com/ow ner", "https://harbor.example.com", "harbor.example.com//team", "Harbor.Example.com/Team", "harbor.example.com/team:8443"} {
+		if err := (Stage{TargetRepo: repo}).Validate(); !errors.Is(err, errs.ErrUsage) {
+			t.Errorf("Validate(%q) = %v, want ErrUsage", repo, err)
+		}
 	}
 }

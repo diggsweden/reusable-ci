@@ -100,12 +100,13 @@ func TestInRunner_ForgeInjectedRegistryCredentialAuthenticates(t *testing.T) {
 			repo := livetest.NewScratchRepo(t, target, "regauth")
 
 			livetest.PrepareTag(t, target, repo, tag)
-			livetest.PublishBinaryAsset(t, target, repo, tag, t.TempDir())
+			staged := livetest.PublishRegistryAuthAssets(t, target, repo, tag, t.TempDir())
 
 			assetURL := livetest.ReleaseAssetURL(t, target, repo, tag, "reusable-ci")
+			proxy := staged.Asset(t, "credential-proxy", livetest.ReleaseAssetURL(t, target, repo, tag, "credential-proxy"))
 
 			conclusion := livetest.RunWorkflow(t, target, repo, "registry-auth",
-				livetest.RegistryAuthProbe(target, assetURL))
+				livetest.RegistryAuthProbe(target, assetURL, proxy))
 			if conclusion != "success" {
 				t.Errorf("%s: run concluded %q — the forge-injected registry credential was not found or does not authenticate, so a pipeline relying on the fallback must carry a standing secret instead",
 					forge, conclusion)

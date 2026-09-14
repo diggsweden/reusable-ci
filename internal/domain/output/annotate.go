@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
@@ -35,6 +36,42 @@ type Annotator struct {
 // configured).
 func NewAnnotator(w io.Writer, f Format) Annotator {
 	return Annotator{w: w, format: f}
+}
+
+// Concurrent returns an Annotator that writes to the same destination under a
+// mutex, for callers that hand one annotator to work running in parallel.
+//
+// An Annotator is a writer and a format, and nothing serialised the writer.
+// validate.Prerequisites runs its checks in an errgroup and passes each the
+// same annotator, so two checks that both annotate — a missing Maven secret
+// and an unverifiable tag signature, say — write to one io.Writer from two
+// goroutines. That is a data race, and on a real runner the visible symptom is
+// two "::error::" lines spliced into each other, which the forge then parses as
+// neither.
+//
+// It went unnoticed because every test passed the zero-value Annotator, whose
+// writer is nil and whose writes go nowhere: the race needs a real destination
+// to happen, and no test had one until a credential-leak check started reading
+// what the annotator actually emitted.
+func (a Annotator) Concurrent() Annotator {
+	if a.w == nil {
+		return a
+	}
+
+	return Annotator{w: &lockedWriter{w: a.w}, format: a.format}
+}
+
+// lockedWriter serialises writes to an underlying writer.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	return l.w.Write(p)
 }
 
 // AnnotatorFromFlag is the common CLI-side one-liner: parse the raw
@@ -111,7 +148,7 @@ func (a Annotator) emit(ghaLevel, plainPrefix, msgFormat string, args ...any) {
 		return
 	}
 
-	_, _ = fmt.Fprintf(a.w, "%s%s\n", plainPrefix, msg)
+	_, _ = fmt.Fprintf(a.w, "%s%s\n", plainPrefix, plainData(msg))
 }
 
 // emitAt is emit with optional file/line/title properties. GitHub gets the
@@ -125,7 +162,7 @@ func (a Annotator) emitAt(ghaLevel, plainPrefix string, loc Annotation, msgForma
 	msg := fmt.Sprintf(msgFormat, args...)
 
 	if a.format != FormatGitHub {
-		_, _ = fmt.Fprintf(a.w, "%s%s%s\n", plainPrefix, plainLocationPrefix(loc), msg)
+		_, _ = fmt.Fprintf(a.w, "%s%s%s\n", plainPrefix, plainLocationPrefix(loc), plainData(msg))
 
 		return
 	}
@@ -156,6 +193,19 @@ func ghaProperties(loc Annotation) string {
 	}
 
 	return " " + strings.Join(parts, ",")
+}
+
+// plainData keeps interpolated content on the annotation's own line. A line
+// break in untrusted data would otherwise begin a new line at column 0, and
+// column 0 is where a runner that acts on `::command::` lines looks for one,
+// so a value such as "x\n::add-mask::y" could issue a command on a runner
+// the GitHub escaping never sees. Continuation lines are indented instead:
+// the message stays readable, and no line of it can start a command.
+func plainData(msg string) string {
+	msg = strings.ReplaceAll(msg, "\r\n", "\n")
+	msg = strings.ReplaceAll(msg, "\r", "\n")
+
+	return strings.ReplaceAll(msg, "\n", "\n    ")
 }
 
 // plainLocationPrefix renders "<file>:<line>: " for the non-GitHub fallback,

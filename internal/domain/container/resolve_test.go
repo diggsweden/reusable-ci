@@ -9,7 +9,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 )
 
-func TestResolveImageName(t *testing.T) {
+func TestResolveImageName_PrefixesTheRegistryAndFallsBackToTheRepository(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -100,6 +100,111 @@ func TestResolveImageName(t *testing.T) {
 				Repository: "owner/repo", RepositoryOwner: "owner",
 			},
 			want: "docker.io/library/nginx",
+		},
+		{
+			name: "qualified localhost without port passes through",
+			in:   container.ResolveImageNameInput{Registry: "localhost", ImageName: "localhost/owner/app"},
+			want: "localhost/owner/app",
+		},
+		{
+			name: "qualified localhost with port passes through",
+			in:   container.ResolveImageNameInput{Registry: "localhost:5000", ImageName: "localhost:5000/owner/app"},
+			want: "localhost:5000/owner/app",
+		},
+		{
+			name: "qualified single-label host with port passes through",
+			in:   container.ResolveImageNameInput{Registry: "registry:5000", ImageName: "registry:5000/owner/app"},
+			want: "registry:5000/owner/app",
+		},
+		{
+			name: "qualified IPv6 without port passes through",
+			in:   container.ResolveImageNameInput{Registry: "[::1]", ImageName: "[::1]/owner/app"},
+			want: "[::1]/owner/app",
+		},
+		{
+			name: "qualified IPv6 with port passes through",
+			in:   container.ResolveImageNameInput{Registry: "[::1]:5000", ImageName: "[::1]:5000/owner/app"},
+			want: "[::1]:5000/owner/app",
+		},
+		{
+			name: "explicit authority overrides selected registry and is lowercased",
+			in:   container.ResolveImageNameInput{Registry: "ghcr.io", ImageName: "[2001:DB8::1]:5000/Owner/App"},
+			want: "[2001:db8::1]:5000/owner/app",
+		},
+		{
+			name: "qualified localhost overrides Docker Hub owner prefix",
+			in:   container.ResolveImageNameInput{Registry: "docker.io", RepositoryOwner: "owner", ImageName: "LOCALHOST:5000/Owner/App"},
+			want: "localhost:5000/owner/app",
+		},
+		{
+			name: "localhost registry still prefixes an unqualified repository",
+			in:   container.ResolveImageNameInput{Registry: "localhost:5000", Repository: "owner/app"},
+			want: "localhost:5000/owner/app",
+		},
+		{
+			name: "IPv6 registry still prefixes a bare name",
+			in:   container.ResolveImageNameInput{Registry: "[::1]:5000", ImageName: "app"},
+			want: "[::1]:5000/app",
+		},
+		{
+			name: "explicit localhost short repository",
+			in:   container.ResolveImageNameInput{Registry: "ghcr.io", ImageName: "LOCALHOST/a"},
+			want: "localhost/a",
+		},
+		{
+			name: "explicit localhost port short repository",
+			in:   container.ResolveImageNameInput{Registry: "localhost:5000", ImageName: "localhost:5000/a"},
+			want: "localhost:5000/a",
+		},
+		{
+			name: "explicit single-label host port short repository",
+			in:   container.ResolveImageNameInput{Registry: "registry:5000", ImageName: "registry:5000/a"},
+			want: "registry:5000/a",
+		},
+		{
+			name: "explicit IPv6 short repository",
+			in:   container.ResolveImageNameInput{Registry: "[::1]", ImageName: "[::1]/a"},
+			want: "[::1]/a",
+		},
+		{
+			name: "explicit IPv6 port short repository",
+			in:   container.ResolveImageNameInput{Registry: "[::1]:5000", ImageName: "[::1]:5000/a"},
+			want: "[::1]:5000/a",
+		},
+		{
+			name: "derived localhost owner keeps configured registry",
+			in:   container.ResolveImageNameInput{Registry: "ghcr.io", Repository: "localhost/app", RepositoryOwner: "localhost"},
+			want: "ghcr.io/localhost/app",
+		},
+		{
+			name: "derived localhost owner keeps Docker Hub double prefix",
+			in:   container.ResolveImageNameInput{Registry: "docker.io", Repository: "localhost/app", RepositoryOwner: "localhost"},
+			want: "localhost/localhost/app",
+		},
+		{
+			name: "explicit localhost override bypasses configured registry",
+			in:   container.ResolveImageNameInput{Registry: "ghcr.io", ImageName: "localhost/app", Repository: "localhost/app", RepositoryOwner: "localhost"},
+			want: "localhost/app",
+		},
+		{
+			name: "explicit localhost override bypasses Docker Hub double prefix",
+			in:   container.ResolveImageNameInput{Registry: "docker.io", ImageName: "localhost/app", Repository: "localhost/app", RepositoryOwner: "localhost"},
+			want: "localhost/app",
+		},
+		{
+			name: "bare dotted name still gets legacy registry prefix",
+			in:   container.ResolveImageNameInput{Registry: "ghcr.io", ImageName: "app.test"},
+			want: "ghcr.io/app.test",
+		},
+		{
+			name: "dot in repository path still bypasses legacy prefix",
+			in:   container.ResolveImageNameInput{Registry: "ghcr.io", ImageName: "owner/app.test"},
+			want: "owner/app.test",
+		},
+		{
+			name: "localhost without a path is still a bare override",
+			in:   container.ResolveImageNameInput{Registry: "ghcr.io", ImageName: "localhost"},
+			want: "ghcr.io/localhost",
 		},
 
 		// === Case normalisation (OCI names must be lowercase) ===

@@ -21,7 +21,7 @@ import (
 // child means attesting to an image nobody built for that platform, so
 // both refusals matter as much as the match: an ambiguous index and an
 // index with no matching entry are errors, not a best guess.
-func TestFindLinuxArchDescriptor(t *testing.T) {
+func TestFindLinuxArchDescriptor_SelectsTheSoleLinuxMatchOrRefuses(t *testing.T) {
 	t.Parallel()
 
 	desc := func(arch, os, digest string) v1.Descriptor {
@@ -123,12 +123,12 @@ func TestFindLinuxArchDescriptor(t *testing.T) {
 	}
 }
 
-// TestDockerAuthConfig covers which credential is handed to a registry.
+// TestDockerAuthConfig_PrefersTheRepositoryScopedCredential covers which credential is handed to a registry.
 // The lookup tries the repository-scoped key before the registry-wide
 // one, so a token issued for one repository is used there rather than
 // the broader credential; getting the order wrong sends the wrong
 // credential to a real registry.
-func TestDockerAuthConfig(t *testing.T) {
+func TestDockerAuthConfig_PrefersTheRepositoryScopedCredential(t *testing.T) {
 	t.Parallel()
 
 	repoRef, err := name.NewRepository("ghcr.io/owner/project")

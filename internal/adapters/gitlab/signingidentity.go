@@ -33,7 +33,7 @@ func (p *Provider) ResolveKeylessIdentity() (provider.KeylessIdentity, error) {
 	// be the runner's own value rather than anything the orchestration layer
 	// computed. $CI_PROJECT_URL is GitLab's, and has no neutral alias.
 	attested, ok := runcontext.ProjectURL().ResolveAttested(env)
-	if !ok {
+	if !ok || strings.TrimSpace(attested.String()) == "" {
 		return provider.KeylessIdentity{}, fmt.Errorf(
 			"a runner-provided project URL (%s) is required to resolve the keyless signing identity: %w",
 			runcontext.ProjectURL(), errs.ErrUsage)

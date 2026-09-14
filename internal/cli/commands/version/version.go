@@ -24,6 +24,17 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
+const (
+	// flagVersion is the release-version flag, declared once and read by the
+	// three verbs that take it, so the declaration and its readers cannot drift.
+	flagVersion = "version"
+
+	// defaultChangelogFile is the default value three changelog flags share.
+	// They are spelled differently (--changelog-file, --changelog-path,
+	// --changelog) but they all default to the same file.
+	defaultChangelogFile = "CHANGELOG.md"
+)
+
 // New returns the `version` subgroup command tree.
 func New() *cli.Command {
 	return &cli.Command{
@@ -37,7 +48,41 @@ func New() *cli.Command {
 			tagReleaseCmd(),
 			generateDevCmd(),
 			bumpCmd(),
+			bumpPlanCmd(),
 			filePatternCmd(),
+		},
+	}
+}
+
+func bumpPlanCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "bump-plan",
+		Usage: "apply every artifact mutation in a prepare-stage plan to one working tree",
+		Flags: []cli.Flag{
+			&cli.StringFlag{Name: "plan-json", Required: true, Sources: cli.EnvVars("PREPARE_STAGE_PLAN_JSON"), Usage: "typed release prepare-stage plan JSON"},
+			&cli.StringFlag{Name: flagVersion, Required: true, Sources: cli.EnvVars("VERSION"), Usage: "release version without a leading v"},
+			&cli.StringFlag{Name: "changelog-file", Value: defaultChangelogFile, Sources: cli.EnvVars("CHANGELOG_FILE"), Usage: "full changelog copied into each planned artifact directory"},
+			&cli.StringFlag{Name: "xcode-version-file", Sources: cli.EnvVars("XCODE_VERSION_FILE"), Usage: "xcconfig file holding MARKETING_VERSION"},
+			&cli.StringFlag{Name: "maven-cli-opts", Sources: cli.EnvVars("MAVEN_CLI_OPTS"), Usage: "extra args forwarded to mvn"},
+		},
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+				in := appversion.BumpPlanInput{
+					PlanJSON:      cmd.String("plan-json"),
+					Version:       cmd.String(flagVersion),
+					ChangelogFile: cmd.String("changelog-file"),
+					XcconfigFile:  cmd.String("xcode-version-file"),
+				}
+				if opts := cmd.String("maven-cli-opts"); opts != "" {
+					in.MavenCLIOpts = strings.Fields(opts)
+				}
+
+				return appversion.BumpPlan(ctx, appversion.BumpOps{
+					Maven: maven.New(),
+					NPM:   npm.New(),
+					Cargo: cargo.New(),
+				}, d.OutputSink, os.Stderr, os.Stderr, deps.Annotator(cmd), in)
+			})
 		},
 	}
 }
@@ -55,6 +100,7 @@ func commitPushCmd() *cli.Command {
 			&cli.StringFlag{Name: "author-email", Required: true, Sources: cli.EnvVars("COMMIT_AUTHOR_EMAIL"), Usage: "git author email written to the commit"},
 			&cli.StringFlag{Name: "message", Required: true, Sources: cli.EnvVars("COMMIT_MESSAGE"), Usage: "commit message subject (signoff is appended automatically)"},
 			&cli.StringFlag{Name: "file-pattern", Required: true, Sources: cli.EnvVars("FILE_PATTERN"), Usage: "whitespace-separated git pathspecs to stage"},
+			&cli.StringFlag{Name: "expected-sha", Sources: cli.EnvVars("AUTHORIZED_SOURCE_SHA"), Usage: "authorized remote branch HEAD; refuse the commit if origin/branch has moved"},
 			&cli.StringFlag{Name: flagToken, Usage: "token authenticating the push; omit to use the runner-injected token ($RELEASE_TOKEN, $CI_TOKEN, $FORGEJO_TOKEN, $GITEA_TOKEN, $GITHUB_TOKEN), which is only ever sent to the server that issued it; sent as a transient auth header, never written to .git/config or argv. Required when the checkout did not persist credentials (e.g. `platform checkout`)."}, //nolint:lll // single-line flag declaration for grep-ability, matching the package convention.
 			dryrun.Flag("git mutations (author config, commit, push)"),
 		},
@@ -65,6 +111,7 @@ func commitPushCmd() *cli.Command {
 				AuthorEmail: cmd.String("author-email"),
 				Message:     cmd.String("message"),
 				FilePattern: cmd.String("file-pattern"),
+				ExpectedSHA: cmd.String("expected-sha"),
 				Token:       clitoken.ResolveRelease(cmd),
 				DryRun:      dryrun.Enabled(cmd),
 			})
@@ -118,7 +165,7 @@ func bumpCmd() *cli.Command {
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			in := appversion.BumpInput{
 				ProjectType:       projecttype.Type(cmd.String("project-type")),
-				Version:           cmd.String("version"),
+				Version:           cmd.String(flagVersion),
 				WorkingDir:        cmd.String("working-dir"),
 				GradleVersionFile: cmd.String("gradle-version-file"),
 				XcconfigFile:      cmd.String("xcode-version-file"),
@@ -176,9 +223,10 @@ func generateDevCmd() *cli.Command {
 func deriveReleaseCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "derive-release",
-		Usage: "derive the release tag, version and original-tagger commit trailers from the pushed request ref (release-request/vX.Y.Z); emits CI outputs so workflows don't parse refs in bash",
+		Usage: "derive the release tag, version and original-tagger commit trailers from an explicit ref or the sole release-request/v* tag at a revision; emits CI outputs so workflows don't parse refs in bash",
 		Description: `EXAMPLE:
-   reusable-ci version derive-release --ref-name release-request/v1.2.3`,
+   reusable-ci version derive-release --ref-name release-request/v1.2.3
+   reusable-ci version derive-release --resolve-release-request --revision HEAD`,
 		Flags: []cli.Flag{
 			// --ref-name, not --ref: this resolves cienv.RefName(), the SHORT
 			// name (release-request/v1.2.3). Every other command binding that
@@ -186,12 +234,13 @@ func deriveReleaseCmd() *cli.Command {
 			// FULL ref (refs/heads/...) from cienv.Ref() -- so the old spelling
 			// was the one name meaning two different things. Kept as an alias.
 			&cli.StringFlag{
-				Name:     "ref-name",
-				Aliases:  []string{"ref"},
-				Required: true,
-				Sources:  cienv.RefName(),
-				Usage:    "the pushed ref name (e.g. release-request/v1.2.3)",
+				Name:    "ref-name",
+				Aliases: []string{"ref"},
+				Sources: cienv.RefName(),
+				Usage:   "the pushed ref name (e.g. release-request/v1.2.3); required unless --resolve-release-request is selected",
 			},
+			&cli.BoolFlag{Name: "resolve-release-request", Usage: "resolve exactly one release-request/v* tag pointing at --revision (HEAD when omitted), ignoring the ambient ref name"},
+			&cli.StringFlag{Name: "revision", Usage: "git revision nominated for --resolve-release-request"},
 			&cli.BoolFlag{Name: "require-release-request", Sources: cli.EnvVars("RELEASE_CONTEXT_REQUIRE_REQUEST"), Usage: "reject refs outside release-request/vMAJOR.MINOR.PATCH"},
 			&cli.BoolFlag{Name: "require-stable", Sources: cli.EnvVars("RELEASE_CONTEXT_REQUIRE_STABLE"), Usage: "reject final tags outside stable vMAJOR.MINOR.PATCH"},
 			&cli.StringFlag{Name: "trailer-mode", Value: "default", Sources: cli.EnvVars("RELEASE_CONTEXT_TRAILER_MODE"), Usage: "commit trailer mode: default (Release-Authorized-By + Co-authored-by) or coauthor-only"},
@@ -200,7 +249,9 @@ func deriveReleaseCmd() *cli.Command {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 				return appversion.ReleaseContext(ctx, git.New(),
 					appversion.ReleaseContextInput{
-						Ref:                   cmd.String("ref"),
+						Ref:                   cmd.String("ref-name"),
+						ResolveReleaseRequest: cmd.Bool("resolve-release-request"),
+						Revision:              cmd.String("revision"),
 						RequireReleaseRequest: cmd.Bool("require-release-request"),
 						RequireStable:         cmd.Bool("require-stable"),
 						TrailerMode:           cmd.String("trailer-mode"),

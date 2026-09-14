@@ -13,9 +13,8 @@ import (
 
 // FetchRepoMetadata calls `GET /api/v4/projects/{repo}` on the GitLab
 // REST API. The repo path is URL-encoded so group/sub/project paths
-// work. Authentication uses the PRIVATE-TOKEN header populated from
-// $GITLAB_TOKEN, falling back to $CI_JOB_TOKEN (the per-pipeline
-// short-lived token GitLab CI exports automatically).
+// work. Authentication uses PRIVATE-TOKEN for $GITLAB_TOKEN and JOB-TOKEN for
+// the short-lived $CI_JOB_TOKEN GitLab CI exports automatically.
 //
 // On any failure, returns a non-nil error; on missing metadata fields,
 // returns a *RepoMetadata with empty fields. Caller treats both the

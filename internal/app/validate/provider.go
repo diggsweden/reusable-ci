@@ -7,10 +7,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/secrettext"
 )
 
 // TokenInput drives `validate auth token`. Forge-specific labels and
@@ -29,7 +31,7 @@ type TokenInput struct {
 func Token(ctx context.Context, prov provider.TokenValidator, out io.Writer, in TokenInput) error {
 	info := describe(prov)
 
-	if in.Token == "" {
+	if strings.TrimSpace(in.Token) == "" {
 		return fmt.Errorf(
 			"no %s token provided\n%s: %w",
 			info.DisplayName,
@@ -37,12 +39,14 @@ func Token(ctx context.Context, prov provider.TokenValidator, out io.Writer, in 
 			errs.ErrPermissionDenied)
 	}
 
-	if in.Repository == "" {
+	if strings.TrimSpace(in.Repository) == "" {
 		return fmt.Errorf("no repository provided\nusage: validate auth token <token> <repository>: %w", errs.ErrUsage)
 	}
 
 	if adviser, ok := prov.(provider.TokenAdviser); ok {
 		advice, reject := adviser.AdviseToken(in.Token)
+
+		advice = strings.ReplaceAll(advice, in.Token, "[redacted]")
 		if reject {
 			return fmt.Errorf("%s: %w", advice, errs.ErrPermissionDenied)
 		}
@@ -53,11 +57,7 @@ func Token(ctx context.Context, prov provider.TokenValidator, out io.Writer, in 
 	}
 
 	if err := prov.ValidateToken(ctx, in.Token, in.Repository); err != nil {
-		return fmt.Errorf(
-			"Token is invalid or lacks permissions\n"+
-				"%s\n"+
-				"Ensure the token has 'contents: write' permission for this repository: %w",
-			err, errs.ErrPermissionDenied)
+		return fmt.Errorf("validate token: %w", secrettext.RedactError(err, in.Token))
 	}
 
 	_, _ = fmt.Fprintf(out, "%s %s token validated\n", clicolor.Check(out), info.DisplayName)
@@ -99,7 +99,7 @@ type BotPermissionsInput struct {
 // w sequence. RepoAccessible=false is fatal; UserAccessible=false
 // is also fatal; BranchesAccessible=false produces a warn-only block.
 func BotPermissions(ctx context.Context, prov provider.TokenValidator, out io.Writer, in BotPermissionsInput) error {
-	if in.Repository == "" {
+	if strings.TrimSpace(in.Repository) == "" {
 		return fmt.Errorf("usage: validate auth bot-permissions <repository>: %w", errs.ErrUsage)
 	}
 

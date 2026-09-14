@@ -17,7 +17,9 @@ package imageledger
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 
@@ -143,12 +145,13 @@ func DeriveTags(imageName, releaseTag string) (string, string) {
 	return imageName + ":" + releaseTag, imageName + ":" + StagingTagPrefix + releaseTag
 }
 
-// Validation regexes for the OCI/registry refs the ledger records.
+// Schema patterns provide portable editor lint for OCI/registry references.
+// Runtime validation uses the strict parser-backed container helpers below.
 //
 //nolint:gochecknoglobals // compiled regex table — read-only.
 var (
-	imageRefRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+(:` + container.OCITagComponent + `)?@sha256:[0-9a-f]{64}$`)
-	tagRefRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:` + container.OCITagComponent + `$`)
+	imageRefSchemaRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+(:` + container.OCITagComponent + `)?@sha256:[0-9a-f]{64}$`)
+	tagRefSchemaRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:` + container.OCITagComponent + `$`)
 	// sbomRE accepts any relative CycloneDX path, matching the filenames
 	// the sbom package emits (domain/sbom/filenames.go), rather than a
 	// single fixed name. Anchored to a leaf-relative path (no leading '/').
@@ -238,6 +241,38 @@ func (e Entry) Validate(releaseTag string) error {
 	return e.validateReleaseMovingTag(releaseTag)
 }
 
+// ValidateBeforeCapture checks everything about an entry that does not depend
+// on the digest a registry is about to hand back.
+//
+// `ledger add --capture-digest` resolves the digest from a registry and only
+// then validates the entry, so a bad SBOM path, an out-of-scope final tag or a
+// malformed provenance document each cost a network round-trip before the
+// operator is told what is actually wrong. Worse, the failure they see first is
+// whatever the registry said — an auth error, a timeout — which points at the
+// wrong thing entirely.
+//
+// The fields excluded here are exactly the two the capture supplies: ref and
+// digest. Everything else is knowable from the flags alone, so it is checked
+// before anything external is contacted. Validate still runs afterwards and
+// still checks all of it; this does not replace that, it moves the part that
+// can be answered early.
+func (e Entry) ValidateBeforeCapture(releaseTag string) error {
+	withoutCapture := e
+	withoutCapture.Ref = placeholderCaptureRef
+	withoutCapture.Digest = placeholderCaptureDigest
+
+	return withoutCapture.Validate(releaseTag)
+}
+
+// The two values the capture supplies, in the shape the format check accepts,
+// so that excluding them from the early pass does not also disable every other
+// rule that runs after them.
+const (
+	placeholderCaptureDigest = "sha256:" + placeholderCaptureHex
+	placeholderCaptureRef    = "placeholder.invalid/pending@" + placeholderCaptureDigest
+	placeholderCaptureHex    = "0000000000000000000000000000000000000000000000000000000000000000"
+)
+
 // ValidateForStage scopes the trust-boundary check to a promotion stage.
 // The release stage applies the full release-scoped rules (identical to
 // Validate). A named, pre-release stage (dev, stage) applies only the
@@ -272,6 +307,19 @@ func (e Entry) validateBaseTags() error {
 
 	if e.MovingTag != "" && strings.HasPrefix(tagName(e.MovingTag), StagingTagPrefix) {
 		return fmt.Errorf("imageledger: moving_tag %q must not be a staging tag: %w", e.MovingTag, errs.ErrValidation)
+	}
+
+	return e.validateMovingTagRepository()
+}
+
+// validateMovingTagRepository requires moving_tag, when present, to live in
+// final_tag's repository. Every promotion derives its destinations from
+// final_tag, so a moving tag on another path would either be rehomed under
+// final_tag's repository or, on a same-registry promotion, written into a
+// repository the entry never named.
+func (e Entry) validateMovingTagRepository() error {
+	if e.MovingTag != "" && container.StripTag(e.MovingTag) != container.StripTag(e.FinalTag) {
+		return fmt.Errorf("imageledger: moving_tag %q must share final_tag's repository %q: %w", e.MovingTag, container.StripTag(e.FinalTag), errs.ErrValidation)
 	}
 
 	return nil
@@ -311,11 +359,7 @@ func (e Entry) validateReleaseMovingTag(releaseTag string) error {
 		return fmt.Errorf("imageledger: moving_tag %q must not be a staging or immutable release tag: %w", e.MovingTag, errs.ErrValidation)
 	}
 
-	if container.StripTag(e.MovingTag) != container.StripTag(e.FinalTag) {
-		return fmt.Errorf("imageledger: moving_tag %q must share final_tag's repository %q: %w", e.MovingTag, container.StripTag(e.FinalTag), errs.ErrValidation)
-	}
-
-	return nil
+	return e.validateMovingTagRepository()
 }
 
 // validateFormat enforces the stage-agnostic trust-boundary invariants:
@@ -342,7 +386,7 @@ func (e Entry) validateFormat() error {
 		return fmt.Errorf("imageledger: digest must be sha256:<64 hex>: %q: %w", e.Digest, errs.ErrValidation)
 	}
 
-	if !imageRefRE.MatchString(e.Ref) {
+	if !container.ValidDigestReference(e.Ref) {
 		return fmt.Errorf("imageledger: ref must be a registry path pinned by @sha256:<64 hex>: %q: %w", e.Ref, errs.ErrValidation)
 	}
 
@@ -403,7 +447,7 @@ func (e Entry) validateTagRefs() error {
 			continue
 		}
 
-		if !tagRefRE.MatchString(tag.val) {
+		if !container.ValidTaggedRef(tag.val) {
 			return fmt.Errorf("imageledger: %s must be a registry path with a tag: %q: %w", tag.name, tag.val, errs.ErrValidation)
 		}
 	}
@@ -430,11 +474,30 @@ func Parse(data []byte) ([]Entry, error) {
 		return nil, nil
 	}
 
+	// Unknown fields are refused: the ledger is engine-written evidence read
+	// at the trust boundary, so a field this build does not know is a stale or
+	// foreign ledger, not something to pass through silently. A repeated
+	// member is refused for the same reason: encoding/json keeps the last
+	// value, so a second "digest" would replace the recorded one unseen.
+	if err := rejectDuplicateMembers(data); err != nil {
+		return nil, fmt.Errorf("imageledger: parse ledger: %w", err)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+
 	var entries []Entry
-	if err := json.Unmarshal(data, &entries); err != nil {
+	if err := decoder.Decode(&entries); err != nil {
 		// Unparsable JSON is malformed input (EX_DATAERR), not a failed
 		// validation rule (EX_VALIDATION); Validate handles the latter.
-		return nil, fmt.Errorf("imageledger: parse ledger (want a JSON array): %w", errs.ErrMalformedInput)
+		return nil, fmt.Errorf("imageledger: parse ledger (want a JSON array of known fields): %w: %w", err, errs.ErrMalformedInput)
+	}
+
+	// The ledger is one array. A second document after it is not more entries
+	// that happen to be ignored; it is a file this build does not understand.
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("imageledger: parse ledger: data after the JSON array: %w", errs.ErrMalformedInput)
 	}
 
 	return entries, nil
@@ -503,4 +566,72 @@ func Append(ledgerJSON []byte, entry Entry, releaseTag string) ([]byte, bool, er
 	doc, err = Marshal(append(entries, entry))
 
 	return doc, true, err
+}
+
+// rejectDuplicateMembers walks a JSON document's tokens and refuses any object
+// that names a member twice. encoding/json accepts the duplicate and keeps the
+// last value, which at a trust boundary means a later member silently replaces
+// an earlier one.
+func rejectDuplicateMembers(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+
+	// One member set per open object; arrays push nil so depth stays aligned.
+	var stack []map[string]bool
+
+	expectKey := false
+
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+
+		if err != nil {
+			return fmt.Errorf("%w: %w", err, errs.ErrMalformedInput)
+		}
+
+		stack, expectKey, err = walkMemberToken(stack, expectKey, token)
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// walkMemberToken advances the duplicate-member walk by one token and
+// reports whether the next token is an object key. Inside an object tokens
+// alternate key, value; a delimiter opens or closes a scope, after which the
+// enclosing object (if any) expects a key again.
+func walkMemberToken(stack []map[string]bool, expectKey bool, token json.Token) ([]map[string]bool, bool, error) {
+	if delim, isDelim := token.(json.Delim); isDelim {
+		switch delim {
+		case '{':
+			stack = append(stack, map[string]bool{})
+		case '[':
+			stack = append(stack, nil)
+		default:
+			stack = stack[:len(stack)-1]
+		}
+
+		return stack, insideObject(stack), nil
+	}
+
+	if !expectKey {
+		return stack, insideObject(stack), nil
+	}
+
+	// The decoder has already refused a non-string key.
+	name, _ := token.(string)
+
+	members := stack[len(stack)-1]
+	if members[name] {
+		return nil, false, fmt.Errorf("member %q appears twice: %w", name, errs.ErrMalformedInput)
+	}
+
+	members[name] = true
+
+	return stack, false, nil
+}
+
+func insideObject(stack []map[string]bool) bool {
+	return len(stack) > 0 && stack[len(stack)-1] != nil
 }

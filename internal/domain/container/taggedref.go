@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+
+	"github.com/google/go-containerregistry/pkg/name"
 )
 
 // TaggedRef is a container reference split into the parts a forge's package or
@@ -66,33 +68,21 @@ func ParseTaggedRef(ref string) (TaggedRef, error) {
 		return TaggedRef{}, fmt.Errorf("container ref %q is digest-pinned, not a tag: %w", ref, errs.ErrUsage)
 	}
 
-	if strings.ContainsAny(ref, "\n\r") {
-		return TaggedRef{}, fmt.Errorf("container ref %q contains a line break: %w", ref, errs.ErrUsage)
+	parsed, err := name.NewTag(ref, name.StrictValidation)
+	if err != nil {
+		return TaggedRef{}, fmt.Errorf("container ref %q is not a fully qualified tagged OCI reference: %w: %w", ref, err, errs.ErrUsage)
 	}
 
-	// A ':' at or before the final '/' is a host:port, not a tag separator.
-	slash := strings.LastIndex(ref, "/")
-
-	colon := strings.LastIndex(ref, ":")
-	if colon <= slash {
-		return TaggedRef{}, fmt.Errorf("container ref %q carries no tag: %w", ref, errs.ErrUsage)
+	if parsed.Name() != ref {
+		return TaggedRef{}, fmt.Errorf("container ref %q is not fully qualified: %w", ref, errs.ErrUsage)
 	}
 
-	tag := ref[colon+1:]
-	if !ValidOCITagComponent(tag) {
-		return TaggedRef{}, fmt.Errorf("container ref %q has an invalid tag %q: %w", ref, tag, errs.ErrUsage)
-	}
-
-	host, path, found := strings.Cut(ref[:colon], "/")
-	if !found || host == "" {
-		return TaggedRef{}, fmt.Errorf("container ref %q is not <host>/<owner>/<name>:<tag>: %w", ref, errs.ErrUsage)
-	}
-
+	path := parsed.RepositoryStr()
 	if err := validRepositoryPath(ref, path); err != nil {
 		return TaggedRef{}, err
 	}
 
-	return TaggedRef{Host: host, Path: path, Tag: tag}, nil
+	return TaggedRef{Host: parsed.RegistryStr(), Path: path, Tag: parsed.TagStr()}, nil
 }
 
 // validRepositoryPath requires an owner and a name, and rejects empty or
@@ -106,10 +96,8 @@ func validRepositoryPath(ref, path string) error {
 		return fmt.Errorf("container ref %q is not <host>/<owner>/<name>:<tag>: %w", ref, errs.ErrUsage)
 	}
 
-	for _, segment := range segments {
-		if segment == "" || segment == "." || segment == ".." {
-			return fmt.Errorf("container ref %q has an empty or relative path segment: %w", ref, errs.ErrUsage)
-		}
+	if !validRepositorySegments(path) {
+		return fmt.Errorf("container ref %q has an empty or relative path segment: %w", ref, errs.ErrUsage)
 	}
 
 	return nil

@@ -6,11 +6,15 @@
 // generation itself shells out to syft via adapter/syft.
 package sbom
 
-import "fmt"
+import (
+	"fmt"
+
+	domainversion "github.com/diggsweden/reusable-ci/v3/internal/domain/version"
+)
 
 // ZipName returns the canonical SBOM zip filename, e.g.
 //
 //	ZipName("my-app", "1.2.3") = "my-app-1.2.3-sboms.zip"
 func ZipName(projectName, version string) string {
-	return fmt.Sprintf("%s-%s-sboms.zip", projectName, version)
+	return fmt.Sprintf("%s-%s-sboms.zip", domainversion.SanitizePathToken(projectName), domainversion.SanitizePathToken(version))
 }

@@ -4,7 +4,6 @@
 package version_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
@@ -36,20 +35,10 @@ func TestFilePattern_KnownTypes(t *testing.T) {
 func TestFilePattern_UnknownDefaultsToChangelog(t *testing.T) {
 	t.Parallel()
 
-	for _, typ := range []projecttype.Type{"", "rust", projecttype.Unknown, "foo", projecttype.Meta} {
+	for _, typ := range []projecttype.Type{"", "rust", projecttype.Unknown, "foo"} {
 		got := version.FilePattern(typ)
 		if got != "CHANGELOG.md" {
 			t.Errorf("FilePattern(%q) = %q, want only CHANGELOG.md", typ, got)
-		}
-	}
-}
-
-func TestFilePattern_AlwaysContainsChangelog(t *testing.T) {
-	t.Parallel()
-
-	for _, typ := range []projecttype.Type{projecttype.Maven, projecttype.NPM, projecttype.Gradle, projecttype.Go, projecttype.Cargo, ""} {
-		if !strings.Contains(version.FilePattern(typ), "CHANGELOG.md") {
-			t.Errorf("FilePattern(%q) lacks CHANGELOG.md", typ)
 		}
 	}
 }

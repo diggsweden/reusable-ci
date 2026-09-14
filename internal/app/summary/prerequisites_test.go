@@ -5,6 +5,7 @@ package summary_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -16,23 +17,38 @@ import (
 
 // fakeGitInfo is an in-memory gitInfoOps for prerequisites-summary tests.
 type fakeGitInfo struct {
+	calls      []string
+	contexts   []context.Context
 	taggerName string
 	taggerDate string
 	tagMessage string
 	tagBody    string
+	tagErr     error
 	commit     git.CommitInfo
 }
 
-func (f *fakeGitInfo) TaggerInfo(_ context.Context, _ string) (git.TaggerInfo, error) {
+func (f *fakeGitInfo) TaggerInfo(ctx context.Context, tag string) (git.TaggerInfo, error) {
+	f.calls = append(f.calls, "tagger "+tag)
+	f.contexts = append(f.contexts, ctx)
+
 	return git.TaggerInfo{Tagger: f.taggerName, Date: f.taggerDate}, nil
 }
-func (f *fakeGitInfo) TagMessage(_ context.Context, _ string) (string, error) {
+func (f *fakeGitInfo) TagMessage(ctx context.Context, tag string) (string, error) {
+	f.calls = append(f.calls, "message "+tag)
+	f.contexts = append(f.contexts, ctx)
+
 	return f.tagMessage, nil
 }
-func (f *fakeGitInfo) CatFileTag(_ context.Context, _ string) (string, error) {
-	return f.tagBody, nil
+func (f *fakeGitInfo) CatFileTag(ctx context.Context, tag string) (string, error) {
+	f.calls = append(f.calls, "body "+tag)
+	f.contexts = append(f.contexts, ctx)
+
+	return f.tagBody, f.tagErr
 }
-func (f *fakeGitInfo) CommitInfo(_ context.Context, _ string) (git.CommitInfo, error) {
+func (f *fakeGitInfo) CommitInfo(ctx context.Context, sha string) (git.CommitInfo, error) {
+	f.calls = append(f.calls, "commit "+sha)
+	f.contexts = append(f.contexts, ctx)
+
 	return f.commit, nil
 }
 
@@ -43,7 +59,7 @@ func TestPrerequisites_TagSection(t *testing.T) {
 	gitr := &fakeGitInfo{
 		taggerName: "Bot <bot@example.invalid>",
 		taggerDate: "2026-05-10",
-		tagMessage: "Release v1.0.0\nbody",
+		tagMessage: "Release v1.0.0\nTAG-BODY-CANARY",
 		tagBody:    "-----BEGIN PGP SIGNATURE-----\n…\n",
 		commit: git.CommitInfo{
 			Author:  "Alice <alice@example.invalid>",
@@ -53,7 +69,9 @@ func TestPrerequisites_TagSection(t *testing.T) {
 		},
 	}
 
-	err := appsummary.Prerequisites(context.Background(), sink, gitr, appsummary.PrerequisitesSummaryInput{
+	ctx := context.WithValue(t.Context(), metadataContextKey{}, "tag-metadata-context")
+
+	err := appsummary.Prerequisites(ctx, sink, gitr, appsummary.PrerequisitesSummaryInput{
 		TagName:         "v1.0.0",     //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		CommitSHA:       "abcdef0123", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		RefType:         provider.RefTypeTag,
@@ -71,20 +89,35 @@ func TestPrerequisites_TagSection(t *testing.T) {
 		"## 🏷️ Release Tag",
 		"- **Tag:** `v1.0.0`",
 		"- **Type:** tag",
-		"- **Tagger:** Bot <bot@example.invalid>",
+		"- **Tagger:** Bot &#60;bot&#64;example.invalid&#62;", // literal text, displayed unchanged
 		"- **Tag Date:** 2026-05-10",
 		"- **Tag Signature:** GPG signed",
 		"- **Tag Message:** Release v1.0.0", // first line only
 		"## 📦 Tagged Commit",
 		"- **SHA:** `abcdef0123`",
-		"- **Author:** Alice <alice@example.invalid>",
+		"- **Author:** Alice &#60;alice&#64;example.invalid&#62;",
+		"- **Message:** fix&#58; bug\n",
 		"- **Date:** 2026-05-09",
-		"### ✓ All required prerequisites are configured!",
+		"### ✓ All selected prerequisite checks passed!",
 		"| Release Type | 🎯 Stable | Production release |",
 		"| Release Token | ✓ Pass | Valid GitHub token |",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q\nfull:\n%s", want, body)
+		}
+	}
+
+	if strings.Contains(body, "TAG-BODY-CANARY") || !strings.Contains(body, "- **Tag Message:** Release v1.0.0\n") || !strings.Contains(body, "- **Signature:** Not signed\n") {
+		t.Fatalf("incorrect metadata lines:\n%s", body)
+	}
+
+	if !slices.Equal(gitr.calls, []string{"tagger v1.0.0", "message v1.0.0", "body v1.0.0", "commit abcdef0123"}) {
+		t.Fatalf("metadata calls=%v", gitr.calls)
+	}
+
+	for _, got := range gitr.contexts {
+		if got != ctx {
+			t.Fatal("metadata context not forwarded")
 		}
 	}
 }
@@ -235,7 +268,7 @@ func TestPrerequisites_ConfigPlanDerivesConfiguration(t *testing.T) {
 	err := appsummary.Prerequisites(context.Background(), sink, &fakeGitInfo{}, appsummary.PrerequisitesSummaryInput{
 		TagName:                 "v1.0.0",
 		RefType:                 provider.RefTypeTag,
-		ConfigPlanJSON:          `{"version":1,"artifacts":{"all":[{"name":"lib","project_type":"maven","build_type":"library","publish_to":["maven-central"]},{"name":"pkg","project_type":"npm","build_type":"application","publish_to":["forge-packages"]}]},"containers":{"all":[],"has_containers":false}}`,
+		ConfigPlanJSON:          prerequisitesPlanJSON(t, prerequisitesConfigPlan(t)),
 		HasMavenCentralUsername: true,
 		HasMavenCentralPassword: true,
 		Now:                     fixedNow(),

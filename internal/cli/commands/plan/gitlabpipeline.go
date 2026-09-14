@@ -5,13 +5,13 @@ package plan
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/urfave/cli/v3"
 
 	gitlabpipeline "github.com/diggsweden/reusable-ci/v3/internal/app/gitlabpipeline"
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 )
@@ -32,10 +32,10 @@ func gitlabBuildPipelineCmd() *cli.Command {
    natively with strategy: matrix.
 
 EXAMPLE:
-   reusable-ci plan gitlab-build-pipeline --component-ref 1.0.0 --output build-pipeline.yml`,
+   reusable-ci plan gitlab-build-pipeline --component-base "$CI_SERVER_FQDN/diggsweden/reusable-ci" --component-ref 1.0.0 --output build-pipeline.yml`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "build-stage-plan-json", Sources: cli.EnvVars("BUILD_STAGE_PLAN_JSON"), Usage: "typed build-stage plan JSON (from 'plan release')"},
-			&cli.StringFlag{Name: "component-base", Value: "$CI_SERVER_FQDN/$CI_PROJECT_PATH", Sources: cli.EnvVars("COMPONENT_BASE"), Usage: "CI/CD Catalog path prefix for the build-<eco> components (default: this project's own catalog)"},
+			&cli.StringFlag{Name: "component-base", Required: true, Sources: cli.EnvVars("COMPONENT_BASE"), Usage: "explicit CI/CD Catalog path prefix for the build-<eco> components"},
 			&cli.StringFlag{Name: "component-ref", Required: true, Sources: cli.EnvVars("COMPONENT_REF"), Usage: "component version to pin (e.g. 1.0.0)"},
 			&cli.StringFlag{Name: "version", Sources: cli.EnvVars("VERSION"), Usage: "release version forwarded to each build component"},
 			&cli.StringFlag{Name: "output", Sources: cli.EnvVars("OUTPUT_FILE"), Usage: "destination path for the child pipeline (default: stdout)"},
@@ -47,20 +47,23 @@ EXAMPLE:
 			}
 
 			var plan pipeline.ReleaseBuildStagePlan
-			if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-				return fmt.Errorf("parse build-stage plan: not valid JSON: %w", errs.ErrInvalidConfig)
+			if err := pipeline.DecodeStagePlan(raw, "build-stage plan", &plan); err != nil {
+				return err
 			}
 
 			if plan.Version != pipeline.ReleasePlanVersion {
 				return fmt.Errorf("unsupported build-stage plan version %d (want %d): %w", plan.Version, pipeline.ReleasePlanVersion, errs.ErrInvalidConfig)
 			}
 
-			child := gitlabpipeline.BuildStagePipeline(plan, gitlabpipeline.BuildPipelineOptions{
+			child, err := gitlabpipeline.BuildStagePipeline(plan, gitlabpipeline.BuildPipelineOptions{
 				ComponentBase: cmd.String("component-base"),
 				ComponentRef:  cmd.String("component-ref"),
 				Version:       cmd.String("version"),
 				Stage:         plan.Stage,
 			})
+			if err != nil {
+				return err
+			}
 
 			return emitChildPipeline(child, cmd.String("output"), "build")
 		},
@@ -77,16 +80,16 @@ func gitlabPublishPipelineCmd() *cli.Command {
 		Name:  "gitlab-publish-pipeline",
 		Usage: "emit a GitLab child-pipeline YAML that fans the publish stage out over the plan",
 		Description: `Reads the typed publish-stage plan and writes a GitLab child pipeline that
-   includes one publish-<target> component per running target item (Maven
-   Central, GitHub Packages, Google Play, App Store, container). Consumed via
-   trigger:{include:{artifact: <out>}}, the publish-side sibling of
-   gitlab-build-pipeline.
+   includes one Catalog component per running target item whose contract can be
+   represented. Missing components and unsupported target semantics are refused
+   instead of omitted. Consumed via trigger:{include:{artifact: <out>}}, the
+   publish-side sibling of gitlab-build-pipeline.
 
 EXAMPLE:
-   reusable-ci plan gitlab-publish-pipeline --component-ref 1.0.0 --output publish-pipeline.yml`,
+   reusable-ci plan gitlab-publish-pipeline --component-base "$CI_SERVER_FQDN/diggsweden/reusable-ci" --component-ref 1.0.0 --output publish-pipeline.yml`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "publish-stage-plan-json", Sources: cli.EnvVars("PUBLISH_STAGE_PLAN_JSON"), Usage: "typed publish-stage plan JSON (from 'plan release')"},
-			&cli.StringFlag{Name: "component-base", Value: "$CI_SERVER_FQDN/$CI_PROJECT_PATH", Sources: cli.EnvVars("COMPONENT_BASE"), Usage: "CI/CD Catalog path prefix for the publish-<target> components (default: this project's own catalog)"},
+			&cli.StringFlag{Name: "component-base", Required: true, Sources: cli.EnvVars("COMPONENT_BASE"), Usage: "explicit CI/CD Catalog path prefix for the publish-<target> components"},
 			&cli.StringFlag{Name: "component-ref", Required: true, Sources: cli.EnvVars("COMPONENT_REF"), Usage: "component version to pin (e.g. 1.0.0)"},
 			&cli.StringFlag{Name: "version", Sources: cli.EnvVars("VERSION"), Usage: "release version forwarded to each publish component"},
 			&cli.StringFlag{Name: "output", Sources: cli.EnvVars("OUTPUT_FILE"), Usage: "destination path for the child pipeline (default: stdout)"},
@@ -98,20 +101,23 @@ EXAMPLE:
 			}
 
 			var plan pipeline.ReleasePublishStagePlan
-			if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-				return fmt.Errorf("parse publish-stage plan: not valid JSON: %w", errs.ErrInvalidConfig)
+			if err := pipeline.DecodeStagePlan(raw, "publish-stage plan", &plan); err != nil {
+				return err
 			}
 
 			if plan.Version != pipeline.ReleasePlanVersion {
 				return fmt.Errorf("unsupported publish-stage plan version %d (want %d): %w", plan.Version, pipeline.ReleasePlanVersion, errs.ErrInvalidConfig)
 			}
 
-			child := gitlabpipeline.PublishStagePipeline(plan, gitlabpipeline.BuildPipelineOptions{
+			child, err := gitlabpipeline.PublishStagePipeline(plan, gitlabpipeline.BuildPipelineOptions{
 				ComponentBase: cmd.String("component-base"),
 				ComponentRef:  cmd.String("component-ref"),
 				Version:       cmd.String("version"),
 				Stage:         plan.Stage,
 			})
+			if err != nil {
+				return err
+			}
 
 			return emitChildPipeline(child, cmd.String("output"), "publish")
 		},
@@ -132,7 +138,7 @@ func emitChildPipeline(child gitlabpipeline.ChildPipeline, outPath, label string
 		return err
 	}
 
-	if err := os.WriteFile(outPath, body, 0o644); err != nil { //nolint:gosec // child pipeline read by the GitLab runner; 0644 expected.
+	if err := cliio.WriteFile(outPath, body, 0o644); err != nil {
 		return fmt.Errorf("write %q: %w", outPath, err)
 	}
 

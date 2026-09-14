@@ -5,6 +5,7 @@
 package changelog
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -26,19 +27,26 @@ var errUnsupportedBackend = errors.New("unsupported changelog backend")
 
 // Renderer invokes git-chglog or git-cliff. The binary fields are test seams;
 // empty values use the conventional binary names.
+//
+// UnsetEnv removes credentials from the renderer's environment, the same way
+// the syft and skopeo adapters take the signer boundary's list. A changelog
+// renderer has no use for a token, and git-cliff reads GITLAB_TOKEN and
+// GITHUB_TOKEN on its own if they are present; the caller supplies the one
+// list the binary keeps of the credentials it resolves.
 type Renderer struct {
 	GitChglogBin string
 	GitCliffBin  string
+	UnsetEnv     []string
 }
 
 // New returns a default renderer.
 func New() *Renderer { return &Renderer{} }
 
 // RenderFull writes the full changelog to outputPath using backend.
-func (r *Renderer) RenderFull(ctx context.Context, backend, config, tag, outputPath string) error {
+func (r *Renderer) RenderFull(ctx context.Context, backend, config, tag, outputPath, repositoryURL string) error {
 	switch backend {
 	case backendGitChglog:
-		_, err := r.run(ctx, r.gitChglogBin(), "--config", config, "--next-tag", tag, "--output", outputPath)
+		_, err := r.run(ctx, r.gitChglogBin(), "--config", config, "--repository-url", repositoryURL, "--next-tag", tag, "--output", outputPath)
 
 		return err
 	case backendGitCliff:
@@ -51,10 +59,10 @@ func (r *Renderer) RenderFull(ctx context.Context, backend, config, tag, outputP
 }
 
 // RenderBody returns the release bump commit body using backend.
-func (r *Renderer) RenderBody(ctx context.Context, backend, config, tag string) (string, error) {
+func (r *Renderer) RenderBody(ctx context.Context, backend, config, tag, repositoryURL string) (string, error) {
 	switch backend {
 	case backendGitChglog:
-		return r.run(ctx, r.gitChglogBin(), "--config", config, "--next-tag", tag, tag)
+		return r.run(ctx, r.gitChglogBin(), "--config", config, "--repository-url", repositoryURL, "--next-tag", tag, tag)
 	case backendGitCliff:
 		return r.run(ctx, r.gitCliffBin(), "--config", config, "--unreleased", "--tag", tag)
 	default:
@@ -80,55 +88,40 @@ func (r *Renderer) gitCliffBin() string {
 
 func (r *Renderer) run(ctx context.Context, bin string, args ...string) (string, error) {
 	cmd := safeexec.Command(ctx, bin, args...)
-	cmd.Env = changelogEnv(os.Environ())
+	cmd.Env = envWithout(os.Environ(), r.UnsetEnv)
 
-	out, err := cmd.CombinedOutput()
+	// The rendered body is stdout alone. git-cliff writes warnings to stderr
+	// while exiting 0, and they must not become part of a release commit
+	// message; stderr travels only on the error.
+	var stderr bytes.Buffer
+
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
 	if err != nil {
 		wrapped := safeexec.WrapError(err, bin, safeexec.FirstArg(args))
-		if len(out) == 0 {
+		if stderr.Len() == 0 {
 			return "", wrapped
 		}
 
-		return "", fmt.Errorf("%w\n%s", wrapped, safeexec.RedactKeyMaterial(out))
+		return "", fmt.Errorf("%w\n%s", wrapped, safeexec.RedactKeyMaterial(stderr.Bytes()))
 	}
 
 	return strings.TrimRight(string(out), "\n"), nil
 }
 
-func changelogEnv(env []string) []string {
-	drop := map[string]bool{
-		"SSH_SIGNING_KEY":           true,
-		"GPG_SIGNING_KEY":           true,
-		"GPG_SIGNING_PASSWORD":      true,
-		"GPG_PRIVATE_KEY":           true,
-		"GPG_PASSPHRASE":            true,
-		"COSIGN_SIGNING_KEY":        true,
-		"COSIGN_SIGNING_PASSWORD":   true,
-		"COSIGN_KEY":                true,
-		"COSIGN_PASSWORD":           true,
-		"FORGEJO_TOKEN":             true,
-		"GITEA_TOKEN":               true,
-		"GITHUB_TOKEN":              true,
-		"GH_TOKEN":                  true,
-		"REGISTRY_AUTH_FILE":        true,
-		"REGISTRY_PASSWORD":         true,
-		"FORGEJO_API_TOKEN":         true,
-		"RELEASE_TOKEN":             true,
-		"RELEASE_BOT_TOKEN":         true,
-		"CODE_SCANNING_TOKEN":       true,
-		"MAVEN_CENTRAL_PASSWORD":    true,
-		"ANDROID_KEYSTORE_BASE64":   true,
-		"SECRETS_PROPERTIES_BASE64": true,
+func envWithout(env, names []string) []string {
+	drop := make(map[string]bool, len(names))
+	for _, name := range names {
+		drop[name] = true
 	}
 
 	out := env[:0]
 	for _, entry := range env {
-		name, _, ok := strings.Cut(entry, "=")
-		if ok && drop[name] {
-			continue
+		name, _, _ := strings.Cut(entry, "=")
+		if !drop[name] {
+			out = append(out, entry)
 		}
-
-		out = append(out, entry)
 	}
 
 	return out

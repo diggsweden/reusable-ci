@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -47,6 +48,12 @@ func GenerateSnapshotVersion(ctx context.Context, ops GenerateSnapshotOps, w io.
 		return fmt.Errorf("ref-name is required: %w", errs.ErrUsage)
 	}
 
+	// A name made only of characters the sanitizer drops would leave an empty
+	// segment: 0.0.0-snapshot--abc1234 identifies no branch.
+	if version.SanitizePathToken(in.RefName) == "" {
+		return fmt.Errorf("ref-name %q has no characters usable in a snapshot version: %w", in.RefName, errs.ErrUsage)
+	}
+
 	// Best-effort tag fetch — ignored on failure (shallow checkout).
 	_, _ = ops.Run(ctx, "fetch", "--tags")
 
@@ -62,9 +69,9 @@ func GenerateSnapshotVersion(ctx context.Context, ops GenerateSnapshotOps, w io.
 		base = version.StripVPrefix(latest)
 	}
 
-	shortSHA, err := ops.ShortSHA(ctx, "HEAD", version.SnapshotShortSHALen)
+	shortSHA, err := abbreviatedHead(ctx, ops)
 	if err != nil {
-		return fmt.Errorf("rev-parse --short HEAD: %w", err)
+		return err
 	}
 
 	dev := version.ComposeSnapshotVersion(base, in.RefName, shortSHA)
@@ -75,6 +82,22 @@ func GenerateSnapshotVersion(ctx context.Context, ops GenerateSnapshotOps, w io.
 	}
 
 	return writeSnapshotVersion(w, dev, in.Format)
+}
+
+// abbreviatedHead returns HEAD's abbreviated commit. git lengthens an
+// abbreviation to keep it unique, never shortens it, and prints lowercase hex;
+// anything else is not a commit it resolved.
+func abbreviatedHead(ctx context.Context, ops GenerateSnapshotOps) (string, error) {
+	shortSHA, err := ops.ShortSHA(ctx, "HEAD", version.SnapshotShortSHALen)
+	if err != nil {
+		return "", fmt.Errorf("rev-parse --short HEAD: %w", err)
+	}
+
+	if len(shortSHA) < version.SnapshotShortSHALen || strings.Trim(shortSHA, "0123456789abcdef") != "" {
+		return "", fmt.Errorf("rev-parse --short HEAD returned %q, not an abbreviated commit: %w", shortSHA, errs.ErrMalformedInput)
+	}
+
+	return shortSHA, nil
 }
 
 // writeSnapshotVersion renders dev according to format. The historical
@@ -89,12 +112,12 @@ func writeSnapshotVersion(w io.Writer, dev string, format output.Format) error {
 			return fmt.Errorf("encode dev version json: %w", err)
 		}
 
-		_, _ = fmt.Fprintln(w, string(body))
+		_, err = fmt.Fprintln(w, string(body))
 
-		return nil
+		return err
 	}
 
-	_, _ = fmt.Fprintln(w, dev)
+	_, err := fmt.Fprintln(w, dev)
 
-	return nil
+	return err
 }

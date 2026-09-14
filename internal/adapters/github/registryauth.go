@@ -16,6 +16,9 @@ import (
 // managed registry secret.
 func (p *Provider) ResolveRegistryAuth() (provider.RegistryAuth, error) {
 	env := p.envFunc()
+	if err := requirePublicGitHubRegistries(env); err != nil {
+		return provider.RegistryAuth{}, err
+	}
 
 	token := env("GITHUB_TOKEN")
 	if token == "" {

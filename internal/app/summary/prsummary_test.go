@@ -5,11 +5,13 @@ package summary_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	appsummary "github.com/diggsweden/reusable-ci/v3/internal/app/summary"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 func fixedNow() time.Time {
@@ -71,9 +73,20 @@ func TestPRSummary_MissingTargetsDefaultToSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The name is the claim: absent targets must render as skipped, not
+	// merely "not failed". Counting the ✗ rows left that unchecked -- a
+	// build that silently dropped the rows entirely would have passed.
 	body := sink.buf.String()
-	if strings.Count(body, "| ✗ |") != 0 {
-		t.Errorf("no failures expected on empty input: %s", body)
+	for _, want := range []string{"| Lint | − |", "| Swift Lint | − |"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q\nfull:\n%s", want, body)
+		}
+	}
+
+	for _, unwanted := range []string{"| ✗ |", "| ✓ |"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("unexpected %q on empty input:\n%s", unwanted, body)
+		}
 	}
 }
 
@@ -107,10 +120,23 @@ func TestPRSummary_FailureAndSkippedIcons(t *testing.T) {
 func TestPRSummary_RejectsMalformedStageResultJSON(t *testing.T) {
 	t.Parallel()
 
-	err := appsummary.PRSummary(context.Background(), &fakeSummarySink{}, appsummary.PRSummaryInput{
+	sink := &fakeSummarySink{}
+
+	err := appsummary.PRSummary(context.Background(), sink, appsummary.PRSummaryInput{
 		QualityStageResultJSON: `{"stage":"pr-quality","targets":{}}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "unsupported version") {
-		t.Fatalf("err = %v", err)
+	// A version-less envelope came from a step this build does not understand:
+	// ErrMalformedInput, not the ErrUsage of a bad flag.
+	if !errors.Is(err, errs.ErrMalformedInput) {
+		t.Fatalf("err = %v, want ErrMalformedInput", err)
+	}
+
+	if !strings.Contains(err.Error(), "unsupported version") {
+		t.Errorf("err = %v, want it to name the version problem", err)
+	}
+
+	// Refused before rendering: a half-written summary is worse than none.
+	if sink.buf.Len() != 0 {
+		t.Errorf("appended a summary despite the rejected input:\n%s", sink.buf.String())
 	}
 }

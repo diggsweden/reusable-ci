@@ -4,10 +4,12 @@
 package pipeline_test
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
@@ -216,8 +218,14 @@ func TestNewReleasePlan_RejectsUnsupportedConfigPlanVersion(t *testing.T) {
 	_, err := pipeline.NewReleasePlan(pipeline.ReleasePlanInput{
 		ConfigPlan: pipeline.ConfigPlan{Version: pipeline.ConfigPlanVersion + 1},
 	})
-	if err == nil || !strings.Contains(err.Error(), "unsupported config-plan version") {
-		t.Errorf("err = %v", err)
+	// A plan from a different build of this tool is skew, so it exits
+	// EX_CONFIG rather than blaming the operator's command line.
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
+	}
+
+	if !strings.Contains(err.Error(), "unsupported config-plan version") {
+		t.Errorf("err = %v, want it to name the version problem", err)
 	}
 }
 
@@ -249,8 +257,16 @@ func TestNewReleasePlan_RejectsPushedSLSAWithoutCosignSigner(t *testing.T) {
 				ReleaseSBOMs:         "none",
 				ReleaseSignArtifacts: tc.signArtifacts,
 			})
-			if err == nil || !strings.Contains(err.Error(), "enables pushed SLSA provenance") {
-				t.Fatalf("err = %v", err)
+			if !errors.Is(err, errs.ErrInvalidConfig) {
+				t.Fatalf("err = %v, want ErrInvalidConfig", err)
+			}
+
+			// The message names the container and both escape hatches, so the
+			// operator can act without reading the source.
+			for _, want := range []string{"enables pushed SLSA provenance", "sign.method sigstore or kms", "enable-slsa: false"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %v, want it to mention %q", err, want)
+				}
 			}
 		})
 	}
@@ -289,8 +305,14 @@ func TestNewReleasePlan_RejectsInvalidSBOMInput(t *testing.T) {
 		ConfigPlan:   pipeline.NewConfigPlan(cfg),
 		ReleaseSBOMs: "bad",
 	})
-	if err == nil || !strings.Contains(err.Error(), "sboms: unknown token") {
-		t.Errorf("err = %v", err)
+	// A bad --release-sboms value is refused by the domain validator, which
+	// classifies it as a rule failure rather than plan skew.
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+
+	if !strings.Contains(err.Error(), "sboms: unknown token") {
+		t.Errorf("err = %v, want it to name the unknown token", err)
 	}
 }
 
@@ -312,4 +334,58 @@ func hasTransferTemplate(items []pipeline.ArtifactTransfer, kind, tmpl string) b
 	}
 
 	return false
+}
+
+// TestParseArtifactTransferPlan_RefusesAStaleShape pins the transfer plan to
+// the same strict decode as the stage plans. It names the files a download
+// lands on disk, so an unknown or repeated member is a producer and consumer
+// that disagree about the shape, never something to read past: a misspelt
+// "required" decoded as false and made a mandatory artifact optional.
+func TestParseArtifactTransferPlan_RefusesAStaleShape(t *testing.T) {
+	t.Parallel()
+
+	const item = `{"kind":"extracted_binaries","name":"api-binaries","path":"dist","required":true`
+
+	valid := `{"version":1,"items":[` + item + `}]}`
+	if _, err := pipeline.ParseArtifactTransferPlan(valid); err != nil {
+		t.Fatalf("control plan refused: %v", err)
+	}
+
+	for name, raw := range map[string]string{
+		"unknown member":  `{"version":1,"items":[` + item + `,"optional":false}]}`,
+		"trailing value":  valid + `{}`,
+		"missing version": `{"items":[` + item + `}]}`,
+	} {
+		if _, err := pipeline.ParseArtifactTransferPlan(raw); !errors.Is(err, errs.ErrInvalidConfig) {
+			t.Errorf("%s: err = %v, want ErrInvalidConfig", name, err)
+		}
+	}
+}
+
+// TestNewReleasePlan_VersionBumpTargetNeedsAnArtifact: the bump policy can be
+// on (git-cliff, not skipped) for a configuration that declares no artifacts,
+// and then there is nothing whose manifest a bump could rewrite. The target
+// must not run on an empty item list.
+func TestNewReleasePlan_VersionBumpTargetNeedsAnArtifact(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{}
+	if err := config.Derive(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := pipeline.NewReleasePlan(pipeline.ReleasePlanInput{
+		ConfigPlan: pipeline.NewConfigPlan(cfg), RefName: "v1.2.3", ChangelogCreator: "git-cliff", ReleaseSBOMs: "none",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !plan.Policy.RunVersionBump {
+		t.Fatalf("control: the bump policy is off (%+v)", plan.Policy)
+	}
+
+	if target := plan.Stages.Prepare.Targets.VersionBump; target.Runs || len(target.Items) != 0 {
+		t.Errorf("version bump target = %+v, want not running with no artifacts", target)
+	}
 }

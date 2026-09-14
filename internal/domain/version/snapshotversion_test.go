@@ -4,13 +4,12 @@
 package version_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
 
-func TestSanitizePathToken(t *testing.T) {
+func TestSanitizePathToken_ReplacesPathSeparators(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -30,11 +29,19 @@ func TestSanitizePathToken(t *testing.T) {
 		{"a//b//c", "a--b--c"},
 		{"///foo", "foo"},
 		{"keeps.dots_and_underscores", "keeps.dots_and_underscores"},
-		{"unicode-åäö", "unicode-----"}, // unicode mapped to "-"; trimmed by trailing rule? no — internal "-"s preserved
+		// Non-ASCII is replaced one dash per *byte*, then the ordinary
+		// trim/collapse rules apply -- so trailing non-ASCII disappears
+		// entirely while internal non-ASCII survives as dashes.
+		{"unicode-åäö", "unicode"},
+		{"a-å-b", "a----b"},
+		{"åäö", ""},
 		{"", ""},
 		{"-", ""},
 		{"--", ""},
 		{"////", ""},
+		{".", ""},
+		{"..", ""},
+		{"-..-", ""},
 		{"v1.2.3", "v1.2.3"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		{"0.5.9-snapshot-feat-x-abc1234", "0.5.9-snapshot-feat-x-abc1234"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}
@@ -44,22 +51,6 @@ func TestSanitizePathToken(t *testing.T) {
 			t.Parallel()
 
 			got := version.SanitizePathToken(tc.in)
-			// Special case for the unicode test: the bash sed treats each byte of
-			// the multi-byte UTF-8 sequence as a separate non-matching character.
-			// We emit a "-" per byte too. Just check the prefix doesn't include
-			// the unicode bytes and the result isn't empty.
-			if tc.in == "unicode-åäö" {
-				// Byte-vs-rune handling makes the exact dash count
-				// vary across implementations; the invariant under
-				// test is the "unicode" prefix and that nothing
-				// unicode-y survived.
-				if !strings.HasPrefix(got, "unicode") {
-					t.Errorf("SanitizePathToken(%q) = %q, want unicode-prefixed", tc.in, got)
-				}
-
-				return
-			}
-
 			if got != tc.want {
 				t.Errorf("SanitizePathToken(%q) = %q, want %q", tc.in, got, tc.want)
 			}
@@ -84,7 +75,7 @@ func TestSanitizePathToken_Idempotent(t *testing.T) {
 	}
 }
 
-func TestComposeSnapshotVersion(t *testing.T) {
+func TestComposeSnapshotVersion_CombinesBaseBranchAndSHA(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -112,7 +103,7 @@ func TestComposeSnapshotVersion(t *testing.T) {
 	}
 }
 
-func TestLatestSemverTag(t *testing.T) {
+func TestLatestSemverTag_PicksTheHighestVersion(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -124,8 +115,14 @@ func TestLatestSemverTag(t *testing.T) {
 		{name: "single tag", tags: []string{"v1.2.3"}, want: "v1.2.3"},
 		{name: "picks highest", tags: []string{"v1.0.0", "v1.2.3", "v1.0.5"}, want: "v1.2.3"},
 		{name: "compares numerically not lexically", tags: []string{"v9.0.0", "v10.0.0"}, want: "v10.0.0"},
+		{
+			name: "compares components larger than an integer",
+			tags: []string{"v99999999999999999999.0.0", "v100000000000000000000.0.0"},
+			want: "v100000000000000000000.0.0",
+		},
 		{name: "ignores prerelease", tags: []string{"v1.2.3", "v1.2.4-rc.1"}, want: "v1.2.3"},
 		{name: "ignores non-semver", tags: []string{"latest", "stable", "v1.2.3"}, want: "v1.2.3"},
+		{name: "ignores leading zeroes", tags: []string{"v01.2.3", "v1.2.3"}, want: "v1.2.3"},
 		{name: "all non-semver", tags: []string{"latest", "main"}, want: ""},
 		{name: "matches strict v-prefix", tags: []string{"1.2.3", "v1.2.3"}, want: "v1.2.3"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	}
@@ -141,12 +138,15 @@ func TestLatestSemverTag(t *testing.T) {
 	}
 }
 
-func TestIsStableSemverTag(t *testing.T) {
+func TestIsStableSemverTag_RequiresAVPrefixAndNoPrerelease(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]bool{
 		"v1.2.3":       true,
 		"v0.0.0":       true,
+		"v01.2.3":      false,
+		"v1.02.3":      false,
+		"v1.2.03":      false,
 		"1.2.3":        false,
 		"v1.2":         false,
 		"v1.2.3-rc1":   false,
@@ -164,7 +164,30 @@ func TestIsStableSemverTag(t *testing.T) {
 	}
 }
 
-func TestStripVPrefix(t *testing.T) {
+func TestParseSemver_UsesStrictThreeComponentGrammar(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []string{"1.2.3", "v1.2.3", "v1.2.3-rc.1+build.5"} {
+		parsed, ok := version.ParseSemver(value)
+		if !ok {
+			t.Errorf("ParseSemver(%q) rejected a valid version", value)
+
+			continue
+		}
+
+		if parsed.Major != "1" || parsed.Minor != "2" || parsed.Patch != "3" {
+			t.Errorf("ParseSemver(%q) components = %+v", value, parsed)
+		}
+	}
+
+	for _, value := range []string{"v1", "v1.2", "v01.2.3", "V1.2.3", "v1.2.3-rc.01"} {
+		if _, ok := version.ParseSemver(value); ok {
+			t.Errorf("ParseSemver(%q) accepted a non-strict version", value)
+		}
+	}
+}
+
+func TestStripVPrefix_RemovesOnlyALeadingV(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{

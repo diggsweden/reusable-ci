@@ -11,36 +11,28 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// HardenProcess applies the minimum set of Linux process-level
-// hardening that reusable-ci needs to keep secrets in RAM:
+// HardenProcess sets two Linux process attributes that keep in-memory secrets
+// out of core files and away from unprivileged debuggers. It sets flags; it
+// does not prove resistance to any attacker, and it does not cover everything
+// the process starts.
 //
-//   - RLIMIT_CORE = 0: no core dump on segfault. Without this, a
-//     crash while a decrypted GPG key is on the heap would write the
-//     key to disk in the core file.
-//   - PR_SET_DUMPABLE = 0: also disallows ptrace attaching from any
-//     non-root process AND disables core dumps regardless of RLIMIT.
-//     Layered defence — RLIMIT_CORE controls whether the kernel
-//     creates a core file; PR_SET_DUMPABLE controls whether the
-//     kernel is willing to expose this process's memory at all.
+//   - RLIMIT_CORE = 0 (soft and hard): the kernel writes no core file for
+//     this process. Limits are inherited across fork and exec, so child
+//     processes start with the same limit, but a process holding
+//     CAP_SYS_RESOURCE (root, typically) can raise the hard limit again.
+//   - PR_SET_DUMPABLE = 0: no core dump, and a same-user process without
+//     CAP_SYS_PTRACE cannot ptrace this process or read /proc/<pid>/mem. It
+//     does not stop root or CAP_SYS_PTRACE, and execve resets the flag, so
+//     programs this process runs (gpg, cosign, git) are dumpable again unless
+//     they set it themselves.
 //
-// Errors are ignored: this is best-effort. If the syscall is denied
-// by a seccomp profile or the kernel is too old, the process still
-// runs — we just lose the extra layer. Logging the failure would
-// leak information about the runner config; silently degrading is
-// the right trade-off for a security feature.
+// Errors are ignored: this is best-effort. If a seccomp profile or the kernel
+// refuses either call, the process runs without that layer and says nothing,
+// since the failure would describe the runner's configuration in the log.
 //
-// Called once at the start of main(). Safe to call multiple times
-// (both operations are idempotent on the kernel side).
+// Called once at the start of main(). Safe to call more than once; both
+// settings are idempotent.
 func HardenProcess() {
-	// RLIMIT_CORE = 0 prevents the kernel from writing core dumps for
-	// this process. Soft and hard limits both zero means even root
-	// can't re-enable mid-flight.
 	_ = syscall.Setrlimit(syscall.RLIMIT_CORE, &syscall.Rlimit{Cur: 0, Max: 0})
-
-	// PR_SET_DUMPABLE = 0 is a stronger second layer: the kernel
-	// refuses ptrace attach + core-dump creation for the process,
-	// regardless of RLIMIT. Defends against an attacker with non-root
-	// shell access who tries to attach via gdb/strace and read
-	// decrypted key material from /proc/<pid>/mem.
 	_ = unix.Prctl(unix.PR_SET_DUMPABLE, 0, 0, 0, 0)
 }

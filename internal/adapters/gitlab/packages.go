@@ -13,10 +13,11 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// gitlabTagPageSize is the per-page size for registry tag listing. GitLab caps
-// per_page at 100, and staging cleanup enumerates every tag of one image, so the
-// maximum keeps the round trips down.
-const gitlabTagPageSize = 100
+// gitlabPageSize is the per-page size for the list endpoints this adapter
+// pages through. GitLab defaults to 20 and caps per_page at 100; staging
+// cleanup enumerates every tag of one image and a release can carry many asset
+// links, so the maximum keeps the round trips down.
+const gitlabPageSize = 100
 
 // ListContainerPackageVersions enumerates the tags of one container image
 // through the GitLab registry API, satisfying provider.ContainerPackageLister.
@@ -60,7 +61,7 @@ func (p *Provider) listRegistryTags(
 	versions := make([]string, 0)
 
 	for page := 1; ; page++ {
-		endpoint := fmt.Sprintf("%s?per_page=%d&page=%d", base, gitlabTagPageSize, page)
+		endpoint := fmt.Sprintf("%s?per_page=%d&page=%d", base, gitlabPageSize, page)
 
 		body, err := getJSON(ctx, p.HTTPClient, endpoint, headers)
 		if err != nil {
@@ -91,7 +92,7 @@ func (p *Provider) listRegistryTags(
 
 		// A short page is the last one; asking for another costs a round trip
 		// to learn nothing.
-		if len(tags) < gitlabTagPageSize {
+		if len(tags) < gitlabPageSize {
 			return versions, nil
 		}
 	}

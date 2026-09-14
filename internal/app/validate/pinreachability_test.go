@@ -1,3 +1,5 @@
+//go:build integration
+
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
@@ -22,6 +24,12 @@ import (
 // realPinGit drives the checks against a real git binary, mirroring
 // newRealGit in tags_test.go: these tests assert reachability semantics, so
 // a fake would only restate the answer we are trying to verify.
+//
+// That real binary is why this file is tagged integration, alongside
+// tags_test.go which does the same. Four of the five tests here build a
+// repository through isolatedgit and fail as `exec: "git": executable
+// file not found` on a runner without git; untagged they sat in the tier
+// `just test` runs first and treats as fast and self-contained.
 type realPinGit struct{}
 
 func (realPinGit) Open(dir string) appvalidate.PinGitOps {
@@ -144,8 +152,11 @@ func TestPinReachability_ReachablePinPasses(t *testing.T) {
 		t.Fatalf("PinReachability: %v\n%s", err, out.String())
 	}
 
-	if !strings.Contains(out.String(), "reachable") {
-		t.Fatalf("expected reachable output, got:\n%s", out.String())
+	// The SHA, not the bare word: "reachable" appears in the summary line
+	// whatever the pins were, so the old check passed on a run that never
+	// looked at this pin at all.
+	if want := "reachable: forgejo-ci@" + reachable; !strings.Contains(out.String(), want) {
+		t.Fatalf("output does not report %q:\n%s", want, out.String())
 	}
 }
 
@@ -207,5 +218,36 @@ func TestPinReachability_NoPinsPasses(t *testing.T) {
 
 	if !strings.Contains(out.String(), "No forgejo-ci pins") {
 		t.Fatalf("expected no-pin output, got:\n%s", out.String())
+	}
+}
+
+// TestPinReachability_RemovesItsTemporaryClone pins that the clone made for a
+// --remote check does not outlive the check: it was created under the temp
+// root and never removed, so every run left a full clone behind.
+func TestPinReachability_RemovesItsTemporaryClone(t *testing.T) {
+	repo := isolatedgit.NewRepo(t)
+	reachable := repo.AddCommit("reachable")
+	tempDir := t.TempDir()
+
+	var out bytes.Buffer
+
+	err := appvalidate.PinReachability(context.Background(), realPinGit{}, &out, appvalidate.PinReachabilityInput{
+		Workflows: []string{writePinnedWorkflow(t, reachable)},
+		Remote:    repo.Dir,
+		Main:      "main",
+		Subject:   "forgejo-ci",
+		TempDir:   tempDir,
+	})
+	if err != nil {
+		t.Fatalf("PinReachability: %v\n%s", err, out.String())
+	}
+
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(entries) != 0 {
+		t.Errorf("temporary clone left behind under %s: %d entr(y/ies)", tempDir, len(entries))
 	}
 }

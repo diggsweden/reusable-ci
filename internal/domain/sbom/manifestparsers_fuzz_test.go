@@ -95,7 +95,7 @@ func FuzzCargoTOML(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, body []byte) {
 		_ = sbom.CargoTOMLName(body)
-		_ = sbom.CargoTOMLVersion(body)
+		_, _ = sbom.CargoTOMLVersion(body, body)
 	})
 }
 

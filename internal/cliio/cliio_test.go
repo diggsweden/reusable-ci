@@ -78,12 +78,21 @@ func TestWriteFile_AtomicReplaceCorrectPermNoLeftover(t *testing.T) {
 		t.Errorf("content = %q, want %q", got, "v2-is-longer")
 	}
 
-	if info, _ := os.Stat(path); info.Mode().Perm() != 0o400 {
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if info.Mode().Perm() != 0o400 {
 		t.Errorf("perm = %v, want 0400", info.Mode().Perm())
 	}
 
 	// The temp+rename must leave no stray ".tmp-" sidecars behind.
-	entries, _ := os.ReadDir(dir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	for _, e := range entries {
 		if strings.Contains(e.Name(), ".tmp-") {
 			t.Errorf("leftover temp file: %s", e.Name())
@@ -118,7 +127,11 @@ func TestWriteFile_FailureLeavesExistingIntact(t *testing.T) {
 
 	_ = os.Chmod(dir, 0o700) //nolint:gosec // restore writable test dir
 
-	got, _ := os.ReadFile(path) //nolint:gosec // test fixture path
+	got, err := os.ReadFile(path) //nolint:gosec // test fixture path
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if string(got) != "ORIGINAL" {
 		t.Errorf("existing file corrupted on failed write: %q", got)
 	}
@@ -158,9 +171,17 @@ func TestReadFile_StdSentinelRefusesCharDevice(t *testing.T) {
 
 	t.Cleanup(func() { os.Stdin = orig })
 
-	_, err = cliio.ReadFile(cliio.StdSentinel)
+	if !cliio.StdinIsCharDevice() {
+		t.Error("StdinIsCharDevice = false for the opened null device")
+	}
+
+	body, err := cliio.ReadFile(cliio.StdSentinel)
 	if !errors.Is(err, errs.ErrUsage) {
 		t.Errorf("err = %v, want wrapped errs.ErrUsage", err)
+	}
+
+	if body != nil {
+		t.Errorf("refused character device returned data: %q", body)
 	}
 }
 
@@ -279,6 +300,12 @@ func TestCreateWriter_StdSentinelStreamsStdout(t *testing.T) {
 
 // captureStdout swaps os.Stdout for the duration of fn and returns
 // everything written to the original stdout.
+//
+// Both pipe ends are registered for close. The read end used to be left open:
+// reading to EOF finishes the read but does not release the descriptor, so
+// every call leaked one for the lifetime of the test binary. That is invisible
+// until a package makes enough calls to reach the process limit, at which
+// point the failure lands on whichever unrelated test next opens a file.
 func captureStdout(t *testing.T, fn func()) string {
 	t.Helper()
 
@@ -286,6 +313,11 @@ func captureStdout(t *testing.T, fn func()) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	t.Cleanup(func() {
+		_ = r.Close()
+		_ = w.Close()
+	})
 
 	orig := os.Stdout
 	os.Stdout = w
@@ -302,4 +334,75 @@ func captureStdout(t *testing.T, fn func()) string {
 	}
 
 	return buf.String()
+}
+
+// TestReadFile_UnreadableFileClassifiesAsPermissionDenied covers the branch of
+// classifyReadError that nothing executed.
+//
+// ReadFile distinguishes "the file is not there" from "the file is there and
+// this process may not read it", and only the first was tested. They are
+// different operator actions — create the input, versus fix its mode or the
+// job's user — and the second is what a checkout with restrictive permissions
+// or a root-owned mount produces.
+func TestReadFile_UnreadableFileClassifiesAsPermissionDenied(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: mode bits do not deny access, so this branch is unreachable")
+	}
+
+	path := filepath.Join(t.TempDir(), "secret.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := cliio.ReadFile(path)
+	if !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+
+	if got != nil {
+		t.Errorf("a refused read returned %q", got)
+	}
+
+	// The cause survives the classification: an operator reading the CI log
+	// needs the path and the syscall, not just "permission denied".
+	if !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("the underlying cause was replaced: %v", err)
+	}
+
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("the error does not name the file: %v", err)
+	}
+}
+
+// TestAppendLines_RefusesLineBreaks pins the one rule the runner env/path
+// files need: an entry is a line, so an embedded newline (which would land a
+// second, unrequested entry in $GITHUB_ENV) is refused before any write.
+func TestAppendLines_RefusesLineBreaks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "env")
+
+	if err := cliio.AppendLines(path, "A=1", "B=2"); err != nil {
+		t.Fatalf("AppendLines: %v", err)
+	}
+
+	if err := cliio.AppendLines(path, "C=3"); err != nil {
+		t.Fatalf("second AppendLines: %v", err)
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if want := "A=1\nB=2\nC=3\n"; string(got) != want {
+		t.Errorf("file = %q, want %q", got, want)
+	}
+
+	err = cliio.AppendLines(path, "D=4\nEVIL=1")
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation for an entry with a line break", err)
+	}
+
+	if after, _ := os.ReadFile(path); string(after) != string(got) {
+		t.Errorf("file changed by a refused append: %q", after)
+	}
 }

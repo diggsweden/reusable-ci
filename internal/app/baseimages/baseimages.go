@@ -36,7 +36,6 @@ import (
 
 var (
 	baseImageFlavorRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-	baseImageTagRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)+:` + domaincontainer.OCITagComponent + `$`)
 )
 
 // BaseImageMetadata is the JSON shape exchanged by forgejo-ci's base-image
@@ -197,9 +196,17 @@ func validatePromoteBaseInputID(image BaseImageMetadata, fallbackBaseInputID str
 
 // validatePromoteCandidateFields checks the optional candidate tag/ref pair.
 func validatePromoteCandidateFields(image BaseImageMetadata, expectedRepository string) error {
+	if (image.CandidateRef == "") != (image.CandidateTag == "") {
+		return fmt.Errorf("candidate tag and ref must be supplied together: %w", errs.ErrValidation)
+	}
+
 	if image.CandidateRef != "" {
 		if err := validateBaseImageRef(image.CandidateRef, expectedRepository); err != nil {
 			return err
+		}
+
+		if image.CandidateRef != image.Ref {
+			return fmt.Errorf("base image candidate and final refs must identify the same digest: %w", errs.ErrValidation)
 		}
 	}
 
@@ -225,7 +232,7 @@ func validateBaseImageRef(ref, expectedRepository string) error {
 }
 
 func validateBaseImageTag(tag, expectedRepository string) error {
-	if !baseImageTagRE.MatchString(tag) {
+	if !domaincontainer.ValidTaggedRef(tag) {
 		return fmt.Errorf("base images: image tag must be a registry path with a tag: %s: %w", tag, errs.ErrValidation)
 	}
 

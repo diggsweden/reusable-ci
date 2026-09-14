@@ -5,6 +5,7 @@ package container
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -71,27 +72,13 @@ func SignImage(ctx context.Context, signer cosignImageSigner, out io.Writer, in 
 		return fmt.Errorf("container sign: image reference is empty: %w", errs.ErrMissingInput)
 	}
 
+	var mode string
+
 	switch in.Method {
 	case domainrelease.SignMethodSigstore:
-		_, _ = fmt.Fprintf(out, "Signing image %s (method=sigstore, keyless OIDC)\n", in.Image)
-
-		return signer.SignImage(ctx, container.ImageSignRequest{
-			ImageRef:        in.Image,
-			Recursive:       in.Recursive,
-			Keyless:         true,
-			OIDCIssuer:      in.OIDCIssuer,
-			FulcioURL:       in.FulcioURL,
-			RekorURL:        in.RekorURL,
-			TrustedRootPath: in.TrustedRootPath,
-		}, out)
+		mode = "sigstore, keyless OIDC"
 	case domainrelease.SignMethodKMS:
-		_, _ = fmt.Fprintf(out, "Signing image %s (method=kms, key=%s)\n", in.Image, in.KeyRef)
-
-		return signer.SignImage(ctx, container.ImageSignRequest{
-			ImageRef:  in.Image,
-			Recursive: in.Recursive,
-			KeyRef:    in.KeyRef,
-		}, out)
+		mode = "kms"
 	case domainrelease.SignMethodGPG:
 		return fmt.Errorf(
 			"container sign: method=gpg cannot sign OCI images — use --method=sigstore (keyless OIDC) or --method=kms (cosign + KMS): %w",
@@ -100,6 +87,22 @@ func SignImage(ctx context.Context, signer cosignImageSigner, out io.Writer, in 
 	default:
 		return fmt.Errorf("container sign: method %q is not supported: %w", in.Method, errs.ErrInvalidConfig)
 	}
+
+	_, _ = fmt.Fprintf(out, "Signing image %s (method=%s)\n", in.Image, mode)
+
+	// Every field is forwarded for both methods, as ledger signing does, so
+	// the request's validation refuses a key given with sigstore or an
+	// endpoint given with kms instead of this switch dropping it.
+	return signer.SignImage(ctx, container.ImageSignRequest{
+		ImageRef:        in.Image,
+		Recursive:       in.Recursive,
+		Keyless:         in.Method == domainrelease.SignMethodSigstore,
+		KeyRef:          in.KeyRef,
+		OIDCIssuer:      in.OIDCIssuer,
+		FulcioURL:       in.FulcioURL,
+		RekorURL:        in.RekorURL,
+		TrustedRootPath: in.TrustedRootPath,
+	}, out)
 }
 
 // VerifyImageInput drives `reusable-ci validate container-signature`.
@@ -136,22 +139,7 @@ func VerifyImage(ctx context.Context, verifier cosignImageVerifier, out io.Write
 	}
 
 	switch in.Method {
-	case domainrelease.SignMethodSigstore:
-		_, _ = fmt.Fprintf(out, "Verifying image %s (method=sigstore)\n", in.Image)
-
-		return verifier.VerifyImage(ctx, container.ImageVerifyRequest{
-			ImageRef:           in.Image,
-			Keyless:            true,
-			CertIdentityRegexp: in.CertIdentityRegexp,
-			CertOIDCIssuer:     in.CertOIDCIssuer,
-		}, out)
-	case domainrelease.SignMethodKMS:
-		_, _ = fmt.Fprintf(out, "Verifying image %s (method=kms)\n", in.Image)
-
-		return verifier.VerifyImage(ctx, container.ImageVerifyRequest{
-			ImageRef: in.Image,
-			KeyRef:   in.KeyRef,
-		}, out)
+	case domainrelease.SignMethodSigstore, domainrelease.SignMethodKMS:
 	case domainrelease.SignMethodGPG:
 		return fmt.Errorf(
 			"container verify: method=gpg cannot verify OCI images — use --method=sigstore or --method=kms: %w",
@@ -160,4 +148,34 @@ func VerifyImage(ctx context.Context, verifier cosignImageVerifier, out io.Write
 	default:
 		return fmt.Errorf("container verify: --method is required (sigstore or kms): %w", errs.ErrMissingInput)
 	}
+
+	_, _ = fmt.Fprintf(out, "Verifying image %s (method=%s)\n", in.Image, in.Method)
+
+	// As for signing, every field is forwarded and the request's validation
+	// refuses a combination the method does not take, rather than a
+	// certificate identity given with kms being dropped unseen.
+	request := container.ImageVerifyRequest{
+		ImageRef:           in.Image,
+		Keyless:            in.Method == domainrelease.SignMethodSigstore,
+		CertIdentityRegexp: in.CertIdentityRegexp,
+		CertOIDCIssuer:     in.CertOIDCIssuer,
+		KeyRef:             in.KeyRef,
+	}
+	if err := request.Validate(); err != nil {
+		return err
+	}
+
+	return wrapVerificationFailure("container signature verification failed", verifier.VerifyImage(ctx, request, out))
+}
+
+func wrapVerificationFailure(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, errs.ErrDependencyUnavailable) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%s: %w", operation, err)
+	}
+
+	return fmt.Errorf("%s: %w: %w", operation, err, errs.ErrValidation)
 }

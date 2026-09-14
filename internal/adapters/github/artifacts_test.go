@@ -13,10 +13,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/github"
+	domainartifact "github.com/diggsweden/reusable-ci/v3/internal/domain/artifact"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/release"
@@ -84,7 +86,7 @@ func TestArtifactDownloader_FetchesAndExtractsZip(t *testing.T) {
 
 	p := &github.Provider{
 		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}), //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		APIBaseOverride: srv.URL(),
+		APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
 	}
 	dl := github.NewArtifactDownloader(p)
 
@@ -125,7 +127,7 @@ func TestArtifactDownloader_ArtifactNotFoundIsTypedError(t *testing.T) {
 
 	p := &github.Provider{
 		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
-		APIBaseOverride: srv.URL(),
+		APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
 	}
 
 	err := github.NewArtifactDownloader(p).DownloadArtifact(context.Background(), release.ArtifactDownloadInput{
@@ -133,17 +135,24 @@ func TestArtifactDownloader_ArtifactNotFoundIsTypedError(t *testing.T) {
 		Name:  "missing",
 		Dir:   t.TempDir(),
 	})
-	if err == nil || !strings.Contains(err.Error(), `"missing" not found`) {
-		t.Fatalf("err = %v, want not-found", err)
+	if !errors.Is(err, errs.ErrReleaseNotFound) {
+		t.Fatalf("err = %v, want ErrReleaseNotFound", err)
+	}
+
+	if !strings.Contains(err.Error(), `"missing" not found`) {
+		t.Errorf("err = %v, want the missing artifact named in the message", err)
 	}
 }
 
-func TestArtifactDownloader_RejectsBadInput(t *testing.T) {
+// A zero ArtifactDownloader has no Provider and therefore no client; the
+// documented contract is that every call returns ErrUsage rather than
+// panicking on the nil dereference.
+func TestArtifactDownloader_NilProviderIsAUsageError(t *testing.T) {
 	t.Parallel()
 
 	err := github.ArtifactDownloader{}.DownloadArtifact(context.Background(), release.ArtifactDownloadInput{})
-	if err == nil {
-		t.Fatal("expected error with nil Provider")
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
 	}
 }
 
@@ -166,6 +175,36 @@ func serveArtifactZip(t *testing.T, zipBody []byte) *fakegitserver.Server {
 	return srv
 }
 
+func TestProvider_DownloadRunArtifact_RejectsOversizedCompressedResponse(t *testing.T) {
+	t.Parallel()
+
+	srv := fakegitserver.New(t)
+	srv.OnGet("/repos/owner/repo/actions/runs/9876/artifacts", func(_ fakegitserver.Request) fakegitserver.Response {
+		return fakegitserver.Response{Status: http.StatusOK, Body: `{"total_count":1,"artifacts":[{"id":42,"name":"build-artifacts"}]}`}
+	})
+	srv.OnGet("/repos/owner/repo/actions/artifacts/42/zip", func(_ fakegitserver.Request) fakegitserver.Response {
+		return fakegitserver.Response{Status: http.StatusFound, Header: http.Header{"Location": []string{srv.URL() + "/blob/42"}}}
+	})
+	srv.OnGet("/blob/42", func(_ fakegitserver.Request) fakegitserver.Response {
+		return fakegitserver.Response{
+			Status: http.StatusOK,
+			Header: http.Header{"Content-Length": []string{strconv.FormatInt(domainartifact.MaxArchiveBytes+1, 10)}},
+		}
+	})
+
+	p := &github.Provider{
+		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
+		APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
+	}
+
+	_, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{
+		Name: "build-artifacts", Dir: t.TempDir(), RunID: "9876",
+	})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("oversized response error = %v, want ErrValidation", err)
+	}
+}
+
 // TestProvider_DownloadRunArtifact exercises the RunArtifactDownloader role
 // (the forge-neutral entry point) and asserts the byte/file totals.
 func TestProvider_DownloadRunArtifact(t *testing.T) {
@@ -176,7 +215,7 @@ func TestProvider_DownloadRunArtifact(t *testing.T) {
 
 	p := &github.Provider{
 		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
-		APIBaseOverride: srv.URL(),
+		APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
 	}
 
 	dir := t.TempDir()
@@ -192,6 +231,76 @@ func TestProvider_DownloadRunArtifact(t *testing.T) {
 
 	if info.FileCount != 2 || info.Bytes != int64(len("world")+len(`{"ok":true}`)) {
 		t.Errorf("info = %+v, want 2 files / %d bytes", info, len("world")+len(`{"ok":true}`))
+	}
+}
+
+func TestProvider_DownloadRunArtifact_RejectsExistingDestinationSymlink(t *testing.T) {
+	t.Parallel()
+
+	srv := serveArtifactZip(t, buildZip(t, map[string]string{"hello.txt": "new"}))
+	p := &github.Provider{
+		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
+		APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
+	}
+	dir := t.TempDir()
+
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink(outside, filepath.Join(dir, "hello.txt")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	_, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{
+		Name: "build-artifacts", Dir: dir, RunID: "9876",
+	})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("existing destination symlink error = %v, want ErrValidation", err)
+	}
+
+	if got, readErr := os.ReadFile(outside); readErr != nil || string(got) != "outside" {
+		t.Fatalf("outside target changed: body=%q err=%v", got, readErr)
+	}
+
+	info, err := os.Lstat(filepath.Join(dir, "hello.txt"))
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("rejected destination symlink changed: info=%v err=%v", info, err)
+	}
+}
+
+func TestProvider_DownloadRunArtifact_RejectsSymlinkedDestinationRootOrAncestor(t *testing.T) {
+	t.Parallel()
+
+	srv := serveArtifactZip(t, buildZip(t, map[string]string{"hello.txt": "new"}))
+	p := &github.Provider{
+		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
+		APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
+	}
+	base := t.TempDir()
+
+	realDest := filepath.Join(base, "real")
+	if err := os.MkdirAll(realDest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	linked := filepath.Join(base, "linked")
+	if err := os.Symlink(realDest, linked); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	for _, dir := range []string{linked, filepath.Join(linked, "child")} {
+		_, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{
+			Name: "build-artifacts", Dir: dir, RunID: "9876",
+		})
+		if !errors.Is(err, errs.ErrValidation) {
+			t.Errorf("destination %q error = %v, want ErrValidation", dir, err)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(realDest, "hello.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("symlink destination was written through: %v", err)
 	}
 }
 
@@ -246,7 +355,7 @@ func TestProvider_DownloadRunArtifact_RejectsHostileForgeName(t *testing.T) {
 
 			p := &github.Provider{
 				Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
-				APIBaseOverride: srv.URL(),
+				APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
 			}
 
 			dir := t.TempDir()
@@ -271,7 +380,7 @@ func TestProvider_DownloadRunArtifact_PatternMergeMultiple(t *testing.T) {
 	srv := servePatternArtifacts(t)
 	p := &github.Provider{
 		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
-		APIBaseOverride: srv.URL(),
+		APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
 	}
 
 	dir := t.TempDir()
@@ -305,7 +414,7 @@ func TestProvider_DownloadRunArtifact_PatternSeparateDirs(t *testing.T) {
 	srv := servePatternArtifacts(t)
 	p := &github.Provider{
 		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
-		APIBaseOverride: srv.URL(),
+		APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
 	}
 
 	dir := t.TempDir()
@@ -330,9 +439,34 @@ func TestProvider_DownloadRunArtifact_PatternSeparateDirs(t *testing.T) {
 	}
 }
 
-// TestProvider_DownloadRunArtifact_RejectsZipTraversal proves the shared
-// SafeJoin guard now protects the GitHub zip path too: a malicious entry
-// escaping the destination is refused and writes nothing outside.
+func TestProvider_DownloadRunArtifact_PatternZeroMatchesIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	srv := servePatternArtifacts(t)
+	p := &github.Provider{
+		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
+		APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
+	}
+	dir := filepath.Join(t.TempDir(), "downloads")
+
+	info, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{
+		Pattern: "missing-*",
+		Dir:     dir,
+		RunID:   "9876",
+	})
+	if err != nil {
+		t.Fatalf("DownloadRunArtifact: %v", err)
+	}
+
+	if info.Name != "missing-*" || info.FileCount != 0 || info.Bytes != 0 {
+		t.Errorf("zero-match info = %+v, want pattern name and zero totals", info)
+	}
+
+	if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+		t.Errorf("zero-match download created destination or returned unexpected stat error: %v", statErr)
+	}
+}
+
 // buildZipWithSymlink returns a zip carrying one symlink entry pointing
 // at target, plus one ordinary file. A symlink is stored as an entry
 // whose mode has fs.ModeSymlink and whose body is the link target.
@@ -395,7 +529,7 @@ func TestProvider_DownloadRunArtifact_RejectsZipSymlink(t *testing.T) {
 
 			p := &github.Provider{
 				Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
-				APIBaseOverride: srv.URL(),
+				APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
 			}
 
 			dir := t.TempDir()
@@ -419,6 +553,9 @@ func TestProvider_DownloadRunArtifact_RejectsZipSymlink(t *testing.T) {
 	}
 }
 
+// TestProvider_DownloadRunArtifact_RejectsZipTraversal proves the shared
+// SafeJoin guard protects the GitHub zip path too: a malicious entry
+// escaping the destination is refused and writes nothing outside.
 func TestProvider_DownloadRunArtifact_RejectsZipTraversal(t *testing.T) {
 	t.Parallel()
 
@@ -427,7 +564,7 @@ func TestProvider_DownloadRunArtifact_RejectsZipTraversal(t *testing.T) {
 
 	p := &github.Provider{
 		Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
-		APIBaseOverride: srv.URL(),
+		APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
 	}
 
 	dir := t.TempDir()
@@ -439,5 +576,116 @@ func TestProvider_DownloadRunArtifact_RejectsZipTraversal(t *testing.T) {
 
 	if _, statErr := os.Stat(filepath.Join(filepath.Dir(dir), "escape.txt")); statErr == nil {
 		t.Error("zip traversal wrote a file outside the destination")
+	}
+}
+
+// spoolFileCount counts the artifact spool files currently in the temp
+// directory the downloader uses.
+func spoolFileCount(t *testing.T) int {
+	t.Helper()
+
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "reusable-ci-artifact-*.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return len(matches)
+}
+
+// TestProvider_DownloadRunArtifact_RefusesWholeOperationAndCleansTheSpool
+// covers each way the download can fail after it has started spooling.
+//
+// The downloader writes the archive to a temporary file before it will open it,
+// because a zip cannot be read from a stream. That file is the operation's own
+// state, and every failure path has to remove it — a runner that accumulates
+// one spooled archive per failed download fills its disk with copies of release
+// artifacts, readable by anything else on the box.
+//
+// The other half is that a refusal publishes nothing. These failures happen at
+// different points — before the body is read, while reading it, and after it is
+// fully written — and the destination has to be empty in all three.
+//
+//nolint:paralleltest // shares process-wide state (the spool directory / the colour policy).
+func TestProvider_DownloadRunArtifact_RefusesWholeOperationAndCleansTheSpool(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		blob func(srv *fakegitserver.Server) fakegitserver.Response
+		want error
+	}{
+		{
+			name: "the blob host refuses",
+			blob: func(*fakegitserver.Server) fakegitserver.Response {
+				return fakegitserver.Response{Status: http.StatusForbidden}
+			},
+			want: errs.ErrPermissionDenied,
+		},
+		{
+			name: "the blob host is unavailable",
+			blob: func(*fakegitserver.Server) fakegitserver.Response {
+				return fakegitserver.Response{Status: http.StatusBadGateway}
+			},
+			want: errs.ErrDependencyUnavailable,
+		},
+		{
+			name: "the body is not a zip at all",
+			blob: func(*fakegitserver.Server) fakegitserver.Response {
+				return fakegitserver.Response{Status: http.StatusOK, Body: "this is not a zip archive"}
+			},
+			want: errs.ErrValidation,
+		},
+		{
+			name: "the body is a truncated zip",
+			blob: func(*fakegitserver.Server) fakegitserver.Response {
+				return fakegitserver.Response{Status: http.StatusOK, Body: "PK\x03\x04truncated"}
+			},
+			want: errs.ErrValidation,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Not parallel: the spool count is taken from the shared temp
+			// directory, so a concurrent download would be counted too.
+			before := spoolFileCount(t)
+
+			srv := fakegitserver.New(t)
+			srv.OnGet("/repos/owner/repo/actions/runs/9876/artifacts", func(_ fakegitserver.Request) fakegitserver.Response {
+				return fakegitserver.Response{Status: http.StatusOK, Body: `{"total_count":1,"artifacts":[{"id":42,"name":"build-artifacts"}]}`}
+			})
+			srv.OnGet("/repos/owner/repo/actions/artifacts/42/zip", func(_ fakegitserver.Request) fakegitserver.Response {
+				return fakegitserver.Response{Status: http.StatusFound, Header: http.Header{"Location": []string{srv.URL() + "/blob/42"}}}
+			})
+			srv.OnGet("/blob/42", func(_ fakegitserver.Request) fakegitserver.Response { return tc.blob(srv) })
+
+			dir := t.TempDir()
+
+			p := &github.Provider{
+				Env:             envFunc(map[string]string{"GITHUB_REPOSITORY": "owner/repo"}),
+				APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
+			}
+
+			_, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{
+				Name: "build-artifacts", Dir: dir, RunID: "9876",
+			})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+
+			if got := spoolFileCount(t); got != before {
+				t.Errorf("spool files went from %d to %d; a failed download left its temporary archive behind", before, got)
+			}
+
+			entries, readErr := os.ReadDir(dir)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+
+			if len(entries) != 0 {
+				names := make([]string, 0, len(entries))
+				for _, e := range entries {
+					names = append(names, e.Name())
+				}
+
+				t.Errorf("a refused download published %v", names)
+			}
+		})
 	}
 }

@@ -5,12 +5,14 @@ package summary_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/github"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/gitlab"
 	appsummary "github.com/diggsweden/reusable-ci/v3/internal/app/summary"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 func TestReleaseSummary_HappyPath(t *testing.T) {
@@ -63,12 +65,12 @@ func TestReleaseSummary_HappyPath(t *testing.T) {
 		"| Build Gradle | − |",
 		"| Build Go | ✓ |",
 		"| Build Cargo | − |",
-		"| Publish GitHub | ✓ |",
+		"| Publish Forge Packages | ✓ |",
 		"| Publish Apple App Store | ✓ |",
 		"| Containers | ✓ |",
 		"| Cargo SBOM | ✓ |",
 		"| Go SBOM | ✗ |",
-		"| GitHub Release | ✓ |",
+		"| Forge Release | ✓ |",
 		"- [Release](https://github.com/owner/repo/releases/tag/v1.2.3)",
 		"- [Packages](https://github.com/owner/repo/packages)",
 		"- [Workflow Run](https://example.com/run/42)",
@@ -82,11 +84,22 @@ func TestReleaseSummary_HappyPath(t *testing.T) {
 func TestReleaseSummary_RejectsMalformedStageResultJSON(t *testing.T) {
 	t.Parallel()
 
-	err := appsummary.ReleaseSummary(context.Background(), &fakeSummarySink{}, appsummary.ReleaseSummaryInput{
+	sink := &fakeSummarySink{}
+
+	err := appsummary.ReleaseSummary(context.Background(), sink, appsummary.ReleaseSummaryInput{
 		PrepareStageJSON: `{"stage":"prepare","targets":{}}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "prepare-stage result-json") {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, errs.ErrMalformedInput) {
+		t.Fatalf("err = %v, want ErrMalformedInput", err)
+	}
+
+	// The message has to name which of the three stage inputs was bad.
+	if !strings.Contains(err.Error(), "prepare-stage result-json") {
+		t.Errorf("err = %v, want it to name the prepare stage", err)
+	}
+
+	if sink.buf.Len() != 0 {
+		t.Errorf("appended a summary despite the rejected input:\n%s", sink.buf.String())
 	}
 }
 
@@ -132,9 +145,57 @@ func TestReleaseSummary_MissingStageJSONsDefaultToSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// All rows render as − (skipped) when no stage JSONs and the release row
-	// is also "skipped".
-	if strings.Contains(sink.buf.String(), "| ✗ |") {
-		t.Errorf("no failures expected when all results are skipped: %s", sink.buf.String())
+	// The name is the claim: absent stage JSONs must render as skipped. The
+	// old check only ruled out ✗, which a summary that dropped the Job Status
+	// table altogether would also have satisfied.
+	body := sink.buf.String()
+	for _, want := range []string{
+		"| Version Bump | − |",
+		"| Build Maven | − |",
+		"| Containers | − |",
+		"| Forge Release | − |",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q\nfull:\n%s", want, body)
+		}
+	}
+
+	for _, unwanted := range []string{"| ✗ |", "| ✓ |"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("unexpected %q when every result is skipped:\n%s", unwanted, body)
+		}
+	}
+}
+
+// TestReleaseSummary_NoWebUIRendersNoBrokenLinks drives the whole summary on a
+// platform without a web UI and with no run URL, the case that produced
+// "[Release]((release: v1.2.3))", "[Packages]((packages))" and
+// "[Workflow Run]()".
+func TestReleaseSummary_NoWebUIRendersNoBrokenLinks(t *testing.T) {
+	t.Parallel()
+
+	sink := &fakeSummarySink{}
+	if err := appsummary.ReleaseSummary(context.Background(), sink, appsummary.ReleaseSummaryInput{
+		ReleaseVersion: "v1.2.3",
+		Repository:     "owner/repo",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := sink.buf.String()
+	for _, want := range []string{
+		"- Release: not available\n",
+		"- Packages: not available\n",
+		"- Workflow Run: not available\n",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("summary missing %q:\n%s", want, body)
+		}
+	}
+
+	for _, broken := range []string{"]((", "]()"} {
+		if strings.Contains(body, broken) {
+			t.Errorf("summary contains a malformed link %q:\n%s", broken, body)
+		}
 	}
 }

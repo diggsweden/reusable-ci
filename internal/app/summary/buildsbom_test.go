@@ -8,9 +8,28 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	appsummary "github.com/diggsweden/reusable-ci/v3/internal/app/summary"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
+
+func TestBuildSBOMStatus_AndroidGradleReportLayouts(t *testing.T) {
+	t.Parallel()
+
+	for _, report := range []string{"build/reports/bom.json", "build/reports/cyclonedx/bom.json", "app/build/reports/cyclonedx/bom.json"} {
+		t.Run(report, func(t *testing.T) {
+			t.Parallel()
+			fsys := testfs.NewReal(t)
+			path := fsys.WriteFile(report, []byte(`{"bomFormat":"CycloneDX","specVersion":"1.6","version":1,"components":[{"type":"library","name":"owned-fixture","version":"1.0"}]}`))
+			sink := &fakeSummarySink{}
+			require.NoError(t, appsummary.BuildSBOMStatus(t.Context(), sink, appsummary.BuildSBOMStatusInput{
+				Ecosystem: "gradle-android", Outcome: "success", WorkDir: fsys.Root,
+			}))
+			require.Equal(t, "### Build SBOM\n- \u2713 CycloneDX: `"+path+"`\n", sink.buf.String())
+		})
+	}
+}
 
 func TestBuildSBOMStatus_FindsMavenBOM(t *testing.T) {
 	t.Parallel()
@@ -43,12 +62,7 @@ func TestBuildSBOMStatus_ReportsMissingGradleBOM(t *testing.T) {
 	}
 }
 
-// TestBuildSBOMStatus_FailureBlocksRelease covers the failure-outcome
-// path. SBOMs are mandatory, so a non-success outcome means the
-// workflow has already failed before the status block ran (the report
-// step uses `if: always()` to surface the failure in the summary even
-// when the rest of the job has aborted).
-func TestBuildSBOMStatus_FailureBlocksRelease(t *testing.T) {
+func TestBuildSBOMStatus_FailureReportsReleaseBlocked(t *testing.T) {
 	t.Parallel()
 
 	sink := &fakeSummarySink{}
@@ -57,7 +71,20 @@ func TestBuildSBOMStatus_FailureBlocksRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := sink.buf.String(); !strings.Contains(got, "release blocked") {
+	if got := sink.buf.String(); !strings.Contains(got, "release blocked") || strings.Contains(got, "release continues") {
+		t.Errorf("summary = %s", got)
+	}
+}
+
+func TestBuildSBOMStatus_SkippedReportsDisabled(t *testing.T) {
+	t.Parallel()
+
+	sink := &fakeSummarySink{}
+	if err := appsummary.BuildSBOMStatus(context.Background(), sink, appsummary.BuildSBOMStatusInput{Ecosystem: "npm", Outcome: "skipped"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := sink.buf.String(); !strings.Contains(got, "Generation disabled") {
 		t.Errorf("summary = %s", got)
 	}
 }

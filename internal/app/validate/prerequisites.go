@@ -15,10 +15,12 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	domainsummary "github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 	domainversion "github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
 
@@ -58,6 +60,7 @@ type PrerequisitesInput struct {
 	// fails closed (ErrPermissionDenied → exit 77).
 	RequireAllowlistedSigner bool
 	SignArtifacts            bool
+	RequiresGPGSigning       bool
 	HasMavenCentralTarget    bool
 	HasCargoTarget           bool
 	HasJVMTarget             bool // any Maven, Gradle, or Gradle-Android artifact in the plan
@@ -87,7 +90,8 @@ type PrerequisitesInput struct {
 // carry SkipReason; passed validators carry a one-line note; failed
 // validators carry the captured error.
 type PrerequisitesResult struct {
-	Checks []ValidatorOutcome
+	Checks             []ValidatorOutcome
+	ExistingReleaseSHA string
 }
 
 // HasFailures reports whether any validator returned an error.
@@ -123,6 +127,7 @@ var checkOrder = []string{
 	"tag-uniqueness",
 	"tag-commit",
 	"tag-signature",
+	"final-tag-rerun",
 	"gpg-public-key",
 	"release-token",
 	"bot-permissions",
@@ -156,11 +161,29 @@ func Prerequisites(
 		return PrerequisitesResult{}, fmt.Errorf("Prerequisites requires GitRepo and Provider deps: %w", errs.ErrUsage)
 	}
 
+	if in.HasCargoTarget && deps.Cargo == nil {
+		return PrerequisitesResult{}, fmt.Errorf("Prerequisites requires the Cargo dep for a Cargo target: %w", errs.ErrUsage)
+	}
+
 	checks := newCheckRegistry()
+
+	// Every check below runs in the errgroup and several of them annotate, so
+	// they would otherwise write to one io.Writer from several goroutines.
+	annot = annot.Concurrent()
+
 	g, gctx := errgroup.WithContext(ctx) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 
-	// Tag-related validators only apply when triggered by a tag.
-	tagTrigger := strings.EqualFold(in.RefType, "tag")
+	// Tag-related validators only apply when triggered by a tag. The same
+	// exact comparison the ref-type check makes: folding case here ran the
+	// tag suite, git reads included, for a ref type that check then refused.
+	tagTrigger := provider.RefType(in.RefType) == provider.RefTypeTag
+
+	finalTag, existingReleaseSHA, err := releaseRequestFinalTag(ctx, deps.GitRepo, tagTrigger, in.Tag)
+	if err != nil {
+		return PrerequisitesResult{}, err
+	}
+
+	finalTagExists := existingReleaseSHA != ""
 
 	// Ref-type itself is always validated — it's how we know whether
 	// the tag suite should run.
@@ -169,46 +192,21 @@ func Prerequisites(
 	})
 
 	if tagTrigger {
-		// The human pushes a signed `release-request/vX.Y.Z` ref: that tag is
-		// the object that exists and carries the signature, so signature /
-		// uniqueness / commit-reachability all run against it (in.Tag). Only
-		// the *format* check validates the derived final tag (vX.Y.Z) — the
-		// release tag the bot will create.
-		formatTag := in.Tag
-		if final, ok := domainversion.ReleaseRequestVersion(in.Tag); ok {
-			formatTag = final
-		}
-
-		checks.run(gctx, g, "tag-format", func(_ context.Context, out *bytes.Buffer) error {
-			return TagFormat(out, TagFormatInput{Tag: formatTag})
-		})
-		checks.run(gctx, g, "tag-uniqueness", func(c context.Context, out *bytes.Buffer) error {
-			return TagUniqueness(c, deps.GitRepo, out, TagUniquenessInput{Tag: in.Tag})
-		})
-		checks.run(gctx, g, "tag-commit", func(c context.Context, out *bytes.Buffer) error {
-			return TagCommit(c, deps.GitRepo, out, TagCommitInput{Tag: in.Tag, Branch: in.Branch})
-		})
-		checks.run(gctx, g, "tag-signature", func(c context.Context, out *bytes.Buffer) error {
-			return TagSignature(c, deps.GitRepo, out, annot, TagSignatureInput{
-				Tag:                      in.Tag,
-				Repository:               in.Repository,
-				ReleaseGPGPublicKey:      []byte(in.ReleaseGPGPublicKey),
-				RequireAllowlistedSigner: in.RequireAllowlistedSigner,
-			})
-		})
+		scheduleTagPrerequisites(gctx, g, checks, deps.GitRepo, annot, in, finalTag, finalTagExists)
 	} else {
 		checks.skip("tag-format", "non-tag ref")
 		checks.skip("tag-uniqueness", "non-tag ref")
 		checks.skip("tag-commit", "non-tag ref")
 		checks.skip("tag-signature", "non-tag ref")
+		checks.skip("final-tag-rerun", "non-tag ref")
 	}
 
-	if in.SignArtifacts {
+	if in.RequiresGPGSigning {
 		checks.run(gctx, g, "gpg-public-key", func(_ context.Context, out *bytes.Buffer) error {
 			return GPGPublicKey(out, in.ReleaseGPGPublicKey)
 		})
 	} else {
-		checks.skip("gpg-public-key", "sign-artifacts disabled")
+		checks.skip("gpg-public-key", "neither artifact nor git-object signing uses GPG")
 	}
 
 	// Release-token + bot-permissions are network probes; they race.
@@ -258,6 +256,8 @@ func Prerequisites(
 	_ = g.Wait()
 
 	result := checks.collect()
+
+	result.ExistingReleaseSHA = existingReleaseSHA
 	for _, c := range result.Checks {
 		if c.Output != "" {
 			_, _ = fmt.Fprint(w, c.Output)
@@ -269,18 +269,159 @@ func Prerequisites(
 	}
 
 	if result.HasFailures() {
-		var failed []string
+		var (
+			failed []string
+			causes []error
+		)
 
 		for _, c := range result.Checks {
 			if c.Err != nil {
 				failed = append(failed, c.Name)
+				causes = append(causes, c.Err)
 			}
 		}
 
-		return result, fmt.Errorf("prerequisites failed: %s: %w", strings.Join(failed, ", "), errs.ErrValidation)
+		return result, fmt.Errorf("prerequisites failed: %s: %w", strings.Join(failed, ", "), errors.Join(causes...))
 	}
 
 	return result, nil
+}
+
+type tagExistenceOps interface {
+	TagExists(ctx context.Context, tag string) (bool, error)
+}
+
+func releaseRequestFinalTag(ctx context.Context, repo gitOps, tagTrigger bool, tag string) (string, string, error) {
+	if !tagTrigger {
+		return "", "", nil
+	}
+
+	finalTag, releaseRequest := domainversion.ReleaseRequestVersion(tag)
+	if !releaseRequest {
+		return "", "", nil
+	}
+
+	checker, ok := repo.(tagExistenceOps)
+	if !ok {
+		return "", "", fmt.Errorf("prerequisite git dependency cannot check final-tag existence: %w", errs.ErrUsage)
+	}
+
+	exists, err := checker.TagExists(ctx, finalTag)
+	if err != nil {
+		return "", "", fmt.Errorf("check existing final tag %s: %w", finalTag, err)
+	}
+
+	if !exists {
+		return finalTag, "", nil
+	}
+
+	releaseSHA, err := repo.RevParse(ctx, "refs/tags/"+finalTag+"^{commit}")
+	if err != nil {
+		return "", "", fmt.Errorf("resolve existing final tag %s: %w", finalTag, err)
+	}
+
+	return finalTag, strings.TrimSpace(releaseSHA), nil
+}
+
+func scheduleTagPrerequisites(
+	ctx context.Context,
+	group *errgroup.Group,
+	checks *checkRegistry,
+	repo gitOps,
+	annot output.Annotator,
+	in PrerequisitesInput,
+	finalTag string,
+	finalTagExists bool,
+) {
+	// The request tag carries the human signature. Only the format check uses
+	// the derived final tag that release preparation creates.
+	formatTag := in.Tag
+	if finalTag != "" {
+		formatTag = finalTag
+	}
+
+	ignoreCollidingTag := ""
+	if finalTagExists {
+		ignoreCollidingTag = finalTag
+	}
+
+	checks.run(ctx, group, "tag-format", func(_ context.Context, out *bytes.Buffer) error {
+		return TagFormat(out, TagFormatInput{Tag: formatTag})
+	})
+	checks.run(ctx, group, "tag-uniqueness", func(checkCtx context.Context, out *bytes.Buffer) error {
+		return TagUniqueness(checkCtx, repo, out, TagUniquenessInput{Tag: in.Tag, IgnoreTag: ignoreCollidingTag})
+	})
+	checks.run(ctx, group, "tag-commit", func(checkCtx context.Context, out *bytes.Buffer) error {
+		return TagCommit(checkCtx, repo, out, TagCommitInput{
+			Tag:         in.Tag,
+			Branch:      in.Branch,
+			RequireHead: finalTag != "" && !finalTagExists,
+		})
+	})
+	checks.run(ctx, group, "tag-signature", func(checkCtx context.Context, out *bytes.Buffer) error {
+		return TagSignature(checkCtx, repo, out, annot, TagSignatureInput{
+			Tag:                      in.Tag,
+			Repository:               in.Repository,
+			ReleaseGPGPublicKey:      []byte(in.ReleaseGPGPublicKey),
+			RequireAllowlistedSigner: in.RequireAllowlistedSigner,
+		})
+	})
+
+	if !finalTagExists {
+		checks.skip("final-tag-rerun", "final release tag does not exist")
+
+		return
+	}
+
+	checks.run(ctx, group, "final-tag-rerun", func(checkCtx context.Context, out *bytes.Buffer) error {
+		if err := requireReleasedFromRequest(checkCtx, repo, out, in.Tag, finalTag); err != nil {
+			return err
+		}
+
+		if err := TagCommit(checkCtx, repo, out, TagCommitInput{
+			Tag:         finalTag,
+			Branch:      in.Branch,
+			RequireHead: true,
+		}); err != nil {
+			return fmt.Errorf("existing final tag is not the current release commit: %w", err)
+		}
+
+		return TagSignature(checkCtx, repo, out, annot, TagSignatureInput{
+			Tag:                   finalTag,
+			Repository:            in.Repository,
+			ReleaseGPGPublicKey:   []byte(in.ReleaseGPGPublicKey),
+			RequireValidSignature: true,
+		})
+	})
+}
+
+// requireReleasedFromRequest refuses an existing final tag that was not
+// released from the commit the signed request tag names. Release preparation
+// commits the version bump directly on the request commit, so the final tag's
+// commit has that commit as its parent. Without this, an existing final tag at
+// the branch head and signed by the release key was reused for any request of
+// the same version, whatever commit the human had signed.
+func requireReleasedFromRequest(ctx context.Context, repo gitOps, out io.Writer, requestTag, finalTag string) error {
+	requestCommit, err := repo.RevParse(ctx, "refs/tags/"+requestTag+"^{commit}")
+	if err != nil {
+		return fmt.Errorf("resolve release request %s: %w", requestTag, err)
+	}
+
+	releasedFrom, err := repo.RevParse(ctx, "refs/tags/"+finalTag+"^{commit}^")
+	if err != nil {
+		return fmt.Errorf("resolve the commit existing final tag %s was released from: %w", finalTag, err)
+	}
+
+	requestCommit, releasedFrom = strings.TrimSpace(requestCommit), strings.TrimSpace(releasedFrom)
+	if requestCommit != releasedFrom {
+		return fmt.Errorf(
+			"existing final tag %s was released from %s, not from release request %s at %s; choose a new version: %w",
+			finalTag, releasedFrom, requestTag, requestCommit, errs.ErrValidation)
+	}
+
+	_, _ = fmt.Fprintf(out, "%s Existing final tag %s was released from request %s (%s)\n", clicolor.Check(out), finalTag, requestTag, requestCommit)
+
+	return nil
 }
 
 // checkRegistry collects the outcome of each validator. Concurrent
@@ -365,7 +506,8 @@ func canonicalIndex(name string) int {
 }
 
 // WritePrerequisitesSummary writes a human-readable summary to the
-// step-summary sink. Used by the `validate prerequisites` CLI to
+// step-summary sink. Error text and warning lines carry tag names, paths and
+// tool output, so every value is written as literal text. Used by the `validate prerequisites` CLI to
 // produce the equivalent of the workflow's old per-step UI ticks in
 // one consolidated table.
 func WritePrerequisitesSummary(ctx context.Context, sink ci.SummarySink, result PrerequisitesResult) error {
@@ -386,7 +528,7 @@ func WritePrerequisitesSummary(ctx context.Context, sink ci.SummarySink, result 
 			status = "✓ Passed"
 		}
 
-		_, _ = fmt.Fprintf(&b, "| %s | %s |\n", c.Name, status)
+		_, _ = fmt.Fprintf(&b, "| %s | %s |\n", domainsummary.LiteralText(c.Name), domainsummary.LiteralText(status))
 	}
 
 	if result.HasFailures() {
@@ -394,7 +536,7 @@ func WritePrerequisitesSummary(ctx context.Context, sink ci.SummarySink, result 
 
 		for _, c := range result.Checks {
 			if c.Err != nil {
-				_, _ = fmt.Fprintf(&b, "- **%s**: %s\n", c.Name, errorOneLine(c.Err))
+				_, _ = fmt.Fprintf(&b, "- **%s**: %s\n", domainsummary.LiteralText(c.Name), domainsummary.LiteralText(errorOneLine(c.Err)))
 			}
 		}
 	}
@@ -403,7 +545,7 @@ func WritePrerequisitesSummary(ctx context.Context, sink ci.SummarySink, result 
 		b.WriteString("\n> [!WARNING]\n")
 
 		for _, w := range warnings {
-			_, _ = fmt.Fprintf(&b, "> %s\n", w)
+			_, _ = fmt.Fprintf(&b, "> %s\n", domainsummary.LiteralText(w))
 		}
 	}
 
@@ -445,7 +587,3 @@ func errorOneLine(err error) string {
 
 	return ""
 }
-
-// ignoreErrgroupResult is unused; reserved for a future when we want
-// errgroup cancellation on first failure. Left here as a marker.
-var _ = errors.Is

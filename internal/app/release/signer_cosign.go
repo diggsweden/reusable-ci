@@ -19,11 +19,11 @@ import (
 // for KMS, OIDCIssuer for Sigstore). SignFile then dispatches to
 // `cosign sign-blob` with the right argv each time.
 //
-// The struct is small and immutable after construction — it carries
-// no secret material (the OIDC token lives in cosign's subprocess,
-// the KMS private key lives in the KMS provider). This is why the
-// swap-refusal policy does NOT apply to the cosign signing path:
-// there is no decrypted key in our heap to leak.
+// The struct is small and immutable after construction: it carries a key
+// reference, not key bytes. OIDC tokens and remote KMS keys stay with cosign or
+// the provider; for a local key-file reference, cosign reads the file in its
+// subprocess. The swap-refusal policy does not apply because no decrypted key
+// enters this process's Go heap.
 type CosignSigner struct {
 	adapter         cosignSignBlobber
 	method          domainrelease.SignMethod
@@ -60,12 +60,13 @@ type CosignSignerInput struct {
 	OIDCIssuer string
 
 	// FulcioURL and RekorURL point keyless signing at a self-hosted
-	// Sigstore. Empty uses cosign's defaults. Both are forbidden when
-	// Method == SignMethodKMS, which contacts no Sigstore service at all.
+	// Sigstore. Empty uses cosign's defaults. Both overrides are forbidden for
+	// KMS; the adapter's transparency mode still decides whether KMS signing
+	// publishes to the default public Rekor log.
 	FulcioURL string
 	RekorURL  string
 
-	// TrustedRootPath is cosign's trusted-root document, needed to verify
+	// TrustedRootPath is forbidden for KMS. It is cosign's trusted-root document, needed to verify
 	// against a self-hosted CA; sigstore-only.
 	TrustedRootPath string
 }
@@ -80,23 +81,20 @@ func NewCosignSigner(adapter cosignSignBlobber, in CosignSignerInput, errOut io.
 	switch in.Method {
 	case domainrelease.SignMethodSigstore:
 		if in.KeyRef != "" {
-			return nil, fmt.Errorf("cosign signer (sigstore): KeyRef forbidden (got %q): %w", in.KeyRef, errs.ErrUsage)
+			return nil, fmt.Errorf("cosign signer (sigstore): KeyRef forbidden: %w", errs.ErrUsage)
 		}
 	case domainrelease.SignMethodKMS:
 		if in.KeyRef == "" {
 			return nil, fmt.Errorf("cosign signer (kms): KeyRef is required: %w", errs.ErrUsage)
 		}
 
-		if in.OIDCIssuer != "" {
-			return nil, fmt.Errorf("cosign signer (kms): OIDCIssuer forbidden (got %q): %w", in.OIDCIssuer, errs.ErrUsage)
-		}
-
-		if in.FulcioURL != "" {
-			return nil, fmt.Errorf("cosign signer (kms): FulcioURL forbidden (got %q): %w", in.FulcioURL, errs.ErrUsage)
-		}
-
-		if in.RekorURL != "" {
-			return nil, fmt.Errorf("cosign signer (kms): RekorURL forbidden (got %q): %w", in.RekorURL, errs.ErrUsage)
+		for _, field := range []struct{ name, value string }{
+			{"OIDCIssuer", in.OIDCIssuer}, {"FulcioURL", in.FulcioURL},
+			{"RekorURL", in.RekorURL}, {"TrustedRootPath", in.TrustedRootPath},
+		} {
+			if field.value != "" {
+				return nil, fmt.Errorf("cosign signer (kms): %s forbidden: %w", field.name, errs.ErrUsage)
+			}
 		}
 	default:
 		return nil, fmt.Errorf(
@@ -117,9 +115,9 @@ func NewCosignSigner(adapter cosignSignBlobber, in CosignSignerInput, errOut io.
 	}, nil
 }
 
-// Extensions reports the sidecar files this signer produces. Both
-// cosign methods emit a single v3 bundle sidecar that wraps
-// signature + (keyless only) Fulcio cert + Rekor proof.
+// Extensions reports the sidecar files this signer produces. Both cosign
+// methods emit a single v3 bundle sidecar containing the signature, an optional
+// keyless Fulcio certificate, and a Rekor proof when transparency is enabled.
 func (s *CosignSigner) Extensions() []string { return s.method.SignatureExtensions() }
 
 // SignFile invokes `cosign sign-blob` against file. The v3 bundle

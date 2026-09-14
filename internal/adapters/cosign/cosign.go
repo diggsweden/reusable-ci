@@ -282,7 +282,20 @@ func (a *Adapter) PublicKey(ctx context.Context, keyRef string, out, errOut io.W
 		return fmt.Errorf("cosign public-key: key reference is empty: %w", errs.ErrUsage)
 	}
 
-	return a.runWithStdout(ctx, out, errOut, "public-key", "--key", keyRef)
+	var key bytes.Buffer
+	if err := a.runWithStdout(ctx, &key, errOut, "public-key", "--key", keyRef); err != nil {
+		return err
+	}
+
+	if out == nil {
+		return nil
+	}
+
+	if _, err := io.Copy(out, &key); err != nil {
+		return fmt.Errorf("write cosign public key: %w", err)
+	}
+
+	return nil
 }
 
 // AttestImage runs `cosign attest`, producing a signed in-toto
@@ -564,7 +577,7 @@ func (a *Adapter) runWithStdout(ctx context.Context, out, errOut io.Writer, args
 	}
 
 	if err != nil {
-		return fmt.Errorf("cosign %s: %w", strings.Join(args, " "), err)
+		return safeexec.WrapError(err, a.bin(), safeexec.FirstArg(args))
 	}
 
 	return nil

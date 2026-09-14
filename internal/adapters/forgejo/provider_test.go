@@ -24,7 +24,7 @@ func envMap(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
 }
 
-func TestName(t *testing.T) {
+func TestName_IsForgejo(t *testing.T) {
 	t.Parallel()
 
 	if got := forgejo.New().Name(); got != provider.ForgeForgejo {
@@ -88,7 +88,7 @@ func TestResolveContext_GitHubFallback(t *testing.T) {
 	}
 }
 
-func TestDescribe(t *testing.T) {
+func TestDescribe_ReportsDisplayNameAndServerURL(t *testing.T) {
 	t.Parallel()
 
 	p := &forgejo.Provider{Env: envMap(map[string]string{"FORGEJO_SERVER_URL": "https://git.example.org"})}
@@ -107,7 +107,7 @@ func TestDescribe(t *testing.T) {
 	}
 }
 
-func TestCapabilities(t *testing.T) {
+func TestCapabilities_AdvertisesReleaseAssetsButNotSARIF(t *testing.T) {
 	t.Parallel()
 
 	caps := forgejo.New().Capabilities()
@@ -125,18 +125,34 @@ func TestCapabilities(t *testing.T) {
 }
 
 // newProvider wires a Provider at the test server with a fixed token.
-func newProvider(srv *httptest.Server) *forgejo.Provider {
+// newProvider serves handler in memory: each request is answered through a
+// recorder, so no listener is opened and the handler sees exactly what the
+// adapter sent.
+func newProvider(handler http.Handler) *forgejo.Provider {
 	return &forgejo.Provider{
 		Env:             envMap(map[string]string{"FORGEJO_TOKEN": "tok", "FORGEJO_REPOSITORY": "itiquette/repo"}),
-		HTTPClient:      srv.Client(),
-		APIBaseOverride: srv.URL,
+		HTTPClient:      inMemoryClient(handler),
+		APIBaseOverride: "https://forgejo.invalid",
 	}
+}
+
+// inMemoryClient answers every request with handler through a recorder.
+func inMemoryClient(handler http.Handler) *http.Client {
+	return &http.Client{Transport: releaseAssetTransport(func(req *http.Request) (*http.Response, error) {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+
+		response := recorder.Result()
+		response.Request = req
+
+		return response, nil
+	})}
 }
 
 func TestValidateToken_OK(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/itiquette/repo" {
 			_, _ = w.Write([]byte(`{"description":"d","html_url":"https://codeberg.org/itiquette/repo"}`))
 
@@ -144,10 +160,9 @@ func TestValidateToken_OK(t *testing.T) {
 		}
 
 		http.Error(w, "unexpected", http.StatusNotFound)
-	}))
-	defer srv.Close()
+	})
 
-	if err := newProvider(srv).ValidateToken(context.Background(), "tok", "itiquette/repo"); err != nil {
+	if err := newProvider(handler).ValidateToken(context.Background(), "tok", "itiquette/repo"); err != nil {
 		t.Fatalf("ValidateToken = %v", err)
 	}
 }
@@ -155,18 +170,39 @@ func TestValidateToken_OK(t *testing.T) {
 func TestValidateToken_Unauthorized(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "bad token", http.StatusUnauthorized)
-	}))
-	defer srv.Close()
+	})
 
-	err := newProvider(srv).ValidateToken(context.Background(), "tok", "itiquette/repo")
+	err := newProvider(handler).ValidateToken(context.Background(), "tok", "itiquette/repo")
 	if err == nil {
 		t.Fatal("expected error on 401")
 	}
 
 	if !errors.Is(err, errs.ErrPermissionDenied) {
 		t.Errorf("want permission-denied class, got %v", err)
+	}
+}
+
+// TestValidateToken_StatusKeepsItsExitClass pins what a caller scripts
+// against: a refused credential exits no-permission (77) and a repository the
+// token cannot see exits no-input (66), matching the GitLab adapter.
+func TestValidateToken_StatusKeepsItsExitClass(t *testing.T) {
+	t.Parallel()
+
+	for status, want := range map[int]errs.ExitCodeType{401: errs.ExitCodeNoPerm, 403: errs.ExitCodeNoPerm, 404: errs.ExitCodeNoInput} {
+		handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "refused", status)
+		})
+
+		err := newProvider(handler).ValidateToken(context.Background(), "synthetic-forgejo-secret", "itiquette/repo")
+		if got := errs.ExitCodeFromError(err); got != want {
+			t.Errorf("HTTP %d exits %d, want %d", status, got, want)
+		}
+
+		if strings.Contains(err.Error(), "synthetic-forgejo-secret") {
+			t.Errorf("HTTP %d refusal echoes the token: %v", status, err)
+		}
 	}
 }
 
@@ -179,15 +215,14 @@ func TestValidateToken_EmptyToken(t *testing.T) {
 	}
 }
 
-func TestFetchRepoMetadata(t *testing.T) {
+func TestFetchRepoMetadata_ReadsDescriptionURLAndObjectFormat(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"description":"a linter","html_url":"https://codeberg.org/itiquette/repo","object_format_name":"sha256"}`))
-	}))
-	defer srv.Close()
+	})
 
-	md, err := newProvider(srv).FetchRepoMetadata(context.Background(), "itiquette/repo")
+	md, err := newProvider(handler).FetchRepoMetadata(context.Background(), "itiquette/repo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +251,7 @@ func TestCreateRelease_CreatesAndUploadsAssets(t *testing.T) {
 		uploadedAsset  bool
 	)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		// No existing release at this tag.
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/releases/tags/"):
@@ -234,10 +269,9 @@ func TestCreateRelease_CreatesAndUploadsAssets(t *testing.T) {
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
-	err := newProvider(srv).CreateRelease(context.Background(), "itiquette/repo", provider.ReleaseSpec{
+	err := newProvider(handler).CreateRelease(context.Background(), "itiquette/repo", provider.ReleaseSpec{
 		Tag:    "v1.0.0",
 		Name:   "v1.0.0",
 		Assets: []string{asset},
@@ -275,7 +309,7 @@ func TestPublishRelease_UpdatesExistingReleaseAndReconcilesAssets(t *testing.T) 
 
 	var calls []string
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 
 		switch {
@@ -304,10 +338,9 @@ func TestPublishRelease_UpdatesExistingReleaseAndReconcilesAssets(t *testing.T) 
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.String(), http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
-	err := newProvider(srv).PublishRelease(context.Background(), "itiquette/repo", provider.ReleaseSpec{
+	err := newProvider(handler).PublishRelease(context.Background(), "itiquette/repo", provider.ReleaseSpec{
 		Tag:       "v1.2.3",
 		Name:      "repo v1.2.3",
 		NotesFile: notes,
@@ -324,8 +357,14 @@ func TestPublishRelease_UpdatesExistingReleaseAndReconcilesAssets(t *testing.T) 
 	assertCallPresent(t, calls, "DELETE /api/v1/repos/itiquette/repo/releases/99/assets/2")
 	assertCallAbsent(t, calls, "DELETE /api/v1/repos/itiquette/repo/releases/99")
 
-	if indexCall(calls, "DELETE /api/v1/repos/itiquette/repo/releases/99/assets/1") > indexCall(calls, "POST /api/v1/repos/itiquette/repo/releases/99/assets") {
-		t.Fatalf("colliding asset was not deleted before upload: %v", calls)
+	// Replacement uploads before it deletes, for both the colliding asset and
+	// the stale one. Deleting first would mean a failed upload leaves the
+	// release with neither the old asset nor the new one; uploading first can
+	// at worst leave two, and a delete that fails is reported rather than
+	// leaving that duplicate unremarked. Losing a published asset is the worse
+	// outcome of the two, so this is the order.
+	if indexCall(calls, "DELETE /api/v1/repos/itiquette/repo/releases/99/assets/1") < indexCall(calls, "POST /api/v1/repos/itiquette/repo/releases/99/assets") {
+		t.Fatalf("colliding asset was deleted before its replacement uploaded: %v", calls)
 	}
 
 	if indexCall(calls, "DELETE /api/v1/repos/itiquette/repo/releases/99/assets/2") < indexCall(calls, "POST /api/v1/repos/itiquette/repo/releases/99/assets") {
@@ -348,7 +387,7 @@ func TestPublishRelease_CreatesMissingRelease(t *testing.T) {
 
 	var calls []string
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls = append(calls, r.Method+" "+r.URL.Path)
 
 		switch {
@@ -372,10 +411,9 @@ func TestPublishRelease_CreatesMissingRelease(t *testing.T) {
 		default:
 			http.Error(w, "unexpected "+r.Method+" "+r.URL.String(), http.StatusNotFound)
 		}
-	}))
-	defer srv.Close()
+	})
 
-	err := newProvider(srv).PublishRelease(context.Background(), "itiquette/repo", provider.ReleaseSpec{
+	err := newProvider(handler).PublishRelease(context.Background(), "itiquette/repo", provider.ReleaseSpec{
 		Tag:       "v1.2.3",
 		Name:      "repo v1.2.3",
 		NotesFile: notes,
@@ -425,4 +463,64 @@ func indexCall(calls []string, want string) int {
 	}
 
 	return -1
+}
+
+// TestCreateRelease_UnreadableNotesFileFailsBeforeAnyRequest pins that a
+// notes file that cannot be read fails the create instead of shipping the
+// release with its name as the body, matching GitHub and PublishRelease.
+func TestCreateRelease_UnreadableNotesFileFailsBeforeAnyRequest(t *testing.T) {
+	t.Parallel()
+
+	requests := 0
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	})
+
+	err := newProvider(handler).CreateRelease(context.Background(), "itiquette/repo", provider.ReleaseSpec{
+		Tag:       "v1.0.0",
+		Name:      "v1.0.0",
+		NotesFile: filepath.Join(t.TempDir(), "missing-notes.md"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "release notes") {
+		t.Fatalf("CreateRelease = %v, want a read-notes failure", err)
+	}
+
+	if requests != 0 {
+		t.Errorf("%d request(s) were sent although the notes could not be read", requests)
+	}
+}
+
+// TestCreateRelease_LookupFailureIsNotTreatedAsAbsent pins that only a 404
+// on the existing-release lookup means "nothing to replace": an outage or
+// auth failure there is reported, not read as an absent release.
+func TestCreateRelease_LookupFailureIsNotTreatedAsAbsent(t *testing.T) {
+	t.Parallel()
+
+	created := false
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/releases/tags/"):
+			http.Error(w, "forbidden", http.StatusForbidden)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/releases"):
+			created = true
+
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":42,"tag_name":"v1.0.0"}`))
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusNotFound)
+		}
+	})
+
+	err := newProvider(handler).CreateRelease(context.Background(), "itiquette/repo", provider.ReleaseSpec{Tag: "v1.0.0", Name: "v1.0.0"})
+	if !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("CreateRelease = %v, want the lookup's ErrPermissionDenied", err)
+	}
+
+	if created {
+		t.Error("a release was created although the existing-release lookup failed")
+	}
 }

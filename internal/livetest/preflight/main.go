@@ -4,6 +4,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -33,22 +35,7 @@ func main() { //nolint:cyclop // Two strict flag modes share one small provider-
 			usage()
 		}
 
-		verify := livetest.VerifyCleanupBindings
-		if *runCleanup {
-			verify = livetest.RunFrozenCleanup
-		}
-
-		if err := verify(
-			*cleanupCommand,
-			*cleanupCommandFacts,
-			*cleanupContractFile,
-			*cleanupContractFileFacts,
-		); err != nil {
-			fmt.Fprintf(os.Stderr, "live cleanup verifier: %v\n", err)
-			os.Exit(2)
-		}
-
-		return
+		os.Exit(runCleanupMode(*runCleanup, *cleanupCommand, *cleanupCommandFacts, *cleanupContractFile, *cleanupContractFileFacts))
 	}
 
 	if *outputDir == "" || *cleanupCommand != "" || *cleanupCommandFacts != "" ||
@@ -64,6 +51,39 @@ func main() { //nolint:cyclop // Two strict flag modes share one small provider-
 
 	fmt.Printf("live preflight: %d provider(s), generation %s, namespace %s\n",
 		summary.Selected, summary.Generation, livetest.ResourcePrefix)
+}
+
+// runCleanupMode verifies, or verifies and launches, the frozen cleanup pair.
+// It exits 2 for a refusal before launch and 3 when a launched cleanup failed
+// or was stopped at its bound, so the runner can say which happened.
+func runCleanupMode(launch bool, command, commandFacts, contractFile, contractFileFacts string) int {
+	if !launch {
+		if err := livetest.VerifyCleanupBindings(command, commandFacts, contractFile, contractFileFacts); err != nil {
+			fmt.Fprintf(os.Stderr, "live cleanup verifier: %v\n", err)
+
+			return 2
+		}
+
+		return 0
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), livetest.FrozenCleanupTimeout)
+	defer cancel()
+
+	err := livetest.RunFrozenCleanup(ctx, command, commandFacts, contractFile, contractFileFacts)
+
+	switch {
+	case err == nil:
+		return 0
+	case errors.Is(err, livetest.ErrFrozenCleanupFailed):
+		fmt.Fprintf(os.Stderr, "live cleanup launcher: %v\n", err)
+
+		return 3
+	default:
+		fmt.Fprintf(os.Stderr, "live cleanup verifier: %v\n", err)
+
+		return 2
+	}
 }
 
 func usage() {

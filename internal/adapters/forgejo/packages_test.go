@@ -6,7 +6,6 @@ package forgejo_test
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
@@ -22,7 +21,7 @@ func TestListContainerPackageVersions_FiltersContainerPackageVersions(t *testing
 		gotQuery string
 	)
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotQuery = r.URL.RawQuery
 
@@ -33,13 +32,12 @@ func TestListContainerPackageVersions_FiltersContainerPackageVersions(t *testing
 {"type":"generic","name":"nanolinter-base","version":"ignored"},
 {"type":"container","name":"other","version":"ignored"}
 ]`))
-	}))
-	defer srv.Close()
+	})
 
 	p := &forgejo.Provider{
 		Env:             envMap(map[string]string{"FORGEJO_TOKEN": "tok"}),
-		HTTPClient:      srv.Client(),
-		APIBaseOverride: srv.URL,
+		HTTPClient:      inMemoryClient(handler),
+		APIBaseOverride: "https://forgejo.invalid",
 	}
 
 	got, err := p.ListContainerPackageVersions(context.Background(), "itiquette", "nanolinter-base")

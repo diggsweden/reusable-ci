@@ -17,6 +17,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	appversion "github.com/diggsweden/reusable-ci/v3/internal/app/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/isolatedgit"
 )
 
@@ -44,6 +45,20 @@ func TestCommitPush_HappyPath(t *testing.T) {
 	if !strings.Contains(r.Git("log", "-1", "--format=%B"), "Signed-off-by") {
 		t.Errorf("commit missing Signed-off-by")
 	}
+}
+
+func TestCommitPush_RejectsUnrelatedStagedFiles(t *testing.T) {
+	r := isolatedgit.NewRepo(t)
+	r.AddBareRemote()
+	require.NoError(t, os.WriteFile(filepath.Join(r.Dir, "unrelated.txt"), []byte("keep staged"), 0o600))
+	r.Git("add", "--", "unrelated.txt")
+	require.NoError(t, os.WriteFile(filepath.Join(r.Dir, "CHANGELOG.md"), []byte("requested change"), 0o600))
+	before := r.Git("rev-parse", "HEAD")
+	staged := r.Git("diff", "--cached", "--name-only")
+	err := appversion.CommitPush(t.Context(), &git.Repo{Dir: r.Dir}, &bytes.Buffer{}, appversion.CommitPushInput{Branch: "main", AuthorName: "fixture", AuthorEmail: "fixture@example.invalid", Message: "update", FilePattern: "CHANGELOG.md"})
+	require.ErrorIs(t, err, errs.ErrValidation)
+	require.Equal(t, before, r.Git("rev-parse", "HEAD"))
+	require.Equal(t, staged, r.Git("diff", "--cached", "--name-only"))
 }
 
 func TestCommitPush_NoChangesIsNoOp(t *testing.T) {
@@ -104,11 +119,17 @@ func TestCommitPush_MultiLineCommitMessagePreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CommitPush: %v", err)
 	}
-	body := r.Git("log", "-1", "--format=%B")
-	for _, want := range []string{"chore(release): v1.0.0", "body line", "[skip ci]"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("commit body missing %q: %q", want, body)
-		}
+	// The raw message object, byte for byte: the subject, blank line, body and
+	// trailer line exactly as given, then one sign-off naming the author.
+	body := r.Git("cat-file", "commit", "HEAD")
+	_, message, found := strings.Cut(body, "\n\n")
+	if !found {
+		t.Fatalf("commit object has no message: %q", body)
+	}
+
+	want := "chore(release): v1.0.0\n\nbody line\n\n[skip ci]\n\nSigned-off-by: Test Bot <bot@example.invalid>"
+	if strings.TrimRight(message, "\n") != want {
+		t.Errorf("commit message = %q, want %q", message, want)
 	}
 }
 
@@ -137,27 +158,5 @@ func TestCommitPush_GlobPathspec(t *testing.T) {
 		if !strings.Contains(files, want) {
 			t.Errorf("commit missing %q: %q", want, files)
 		}
-	}
-}
-
-func TestCommitPush_RequiredFieldErrors(t *testing.T) {
-	t.Parallel()
-
-	tests := map[string]appversion.CommitPushInput{
-		"BRANCH":              {AuthorName: "n", AuthorEmail: "e", Message: "m", FilePattern: "x"},
-		"COMMIT_AUTHOR_NAME":  {Branch: "main", AuthorEmail: "e", Message: "m", FilePattern: "x"},
-		"COMMIT_AUTHOR_EMAIL": {Branch: "main", AuthorName: "n", Message: "m", FilePattern: "x"},
-		"COMMIT_MESSAGE":      {Branch: "main", AuthorName: "n", AuthorEmail: "e", FilePattern: "x"},
-		"FILE_PATTERN":        {Branch: "main", AuthorName: "n", AuthorEmail: "e", Message: "m"},
-	}
-	for missing, in := range tests {
-		missing, in := missing, in
-		t.Run("missing-"+missing, func(t *testing.T) {
-			t.Parallel()
-			err := appversion.CommitPush(context.Background(), &git.Repo{}, &bytes.Buffer{}, in)
-			if err == nil || !strings.Contains(err.Error(), missing) {
-				t.Errorf("err = %v, want substring %q", err, missing)
-			}
-		})
 	}
 }

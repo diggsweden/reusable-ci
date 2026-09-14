@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -40,8 +41,10 @@ func TestRefType_BranchFailsWithGuidance(t *testing.T) {
 	err := appvalidate.RefType(&bytes.Buffer{}, appvalidate.RefTypeInput{
 		RefType: provider.RefTypeBranch, RefName: "main", Ref: "refs/heads/main",
 	})
-	if err == nil {
-		t.Fatal("expected failure")
+	// A branch trigger is the operator running the wrong workflow, not a bad
+	// flag: ErrValidation (exit 1), and the guidance below is the fix.
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
 	}
 
 	for _, want := range []string{
@@ -60,8 +63,13 @@ func TestRefType_EmptyTypeUsage(t *testing.T) {
 	t.Parallel()
 
 	err := appvalidate.RefType(&bytes.Buffer{}, appvalidate.RefTypeInput{})
-	if err == nil || !strings.Contains(err.Error(), "usage") {
-		t.Errorf("err = %v", err)
+	// The name is the claim: an empty ref type is a broken invocation.
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
+	}
+
+	if !strings.Contains(err.Error(), "usage") {
+		t.Errorf("err = %v, want it to carry a usage line", err)
 	}
 }
 
@@ -125,8 +133,9 @@ func TestTagFormat_BadTagShowsHelp(t *testing.T) {
 	t.Parallel()
 
 	err := appvalidate.TagFormat(&bytes.Buffer{}, appvalidate.TagFormatInput{Tag: "1.0.0"})
-	if err == nil {
-		t.Fatal("expected failure")
+	// A tag that is not semver is a domain-rule failure, not a bad flag.
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
 	}
 
 	for _, want := range []string{"invalid tag format", "vMAJOR.MINOR.PATCH", "semver.org", "v1.0.0"} {
@@ -205,8 +214,20 @@ func TestChangelog_RequiredMissing(t *testing.T) {
 		Path:     path,
 		Required: true,
 	})
-	if err == nil || !strings.Contains(err.Error(), "not found") {
-		t.Errorf("err = %v", err)
+	// A required changelog that is absent is missing input (exit 66), which
+	// tells the operator to add the file rather than to fix a flag.
+	if !errors.Is(err, errs.ErrMissingInput) {
+		t.Fatalf("err = %v, want ErrMissingInput", err)
+	}
+
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("err = %v, want it to say the file is not there", err)
+	}
+
+	// Nothing published: a later step must not read a changelog output that
+	// the validator refused to produce.
+	if got := sink.Single("content"); got != "" {
+		t.Errorf("published content %q despite the refusal", got)
 	}
 }
 
@@ -266,5 +287,200 @@ func TestChangelog_MinimalPresentEmitsContent(t *testing.T) {
 	got := sink.Multiline("content")
 	if len(got) != 2 || got[0] != "Line one" || got[1] != "Line two" {
 		t.Errorf("content lines = %v", got)
+	}
+}
+
+// failingSink fails the nth Set call (1-based) and records every key it was
+// asked to write, including the one it refused.
+//
+// It is local rather than an option on fakeoutputsink because only this test
+// needs it: a shared fake that can fail is a fake every other test has to read
+// past to be sure it isn't failing.
+type failingSink struct {
+	failOn int
+	calls  int
+	keys   []string
+	err    error
+}
+
+func (s *failingSink) Set(_ context.Context, key, _ string) error {
+	s.calls++
+	s.keys = append(s.keys, key)
+
+	if s.calls == s.failOn {
+		return s.err
+	}
+
+	return nil
+}
+
+func (s *failingSink) SetBool(ctx context.Context, key string, value bool) error {
+	return s.Set(ctx, key, strconv.FormatBool(value))
+}
+
+func (s *failingSink) SetMultiline(_ context.Context, key string, _ []string) error {
+	s.calls++
+	s.keys = append(s.keys, key)
+
+	if s.calls == s.failOn {
+		return s.err
+	}
+
+	return nil
+}
+
+func (s *failingSink) Close(context.Context) error { return nil }
+
+// TestReleaseTagGuard_RefusesBeforePublishingAnything proves each refusal
+// happens before any output is written.
+//
+// The refusal tests used to pass a nil sink, and ReleaseTagGuard skips
+// publication entirely when the sink is nil. So the property they looked like
+// they were checking — that a rejected tag is not published — was not being
+// checked at all: the code could have emitted the outputs and then refused, and
+// a nil sink would have swallowed it silently. That ordering is what matters
+// here, because `release-tag` is consumed by the release job that runs next. A
+// tag published and then refused is a tag the next job acts on.
+//
+// The sink is seeded first so "nothing was written" is distinguishable from
+// "the sink was never touched" — an assertion over an empty sink passes just as
+// well when the guard was never called.
+func TestReleaseTagGuard_RefusesBeforePublishingAnything(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		in   appvalidate.ReleaseTagGuardInput
+		want error
+		why  string
+	}{
+		{
+			name: "a prerelease is not a stable release tag",
+			in:   appvalidate.ReleaseTagGuardInput{Tag: "v1.2.3-rc.1"},
+			want: errs.ErrValidation,
+			why:  "rc builds must not enter the stable release path",
+		},
+		{
+			name: "an unanchored pattern is refused as usage",
+			in:   appvalidate.ReleaseTagGuardInput{Tag: "v1.2.3", Pattern: "v[0-9]+"},
+			want: errs.ErrUsage,
+			why:  "an unanchored pattern matches a substring, so v1.2.3-rc.1 would pass",
+		},
+		{
+			name: "an uncompilable pattern is refused as usage",
+			in:   appvalidate.ReleaseTagGuardInput{Tag: "v1.2.3", Pattern: "^v[0-9+$"},
+			want: errs.ErrUsage,
+			why:  "a broken pattern is operator configuration, not a bad tag",
+		},
+		{
+			// Reaching this branch takes a degenerate pattern: it needs one
+			// that rejects the raw ref but accepts the empty string left
+			// after the prefix is stripped. No sane release pattern does
+			// both, which is the point — the guard refuses instead of
+			// publishing an empty release-tag, and that stays true whatever
+			// pattern an operator supplies.
+			name: "a release request with no final tag is refused",
+			in:   appvalidate.ReleaseTagGuardInput{Tag: "release-request/", Pattern: "^$"},
+			want: errs.ErrValidation,
+			why:  "publishing an empty release-tag would hand the next job nothing to release",
+		},
+		{
+			name: "an unrelated ref is not a release tag",
+			in:   appvalidate.ReleaseTagGuardInput{Tag: "refs/heads/main"},
+			want: errs.ErrValidation,
+			why:  "a branch ref must not be normalised into a release",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			sink := fakeoutputsink.New(t)
+			if err := sink.Set(context.Background(), "seeded", "untouched"); err != nil {
+				t.Fatal(err)
+			}
+
+			var out bytes.Buffer
+
+			err := appvalidate.ReleaseTagGuard(context.Background(), sink, &out, tc.in)
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v: %s", err, tc.want, tc.why)
+			}
+
+			if got := sink.Keys(); len(got) != 1 || got[0] != "seeded" {
+				t.Errorf("sink keys = %v, want only the seeded key: the refusal published output", got)
+			}
+
+			if got := sink.Single("seeded"); got != "untouched" {
+				t.Errorf("seeded value = %q, want %q", got, "untouched")
+			}
+
+			if strings.Contains(out.String(), "accepted") {
+				t.Errorf("refusal printed success prose: %q", out.String())
+			}
+		})
+	}
+}
+
+// errSinkFull stands in for an output sink that cannot accept a write.
+var errSinkFull = errors.New("sink is full") //nolint:err113 // test fixture sentinel.
+
+// TestReleaseTagGuard_ReportsSinkFailuresAndPublishesNoSuccess covers the two
+// output writes independently, because they fail differently.
+//
+// There is no transaction here and this test says so rather than pretending
+// otherwise: `release-tag` is written first, so a failure on `release-request`
+// leaves the first output already published. Nothing can un-write it — the real
+// sinks append to a runner file. What the guard owes in that case is an error
+// carrying the sink's own cause and no success line, so the job fails instead
+// of continuing on a half-written set of outputs.
+func TestReleaseTagGuard_ReportsSinkFailuresAndPublishesNoSuccess(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		failOn    int
+		wantKeys  []string
+		published string
+	}{
+		{
+			name:      "the first output fails",
+			failOn:    1,
+			wantKeys:  []string{"release-tag"},
+			published: "nothing reached the sink",
+		},
+		{
+			name:      "the second output fails after the first was written",
+			failOn:    2,
+			wantKeys:  []string{"release-tag", "release-request"},
+			published: "release-tag is already published and cannot be withdrawn",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			sink := &failingSink{failOn: tc.failOn, err: errSinkFull}
+
+			var out bytes.Buffer
+
+			err := appvalidate.ReleaseTagGuard(context.Background(), sink, &out,
+				appvalidate.ReleaseTagGuardInput{Tag: "refs/tags/v1.2.3"})
+			if !errors.Is(err, errSinkFull) {
+				t.Fatalf("err = %v, want the sink's own cause (%v) so the operator sees why publishing failed", err, errSinkFull)
+			}
+
+			if len(sink.keys) != len(tc.wantKeys) {
+				t.Fatalf("sink calls = %v, want %v (%s)", sink.keys, tc.wantKeys, tc.published)
+			}
+
+			for i, want := range tc.wantKeys {
+				if sink.keys[i] != want {
+					t.Errorf("sink call %d = %q, want %q", i, sink.keys[i], want)
+				}
+			}
+
+			if out.Len() != 0 {
+				t.Errorf("a failed publish printed %q; the job must not read as succeeded", out.String())
+			}
+		})
 	}
 }

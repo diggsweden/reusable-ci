@@ -24,10 +24,12 @@ type ResolveImageNameInput struct {
 //     with Name. The /<name> suffix is collapsed when Name equals the repo's
 //     short name — the resulting <repo>/<repo> would be redundant nesting.
 //
-//  2. If the resulting name lacks a "/" or "." (a bare image like "myapp"),
-//     prefix it with the registry. docker.io is special: bare names on Docker
-//     Hub take the owner as a prefix instead, since "docker.io/myapp" would
-//     resolve to the official-images namespace.
+//  2. Explicit ImageName overrides with a registry-like first path component
+//     (localhost, or containing "." or ":") pass through. Reference validation
+//     is separate. Other names retain the legacy prefix rule: names lacking a
+//     "/" or "." get the registry prefix. docker.io takes the owner prefix
+//     instead, avoiding the official-images namespace for bare names. This
+//     intentionally retains the Docker Hub owner/owner/repo fallback quirk.
 //
 //  3. The result is lowercased: OCI repository names must be lowercase, but
 //     GitHub's owner/repo (github.repository) preserves case — so a repo like
@@ -47,7 +49,10 @@ func ResolveImageName(in ResolveImageNameInput) string {
 		}
 	}
 
-	if !strings.Contains(imageName, "/") || !strings.Contains(imageName, ".") {
+	authority, _, hasPath := strings.Cut(in.ImageName, "/")
+
+	qualified := hasPath && (strings.EqualFold(authority, "localhost") || strings.ContainsAny(authority, ".:"))
+	if !qualified && (!strings.Contains(imageName, "/") || !strings.Contains(imageName, ".")) {
 		if in.Registry == "docker.io" {
 			imageName = in.RepositoryOwner + "/" + imageName
 		} else {

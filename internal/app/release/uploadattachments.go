@@ -15,14 +15,16 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // UploadAttachmentsInput drives UploadAttachments.
 type UploadAttachmentsInput struct {
 	// Tag is the release tag/name to attach to. Required.
 	Tag string
-	// Pattern is a comma-, newline-, or whitespace-separated list of glob
-	// patterns. Each pattern is expanded relative to WorkingDir.
+	// Pattern is a comma- or newline-separated list of glob patterns.
+	// Spaces within a pattern are literal filename characters. Each pattern
+	// is expanded relative to WorkingDir.
 	Pattern string
 	// WorkingDir is the directory glob expansion is rooted at. Defaults to
 	// the current working directory.
@@ -39,7 +41,8 @@ type UploadAttachmentsInput struct {
 // that resolve to absolute paths outside WorkingDir or contain `..` segments
 // are rejected before any glob expansion runs.
 func UploadAttachments(ctx context.Context, up provider.ReleaseAssetUploader, w io.Writer, annot output.Annotator, in UploadAttachmentsInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if strings.TrimSpace(in.Tag) == "" {
+	in.Tag = strings.TrimSpace(in.Tag)
+	if in.Tag == "" {
 		return fmt.Errorf("tag is required: %w", errs.ErrUsage)
 	}
 
@@ -84,12 +87,21 @@ func UploadAttachments(ctx context.Context, up provider.ReleaseAssetUploader, w 
 	return nil
 }
 
-// isRegularFile reports whether path exists AND is a regular file
-// (no symlinks, no dirs). Symlink-following is intentionally disabled
-// to keep `--clobber` uploads from following a link out of the
-// workspace.
-func isRegularFile(path string) bool {
-	info, err := os.Lstat(path)
+// isRegularFileIn reports whether rel names a regular file inside root.
+// Symlinks are not followed and escapes are refused, so a `--clobber` upload
+// cannot be pointed at anything outside the workspace.
+//
+// The check runs through os.Root rather than os.Lstat on the joined path
+// because the pattern string is not the only way out of the working
+// directory. Rejecting ".." in the pattern stops "../etc/passwd", but a
+// symlink already sitting in the workspace does the same job without one:
+// with `up -> ..` present, the safe-looking pattern "*/*" expands to files in
+// the parent, and each of those is a genuine regular file that an Lstat on
+// the joined path is happy to confirm. os.Root refuses to resolve out of the
+// directory it was opened at, which is the containment the doc comment above
+// claims. Symlinks that stay inside are still skipped, as before.
+func isRegularFileIn(root *os.Root, rel string) bool {
+	info, err := root.Lstat(rel)
 	if err != nil {
 		return false
 	}
@@ -101,15 +113,22 @@ func isRegularFile(path string) bool {
 // returns a sorted, deduplicated list of matching regular files. Patterns
 // that reach outside root are rejected.
 func expandAttachmentPatterns(root string, patterns []string) ([]string, error) {
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, fmt.Errorf("open working directory %s: %w: %w", root, err, errs.ErrValidation)
+	}
+
+	defer func() { _ = dir.Close() }()
+
 	seen := make(map[string]struct{})
 
 	for _, pattern := range patterns {
-		if strings.Contains(pattern, "..") {
-			return nil, fmt.Errorf("pattern %q contains \"..\": %w", pattern, errs.ErrValidation)
-		}
-
 		if filepath.IsAbs(pattern) {
 			return nil, fmt.Errorf("pattern %q must be relative to the working directory: %w", pattern, errs.ErrValidation)
+		}
+
+		if !pathsafe.Relative(pattern) {
+			return nil, fmt.Errorf("pattern %q contains \"..\" path segments or unsafe characters: %w", pattern, errs.ErrValidation)
 		}
 
 		matches, err := filepath.Glob(filepath.Join(root, pattern))
@@ -117,12 +136,13 @@ func expandAttachmentPatterns(root string, patterns []string) ([]string, error) 
 			return nil, fmt.Errorf("glob %q: %w: %w", pattern, err, errs.ErrValidation)
 		}
 
-		for _, m := range matches {
-			if !isRegularFile(m) {
+		for _, match := range matches {
+			rel, err := filepath.Rel(root, match)
+			if err != nil || !isRegularFileIn(dir, rel) {
 				continue
 			}
 
-			seen[m] = struct{}{}
+			seen[match] = struct{}{}
 		}
 	}
 

@@ -33,7 +33,8 @@ func prerequisitesCmd() *cli.Command {
 			&cli.StringFlag{Name: "target-branch", Sources: cli.EnvVars("TARGET_BRANCH", "BRANCH"), Usage: "branch the tag commit must be reachable from"},
 			&cli.StringFlag{Name: "repository", Sources: cienv.Repository(), Usage: "\"owner/repo\" on GitHub; \"group/project[/sub]\" on GitLab"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			&cli.BoolFlag{Name: "require-allowlisted-signer", Sources: cli.EnvVars("REQUIRE_ALLOWLISTED_SIGNER"), Usage: "require the tag signer to be allowlisted in .reusable-ci/allowed_signers (SSH) or .reusable-ci/allowed_gpg_keys.asc (GPG)"},
-			&cli.BoolFlag{Name: "sign-artifacts", Sources: cli.EnvVars("SIGN_ARTIFACTS"), Usage: "require a GPG public key (release-artifact signing is enabled)"},
+			&cli.BoolFlag{Name: "sign-artifacts", Sources: cli.EnvVars("SIGN_ARTIFACTS"), Usage: "release-artifact signing is enabled"},
+			&cli.BoolFlag{Name: "requires-gpg-signing", Sources: cli.EnvVars("REQUIRES_GPG_SIGNING"), Usage: "artifact signing and/or git-object signing uses GPG (enables public-key check)"},
 			&cli.BoolFlag{Name: "has-maven-central", Sources: cli.EnvVars("HAS_MAVEN_CENTRAL_TARGET"), Usage: "the plan targets Maven Central (enables credential check)"},
 			&cli.BoolFlag{Name: "has-cargo", Sources: cli.EnvVars("HAS_CARGO_TARGET"), Usage: "the plan targets crates.io (enables Cargo prerequisites check)"},
 			&cli.BoolFlag{Name: "has-jvm", Sources: cli.EnvVars("HAS_JVM_TARGET"), Usage: "the plan includes a Maven/Gradle/Gradle-Android artifact (enables JVM reproducibility check)"},
@@ -59,6 +60,7 @@ func prerequisitesCmd() *cli.Command {
 					Repository:               cmd.String("repository"),
 					RequireAllowlistedSigner: cmd.Bool("require-allowlisted-signer"),
 					SignArtifacts:            cmd.Bool("sign-artifacts"),
+					RequiresGPGSigning:       cmd.Bool("requires-gpg-signing"),
 					HasMavenCentralTarget:    cmd.Bool("has-maven-central"),
 					HasCargoTarget:           cmd.Bool("has-cargo"),
 					HasJVMTarget:             cmd.Bool("has-jvm"),
@@ -80,7 +82,11 @@ func prerequisitesCmd() *cli.Command {
 					return writeErr
 				}
 
-				return runErr
+				if runErr != nil {
+					return runErr
+				}
+
+				return d.OutputSink.Set(ctx, "existing-release-sha", result.ExistingReleaseSHA)
 			})
 		},
 	}

@@ -5,6 +5,7 @@ package git
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -21,7 +22,7 @@ import (
 // and only the second is the release commit. Returning the tag object's
 // sha would compare a tag object against a commit sha and refuse every
 // annotated release.
-func TestRemoteTagCommitFromOutput(t *testing.T) {
+func TestRemoteTagCommitFromOutput_PeelsAnnotatedTagsInAnyOrder(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -105,21 +106,7 @@ func TestRemoteTagCommitFromOutput_NotFound(t *testing.T) {
 	}
 }
 
-// TestRemoteTagCommitFromOutput_PeeledMatchIsNotNameChecked records an
-// asymmetry rather than endorsing it. The plain branch requires the ref
-// to be exactly refs/tags/<tag>; the peeled branch accepts any ref ending
-// in "^{}" and takes the last one it sees.
-//
-// It is unreachable today: `git ls-remote` is asked for the two exact
-// refspecs, and both callers gate the tag through IsStableSemverTag
-// first, so no glob metacharacter can turn those refspecs into patterns
-// that match a second tag. This test exists so the gap is visible if a
-// third caller ever arrives without that gate -- it would resolve one
-// tag's name to another tag's commit, and the signer would sign it.
-//
-// Recorded in docs/open-questions.md ("The peeled branch of the remote
-// tag parser does not check the ref name").
-func TestRemoteTagCommitFromOutput_PeeledMatchIsNotNameChecked(t *testing.T) {
+func TestRemoteTagCommitFromOutput_IgnoresAnotherTagsPeeledRef(t *testing.T) {
 	t.Parallel()
 
 	const wrongCommit = "3333333333333333333333333333333333333333"
@@ -127,12 +114,109 @@ func TestRemoteTagCommitFromOutput_PeeledMatchIsNotNameChecked(t *testing.T) {
 	out := wrongCommit + "\trefs/tags/v9.9.9^{}\n" +
 		"2222222222222222222222222222222222222222\trefs/tags/v1.2.3\n"
 
+	const expected = "2222222222222222222222222222222222222222"
+
 	got, err := remoteTagCommitFromOutput(out, "https://forge/repo.git", "v1.2.3")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if got != wrongCommit {
-		t.Fatalf("the peeled branch now checks the ref name (got %q) -- close the open question and delete this test", got)
+	if got != expected {
+		t.Fatalf("got %q, want the requested tag object %q", got, expected)
+	}
+}
+
+// TestRemoteTagParsers_RefuseAnswersWithNoRightReading covers the two kinds of
+// remote output the parsers used to accept silently.
+//
+// A column-one value that is not a full object hash was returned as the
+// answer, including one shaped like a git option. A ref reported twice with
+// different IDs resolved to whichever line the scan kept -- the last for the
+// commit reader, the first for the tag-object reader -- so one response could
+// name two different objects depending on which function asked.
+//
+// Each must be refused as ErrMalformedInput and, specifically, NOT as
+// ErrValidation: the *IfExists callers read ErrValidation as "the tag is not
+// there", and treating a nonsensical answer as absence would let a release go
+// on to create a tag the remote may already hold.
+func TestRemoteTagParsers_RefuseAnswersWithNoRightReading(t *testing.T) {
+	t.Parallel()
+
+	const (
+		first  = "2222222222222222222222222222222222222222"
+		second = "3333333333333333333333333333333333333333"
+	)
+
+	for name, out := range map[string]string{
+		"a malformed id":                    "not-a-sha\trefs/tags/v1.2.3\n",
+		"an option-shaped id":               "--upload-pack=evil\trefs/tags/v1.2.3\n",
+		"an abbreviated id":                 "2222222\trefs/tags/v1.2.3\n",
+		"an uppercase id":                   strings.ToUpper("abcdef") + first[6:] + "\trefs/tags/v1.2.3\n",
+		"the tag twice with different ids":  first + "\trefs/tags/v1.2.3\n" + second + "\trefs/tags/v1.2.3\n",
+		"the peeled ref twice, differently": first + "\trefs/tags/v1.2.3^{}\n" + second + "\trefs/tags/v1.2.3^{}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			for reader, parse := range map[string]func(string, string, string) (string, error){
+				"commit": remoteTagCommitFromOutput,
+				"object": remoteTagObjectFromOutput,
+			} {
+				got, err := parse(out, "https://forge/repo.git", "v1.2.3")
+
+				// The object reader never looks at the peeled ref, so a
+				// conflict there is invisible to it and is simply "not found".
+				if reader == "object" && strings.Contains(name, "peeled") {
+					if !errors.Is(err, errs.ErrValidation) {
+						t.Errorf("%s: got (%q, %v), want not-found for a ref it does not read", reader, got, err)
+					}
+
+					continue
+				}
+
+				if !errors.Is(err, errs.ErrMalformedInput) {
+					t.Errorf("%s: got (%q, %v), want ErrMalformedInput", reader, got, err)
+				}
+
+				if errors.Is(err, errs.ErrValidation) {
+					t.Errorf("%s: a malformed answer would be read as an absent tag: %v", reader, err)
+				}
+
+				if got != "" {
+					t.Errorf("%s: a refused answer still returned %q", reader, got)
+				}
+			}
+		})
+	}
+}
+
+// TestRemoteTagParsers_AcceptWhatARealRemoteSends is the positive side of the
+// refusal above: repeated identical lines, which a remote may legitimately
+// send, stay accepted, and a SHA-256 repository's 64-character IDs are object
+// IDs like any other.
+func TestRemoteTagParsers_AcceptWhatARealRemoteSends(t *testing.T) {
+	t.Parallel()
+
+	sha256ID := strings.Repeat("ab", 32)
+	sha1ID := strings.Repeat("c", 40)
+
+	for name, tc := range map[string]struct{ out, want string }{
+		"a SHA-256 lightweight tag":     {out: sha256ID + "\trefs/tags/v1.2.3\n", want: sha256ID},
+		"an identical duplicate line":   {out: sha1ID + "\trefs/tags/v1.2.3\n" + sha1ID + "\trefs/tags/v1.2.3\n", want: sha1ID},
+		"a malformed id on another tag": {out: "garbage\trefs/tags/v9.9.9\n" + sha1ID + "\trefs/tags/v1.2.3\n", want: sha1ID},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			for reader, parse := range map[string]func(string, string, string) (string, error){
+				"commit": remoteTagCommitFromOutput,
+				"object": remoteTagObjectFromOutput,
+			} {
+				got, err := parse(tc.out, "https://forge/repo.git", "v1.2.3")
+				if err != nil || got != tc.want {
+					t.Errorf("%s: got (%q, %v), want %q", reader, got, err, tc.want)
+				}
+			}
+		})
 	}
 }

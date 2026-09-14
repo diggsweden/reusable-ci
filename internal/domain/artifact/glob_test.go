@@ -4,11 +4,30 @@
 package artifact_test
 
 import (
+	"errors"
+	"path"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	domainartifact "github.com/diggsweden/reusable-ci/v3/internal/domain/artifact"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
+
+func TestCollectGlobEntries_RepeatedLiteralKeepsBasename(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	file := filepath.Join(root, "value.txt")
+	writeFile(t, file)
+
+	for _, patterns := range [][]string{{file}, {file, file}, {file, root + "/./value.txt"}, {file + "\n" + file}} {
+		entries, err := domainartifact.CollectGlobEntries(patterns, false)
+		if err != nil || len(entries) != 1 || entries[0].Abs != file || entries[0].RelPath != "value.txt" || entries[0].Size != 1 {
+			t.Fatalf("patterns=%v entries=%v err=%v", patterns, entries, err)
+		}
+	}
+}
 
 func TestCollectGlobEntries_StarPreservesStructure(t *testing.T) {
 	t.Parallel()
@@ -26,7 +45,7 @@ func TestCollectGlobEntries_StarPreservesStructure(t *testing.T) {
 	got := relPaths(entries)
 	want := []string{"assets/styles.css", "index.js", "skip.txt"}
 
-	if !equalRel(got, want) {
+	if !slices.Equal(got, want) {
 		t.Fatalf("** collect = %v, want %v (rooted at dist)", got, want)
 	}
 }
@@ -46,7 +65,7 @@ func TestCollectGlobEntries_SingleLevelStar(t *testing.T) {
 	}
 
 	got := relPaths(entries)
-	if want := []string{"a.json", "b.json"}; !equalRel(got, want) {
+	if want := []string{"a.json", "b.json"}; !slices.Equal(got, want) {
 		t.Fatalf("*.json collect = %v, want %v (single level, no nested/d.json)", got, want)
 	}
 }
@@ -65,7 +84,7 @@ func TestCollectGlobEntries_DoubleStarLeading(t *testing.T) {
 	}
 
 	got := relPaths(entries)
-	if want := []string{"a/b/bom.json", "a/bom.json"}; !equalRel(got, want) {
+	if want := []string{"a/b/bom.json", "a/bom.json"}; !slices.Equal(got, want) {
 		t.Fatalf("**/bom.json collect = %v, want %v", got, want)
 	}
 }
@@ -121,7 +140,7 @@ func TestCollectGlobEntries_LiteralDirectoryExpandsContents(t *testing.T) {
 	}
 
 	got := relPaths(entries)
-	if want := []string{"app.bin", "meta/info.txt"}; !equalRel(got, want) {
+	if want := []string{"app.bin", "meta/info.txt"}; !slices.Equal(got, want) {
 		t.Fatalf("literal-dir collect = %v, want %v", got, want)
 	}
 }
@@ -144,7 +163,7 @@ func TestCollectGlobEntries_ExcludePattern(t *testing.T) {
 		t.Fatalf("CollectGlobEntries: %v", err)
 	}
 
-	if got := relPaths(entries); !equalRel(got, []string{"a.json", "b.json"}) {
+	if got := relPaths(entries); !slices.Equal(got, []string{"a.json", "b.json"}) {
 		t.Fatalf("exclude collect = %v, want [a.json b.json]", got)
 	}
 }
@@ -164,8 +183,61 @@ func TestCollectGlobEntries_MultilineBlock(t *testing.T) {
 		t.Fatalf("CollectGlobEntries: %v", err)
 	}
 
-	if got := relPaths(entries); !equalRel(got, []string{"one.txt", "two.txt"}) {
+	if got := relPaths(entries); !slices.Equal(got, []string{"one.txt", "two.txt"}) {
 		t.Fatalf("multiline collect = %v, want [one.txt two.txt]", got)
+	}
+}
+
+func TestCollectGlobEntries_MultiplePatternsUseLeastCommonAncestor(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "shared", "reports", "junit.xml"))
+	writeFile(t, filepath.Join(dir, "shared", "coverage", "coverage.json"))
+
+	entries, err := domainartifact.CollectGlobEntries([]string{
+		filepath.Join(dir, "*", "reports", "*.xml"),
+		filepath.Join(dir, "shared", "coverage", "*.json"),
+	}, false)
+	if err != nil {
+		t.Fatalf("CollectGlobEntries: %v", err)
+	}
+
+	// Both matches are below shared/, but the first pattern's wildcard-free
+	// base is dir. Computing the root from matched files would incorrectly drop
+	// the shared/ prefix and make this assertion fail.
+	want := []string{"shared/coverage/coverage.json", "shared/reports/junit.xml"}
+	if got := relPaths(entries); !slices.Equal(got, want) {
+		t.Fatalf("multi-pattern collect = %v, want %v (rooted at pattern-base common ancestor)", got, want)
+	}
+}
+
+func TestCollectGlobEntries_HiddenFilesRequireIncludeHidden(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "dist", "visible.txt"))
+	writeFile(t, filepath.Join(dir, "dist", ".secret"))
+	writeFile(t, filepath.Join(dir, "dist", ".metadata", "build.json"))
+	pattern := filepath.Join(dir, "dist", "**")
+
+	withoutHidden, err := domainartifact.CollectGlobEntries([]string{pattern}, false)
+	if err != nil {
+		t.Fatalf("CollectGlobEntries without hidden: %v", err)
+	}
+
+	if got := relPaths(withoutHidden); !slices.Equal(got, []string{"visible.txt"}) {
+		t.Fatalf("default glob collect = %v, want [visible.txt]", got)
+	}
+
+	withHidden, err := domainartifact.CollectGlobEntries([]string{pattern}, true)
+	if err != nil {
+		t.Fatalf("CollectGlobEntries with hidden: %v", err)
+	}
+
+	want := []string{".metadata/build.json", ".secret", "visible.txt"}
+	if got := relPaths(withHidden); !slices.Equal(got, want) {
+		t.Fatalf("include-hidden glob collect = %v, want %v", got, want)
 	}
 }
 
@@ -183,7 +255,7 @@ func TestCollectGlobEntries_HiddenRootNotTreatedAsHidden(t *testing.T) {
 		t.Fatalf("CollectGlobEntries: %v", err)
 	}
 
-	if got := relPaths(entries); !equalRel(got, []string{"lint.json", "test.json"}) {
+	if got := relPaths(entries); !slices.Equal(got, []string{"lint.json", "test.json"}) {
 		t.Fatalf("hidden-root collect = %v, want [lint.json test.json]", got)
 	}
 }
@@ -203,25 +275,25 @@ func TestCollectGlobEntries_MissingPatternIsEmpty(t *testing.T) {
 	}
 }
 
-// equalRel compares two already-sorted-by-collection slices irrespective of
-// order (relPaths sorts, but tests build wants in display order).
-func equalRel(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
+func TestCollectGlobEntries_RejectsMalformedPatternEvenWhenRootIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	_, err := domainartifact.CollectGlobEntries([]string{filepath.Join(dir, "[broken")}, false)
+	// A mistyped --path is CLI misuse, so it exits 2 rather than the
+	// unclassified 70 that reads "file a bug"...
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage", err)
 	}
 
-	seen := map[string]int{}
-	for _, value := range got {
-		seen[value]++
+	// ...and the doublestar cause survives the wrap, so the operator still
+	// sees that the pattern itself is what is malformed.
+	if !errors.Is(err, path.ErrBadPattern) {
+		t.Errorf("err = %v, want it to wrap path.ErrBadPattern", err)
 	}
 
-	for _, value := range want {
-		if seen[value] == 0 {
-			return false
-		}
-
-		seen[value]--
+	if !strings.Contains(err.Error(), "[broken") {
+		t.Errorf("err = %v, want it to quote the malformed pattern", err)
 	}
-
-	return true
 }

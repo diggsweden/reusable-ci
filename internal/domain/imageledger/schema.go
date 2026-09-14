@@ -15,11 +15,10 @@ import (
 var releaseImagesSchemaTemplate string
 
 // RenderReleaseImagesJSONSchema renders the ledger's JSON Schema from the
-// SAME regexes and enums this package validates with, so the published
-// schema can never drift from the enforced rules. Consumers (forgejo-ci
-// vendors it next to the binary) get editor lint and documentation; the Go
-// validator remains the authority. Byte-stable output so `git diff`
-// highlights only genuine contract changes.
+// schema patterns and enums. Consumers (forgejo-ci vendors it next to the
+// binary) get portable editor lint and documentation; the strict Go OCI parser
+// remains the runtime authority. Byte-stable output means `git diff` highlights
+// only genuine contract changes.
 func RenderReleaseImagesJSONSchema() string {
 	kinds := []string{string(ImageKindRelease), string(ImageKindBase)}
 
@@ -30,8 +29,8 @@ func RenderReleaseImagesJSONSchema() string {
 
 	replacer := strings.NewReplacer(
 		"{{IMAGE_KINDS}}", strings.Join(quoted, ", "),
-		"{{IMAGE_REF_PATTERN}}", jsonQuote(imageRefRE.String()),
-		"{{TAG_REF_PATTERN}}", jsonQuote(tagRefRE.String()),
+		"{{IMAGE_REF_PATTERN}}", jsonQuote(imageRefSchemaRE.String()),
+		"{{TAG_REF_PATTERN}}", jsonQuote(tagRefSchemaRE.String()),
 		"{{SBOM_PATTERN}}", jsonQuote(sbomRE.String()),
 		"{{DIGEST_PATTERN}}", jsonQuote(container.DigestPattern),
 		"{{SHA256_HEX_PATTERN}}", jsonQuote(container.SHA256HexPattern),

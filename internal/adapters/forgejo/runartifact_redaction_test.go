@@ -6,7 +6,6 @@ package forgejo_test
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -20,9 +19,11 @@ import (
 // it surfaces — the token lives only in the request header. A future refactor
 // that interpolates the response or request into the error would trip this.
 func TestDownloadRunArtifact_FailsLoudWithoutLeakingToken(t *testing.T) {
+	t.Parallel()
+
 	const secretToken = "super-secret-runtime-token-do-not-log"
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Auth must still be carried (proves the token reaches the wire)…
 		if r.Header.Get("Authorization") != "Bearer "+secretToken {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -31,16 +32,15 @@ func TestDownloadRunArtifact_FailsLoudWithoutLeakingToken(t *testing.T) {
 		}
 		// …then fail server-side so the adapter must surface an error.
 		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	t.Cleanup(srv.Close)
+	})
 
 	prov := &forgejo.Provider{
 		Env: envMap(map[string]string{
-			"ACTIONS_RUNTIME_URL":   srv.URL,
+			"ACTIONS_RUNTIME_URL":   runtimeFakeURL,
 			"ACTIONS_RUNTIME_TOKEN": secretToken,
 			"FORGEJO_RUN_ID":        "7",
 		}),
-		HTTPClient: srv.Client(),
+		HTTPClient: inMemoryClient(handler),
 	}
 
 	_, err := prov.DownloadRunArtifact(context.Background(),

@@ -360,7 +360,8 @@ type RepoMetadata struct {
 }
 
 // BotPermissions reports the result of probing the configured release
-// bot's permissions. Each probe is best-effort:
+// bot's permissions. A field is false only when the forge refused that
+// probe (see ProbeBotPermissions):
 //
 //	UserAccessible:     /user (or equivalent) returned 2xx
 //	RepoAccessible:     /repos/<repo> returned 2xx — fatal when false
@@ -397,8 +398,8 @@ type ReleaseSpec struct {
 	Tag        string
 	Name       string // display name (defaults to Tag at use-case layer)
 	NotesFile  string // path; empty → no --notes-file
-	Draft      bool
-	Prerelease bool
+	Draft      bool   // unsupported true values must be refused before provider mutation
+	Prerelease bool   // unsupported true values must be refused before provider mutation
 	MakeLatest MakeLatestMode
 	Assets     []string // file paths to attach
 }
@@ -439,7 +440,7 @@ type SARIFUpload struct {
 // "method returns ErrUnsupported" trap deep in the call stack.
 type Provider interface {
 	// Name returns which forge this provider talks to. Used by
-	// use cases that gate forge-specific features (e.g. SLSA L3).
+	// use cases that gate forge-specific features (e.g. keyless signing).
 	Name() ForgeAPI
 
 	// ResolveContext extracts the EventContext from its

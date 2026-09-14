@@ -8,7 +8,7 @@ import (
 	"context"
 	"errors"
 	"io"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -84,7 +84,7 @@ func TestPushImage_ReportsTheDigestTheRegistryHolds(t *testing.T) {
 
 	// The double records auth file, source and destination; counting the
 	// pushes said nothing about where they went or what they carried.
-	if want := []string{"auth.json|localhost/app:arch|registry.example/app:staging-amd64", "auth.json|localhost/app:arch|registry.example/app:staging-amd64"}; !reflect.DeepEqual(tool.pushes, want) {
+	if want := []string{"auth.json|localhost/app:arch|registry.example/app:staging-amd64", "auth.json|localhost/app:arch|registry.example/app:staging-amd64"}; !slices.Equal(tool.pushes, want) {
 		t.Errorf("pushes = %v, want the same push retried once: %v", tool.pushes, want)
 	}
 
@@ -226,6 +226,104 @@ func TestPushImage_InputRefusals(t *testing.T) {
 
 			if len(tool.pushes) != 0 {
 				t.Errorf("pushed %v on a refused input", tool.pushes)
+			}
+		})
+	}
+}
+
+// TestPushImage_VerifiesTheDestinationItPushedTo binds the registry query to
+// the destination.
+//
+// The registry fake discarded the reference it was asked about, so a push that
+// published to registry.example/app:staging-amd64 and then read the manifest of
+// some other tag produced identical, passing output. That is the whole content
+// of this verification step: the digest it reports is only meaningful if it was
+// read back from the reference it just wrote. Reading a different one reports a
+// digest for an image nobody pushed, and the release is pinned to it.
+func TestPushImage_VerifiesTheDestinationItPushedTo(t *testing.T) {
+	raw := []byte(`{"schemaVersion":2}`)
+	digest := manifestTestDigest(raw)
+
+	const destination = "registry.example/app:staging-amd64"
+
+	// A retry, so the query is repeated and every repetition must name the
+	// same destination.
+	registry := &fakeManifestPushRegistry{failures: 1, raw: raw}
+
+	_, err := appcontainer.PushImage(context.Background(),
+		&fakeImagePushTool{digest: digest}, registry, fakeoutputsink.New(t), io.Discard,
+		appcontainer.PushImageInput{
+			LocalImage:    "localhost/app:arch",
+			Destination:   destination,
+			AuthFile:      "auth.json",
+			TLSVerify:     "true",
+			RetryAttempts: 2,
+			RetryDelay:    time.Nanosecond,
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(registry.queried) == 0 {
+		t.Fatal("the registry was never queried; the assertion below would be vacuous")
+	}
+
+	for i, ref := range registry.queried {
+		if ref != destination {
+			t.Errorf("registry query %d asked about %q, want the destination %q", i, ref, destination)
+		}
+	}
+}
+
+// TestPushImage_PublishesNothingWhenVerificationFails covers every way the
+// read-back can fail.
+//
+// A push that cannot be verified has still changed the registry, so the
+// question is what the RUN reports. Emitting a digest output for an unverified
+// push hands the next job a reference this step could not confirm — and the
+// next job signs it. The sink is seeded so "nothing was published" stays
+// distinguishable from "the sink was never touched".
+func TestPushImage_PublishesNothingWhenVerificationFails(t *testing.T) {
+	raw := []byte(`{"schemaVersion":2}`)
+
+	for _, tc := range []struct {
+		name     string
+		registry *fakeManifestPushRegistry
+		pushed   string
+	}{
+		{
+			name:     "the registry cannot be read",
+			registry: &fakeManifestPushRegistry{failures: 99},
+			pushed:   manifestTestDigest(raw),
+		},
+		{
+			name:     "the registry serves a different manifest",
+			registry: &fakeManifestPushRegistry{raw: []byte(`{"schemaVersion":2,"different":true}`)},
+			pushed:   manifestTestDigest(raw),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := fakeoutputsink.New(t)
+			if err := sink.Set(context.Background(), "seeded", "untouched"); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := appcontainer.PushImage(context.Background(),
+				&fakeImagePushTool{digest: tc.pushed}, tc.registry, sink, io.Discard,
+				appcontainer.PushImageInput{
+					LocalImage:    "localhost/app:arch",
+					Destination:   "registry.example/app:staging-amd64",
+					AuthFile:      "auth.json",
+					TLSVerify:     "true",
+					RetryAttempts: 1,
+					RetryDelay:    time.Nanosecond,
+				})
+			if err == nil {
+				t.Fatal("an unverifiable push reported success")
+			}
+
+			if got := sink.Keys(); len(got) != 1 || got[0] != "seeded" {
+				t.Errorf("sink keys = %v, want only the seeded key: a failed verification published output", got)
 			}
 		})
 	}

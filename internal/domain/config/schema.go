@@ -14,11 +14,10 @@ import "github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 //
 // Python is intentionally absent: the projecttype.Python constant
 // exists in the codebase as a placeholder for future support, but no
-// build/publish workflow is wired today. Accepting it here would
-// silently produce nothing at release time, which is worse than
-// failing loudly at config-parse. When the implementation lands,
-// add `projecttype.Python,` back to this list — that's the only
-// switch needed to flip it on.
+// build/publish workflow is wired today. Accepting it here would create
+// plans with no execution path, which is worse than failing loudly at
+// config-parse. Add it only after the build, publish,
+// validation, and test surfaces are implemented.
 //
 //nolint:gochecknoglobals // schema enumeration — read-only and ordered.
 var ValidProjectTypes = []projecttype.Type{
@@ -48,9 +47,9 @@ var SBOMSupportedTypes = map[projecttype.Type]bool{
 
 // BuildType is the artifact build kind for ecosystems that distinguish
 // between deployable applications and reusable libraries (currently only
-// Maven). Empty / unrecognised values are treated as library by the
-// publish-target filter rule: "Maven applications should not publish to
-// forge-packages.".
+// Maven). Omission retains the zero value: builds default to application,
+// but the Maven forge-packages filter excludes only explicit application.
+// Parse rejects explicit empty/null values; Validate rejects unknown values.
 type BuildType string
 
 // Recognised BuildType values.

@@ -104,7 +104,12 @@ func (r ForgeNPMRegistry) RenderNPMRC() string {
 }
 
 func stripScheme(url string) string {
-	return strings.TrimPrefix(strings.TrimPrefix(url, "https://"), "http://")
+	parsed, err := parseRegistryURL(url)
+	if err != nil || parsed.Host == "" {
+		return url
+	}
+
+	return parsed.Host + parsed.EscapedPath()
 }
 
 func stripNewlines(s string) string {

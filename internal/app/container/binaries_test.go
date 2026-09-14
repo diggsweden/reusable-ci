@@ -8,9 +8,10 @@ import (
 	"errors"
 	"io"
 	"os"
-	"reflect"
-	"sort"
+	"path/filepath"
+	"slices"
 	"strings"
+	"syscall"
 	"testing"
 
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
@@ -32,7 +33,7 @@ func dirEntryNames(t *testing.T, dir string) []string {
 		names = append(names, entry.Name())
 	}
 
-	sort.Strings(names)
+	slices.Sort(names)
 
 	return names
 }
@@ -59,12 +60,17 @@ func TestSuffixExtractedBinaries_AllFilesWhenNoExpected(t *testing.T) {
 	// rename, so the originals must be gone. Copying instead would leave
 	// hsm-worker beside hsm-worker-linux-amd64 and both would ship.
 	want := []string{"digg-hsm-keytool-linux-amd64", "hsm-worker-linux-amd64"}
-	if got := dirEntryNames(t, dir); !reflect.DeepEqual(got, want) {
+	if got := dirEntryNames(t, dir); !slices.Equal(got, want) {
 		t.Errorf("directory = %v, want %v", got, want)
 	}
 
-	if !strings.Contains(out.String(), "renamed hsm-worker -> hsm-worker-linux-amd64") {
-		t.Errorf("missing log line:\n%s", out.String())
+	// The whole log, in order. A substring check passes on a run that renamed
+	// one binary and silently skipped the other, and on one that logged a
+	// rename it never performed; the log is what a release operator reads to
+	// confirm what shipped, so its content and its order are the contract.
+	// Directory order is what drives it, which is why it is deterministic.
+	if got := out.String(); got != "renamed digg-hsm-keytool -> digg-hsm-keytool-linux-amd64\nrenamed hsm-worker -> hsm-worker-linux-amd64\n" {
+		t.Errorf("rename log =\n%s", got)
 	}
 }
 
@@ -86,7 +92,7 @@ func TestSuffixExtractedBinaries_ExpectedNamesOnly(t *testing.T) {
 	// Stating the directory covers all three, including the one the separate
 	// checks missed: that the original no longer exists.
 	want := []string{"extra-tool", "hsm-worker-linux-arm64"}
-	if got := dirEntryNames(t, dir); !reflect.DeepEqual(got, want) {
+	if got := dirEntryNames(t, dir); !slices.Equal(got, want) {
 		t.Errorf("directory = %v, want %v", got, want)
 	}
 }
@@ -129,6 +135,10 @@ func TestSuffixExtractedBinaries_RefusesUnusableInput(t *testing.T) {
 		"no architecture given": {
 			in:   appcontainer.SuffixExtractedBinariesInput{Dir: fsys.Root},
 			want: errs.ErrUsage,
+		},
+		"an unsupported architecture cannot shape a destination path": {
+			in:   appcontainer.SuffixExtractedBinariesInput{Dir: fsys.Root, Arch: "../../outside"},
+			want: errs.ErrValidation,
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -174,5 +184,74 @@ func TestSuffixExtractedBinaries_EmptyDirNoOp(t *testing.T) {
 		Arch: "amd64",
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestSuffixExtractedBinaries_RefusesNonRegularNamedBinaries covers the
+// regular-file guard, which no case reached.
+//
+// The refusal table above stops at directory and architecture problems, so an
+// expected name that resolves to something other than a regular file was never
+// presented. That guard is the one that matters here: this step renames each
+// named binary into the release layout, and a FIFO renamed into place is an
+// artifact that blocks forever when anything reads it, while a symlink is a
+// pointer to a file nobody published.
+//
+// It also checks nothing was renamed, because refusing after moving the earlier
+// names would leave the directory half-converted.
+func TestSuffixExtractedBinaries_RefusesNonRegularNamedBinaries(t *testing.T) {
+	for name, makeEntry := range map[string]func(t *testing.T, path string){
+		"a fifo": func(t *testing.T, path string) {
+			t.Helper()
+
+			if err := syscall.Mkfifo(path, 0o600); err != nil {
+				t.Skipf("mkfifo unsupported here: %v", err)
+			}
+		},
+		"a symlink to a regular file": func(t *testing.T, path string) {
+			t.Helper()
+
+			target := filepath.Join(filepath.Dir(path), "real-target")
+			if err := os.WriteFile(target, []byte("elf"), 0o755); err != nil { //nolint:gosec // test fixture.
+				t.Fatal(err)
+			}
+
+			if err := os.Symlink(target, path); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"a directory": func(t *testing.T, path string) {
+			t.Helper()
+
+			if err := os.Mkdir(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fsys := testfs.NewReal(t)
+
+			// A well-formed sibling, so the refusal is about the bad entry
+			// and the sibling proves nothing was renamed on the way out.
+			fsys.WriteFile("good", []byte("elf"))
+			makeEntry(t, fsys.Path("bad"))
+
+			err := appcontainer.SuffixExtractedBinaries(io.Discard, appcontainer.SuffixExtractedBinariesInput{
+				Dir:           fsys.Root,
+				Arch:          "amd64",
+				ExpectedNames: "good,bad",
+			})
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("err = %v, want ErrValidation for %s", err, name)
+			}
+
+			if _, statErr := os.Lstat(fsys.Path("good-linux-amd64")); !os.IsNotExist(statErr) {
+				t.Errorf("the sibling was renamed before the refusal (stat err = %v)", statErr)
+			}
+
+			if _, statErr := os.Lstat(fsys.Path("good")); statErr != nil {
+				t.Errorf("the sibling is no longer in place: %v", statErr)
+			}
+		})
 	}
 }

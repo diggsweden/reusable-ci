@@ -5,9 +5,11 @@ package github_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/github"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakegitserver"
 )
@@ -84,7 +86,11 @@ func TestResolveContext_TagPush(t *testing.T) {
 		"GITHUB_EVENT_NAME": "push",
 	})}
 
-	evt, _ := p.ResolveContext(context.Background())
+	evt, err := p.ResolveContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if evt.RefType != provider.RefTypeTag {
 		t.Errorf("RefType = %q, want tag", evt.RefType)
 	}
@@ -107,7 +113,11 @@ func TestResolveContext_PullRequest(t *testing.T) {
 		"GITHUB_REPOSITORY": "owner/repo",
 	})}
 
-	evt, _ := p.ResolveContext(context.Background())
+	evt, err := p.ResolveContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if evt.RefType != provider.RefTypePR {
 		t.Errorf("RefType = %q, want pr", evt.RefType)
 	}
@@ -121,6 +131,29 @@ func TestResolveContext_PullRequest(t *testing.T) {
 	}
 }
 
+// TestResolveContext_PushIgnoresAHeadRef: the head branch belongs to pull
+// requests. A push, or a tag push, carrying a head-ref value names its branch
+// from the ref and nothing else.
+func TestResolveContext_PushIgnoresAHeadRef(t *testing.T) {
+	t.Parallel()
+
+	for refType, want := range map[string]string{"branch": "main", "tag": ""} {
+		p := &github.Provider{Env: envFunc(map[string]string{
+			"GITHUB_REF_NAME": "main", "GITHUB_REF_TYPE": refType, "GITHUB_HEAD_REF": "stray",
+			"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": "deadbeef",
+		})}
+
+		evt, err := p.ResolveContext(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if evt.Branch != want || evt.PRNumber != "" {
+			t.Errorf("%s push: Branch = %q, PRNumber = %q; want %q and none", refType, evt.Branch, evt.PRNumber, want)
+		}
+	}
+}
+
 func TestResolveContext_PullRequestTarget(t *testing.T) {
 	t.Parallel()
 
@@ -129,7 +162,11 @@ func TestResolveContext_PullRequestTarget(t *testing.T) {
 		"GITHUB_EVENT_NAME": "pull_request_target",
 	})}
 
-	evt, _ := p.ResolveContext(context.Background())
+	evt, err := p.ResolveContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if evt.RefType != provider.RefTypePR {
 		t.Errorf("RefType = %q, want pr (pull_request_target should also be PR)", evt.RefType)
 	}
@@ -146,7 +183,11 @@ func TestResolveContext_DefaultsServerURL(t *testing.T) {
 		"GITHUB_REPOSITORY": "owner/repo",
 	})}
 
-	evt, _ := p.ResolveContext(context.Background())
+	evt, err := p.ResolveContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if evt.RepoURL != "https://github.com/owner/repo" {
 		t.Errorf("RepoURL = %q, want default github.com", evt.RepoURL)
 	}
@@ -160,7 +201,11 @@ func TestResolveContext_EnterpriseServerURL(t *testing.T) {
 		"GITHUB_SERVER_URL": "https://github.acme.example",
 	})}
 
-	evt, _ := p.ResolveContext(context.Background())
+	evt, err := p.ResolveContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if evt.RepoURL != "https://github.acme.example/myorg/myrepo" {
 		t.Errorf("RepoURL = %q", evt.RepoURL)
 	}
@@ -192,7 +237,11 @@ func TestResolveContext_ShortSHATruncates(t *testing.T) {
 		"GITHUB_SHA": "1234567890",
 	})}
 
-	evt, _ := p.ResolveContext(context.Background())
+	evt, err := p.ResolveContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if evt.ShortSHA != "1234567" {
 		t.Errorf("ShortSHA = %q, want first 7", evt.ShortSHA)
 	}
@@ -223,7 +272,7 @@ func TestFetchRepoMetadata_HappyPath(t *testing.T) {
 		Env: envFunc(map[string]string{
 			"GITHUB_TOKEN": "ghs_test", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		}),
-		APIBaseOverride: srv.URL(),
+		APIBaseOverride: srv.URL(), HTTPClient: srv.Client(),
 	}
 
 	md, err := p.FetchRepoMetadata(context.Background(), "owner/repo")
@@ -249,7 +298,7 @@ func TestFetchRepoMetadata_EmptyRepoNoCall(t *testing.T) {
 	srv := fakegitserver.New(t)
 	// Intentionally no route — if the adapter calls anyway, the 404 will
 	// surface as an error and fail this test.
-	p := &github.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL()}
+	p := &github.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL(), HTTPClient: srv.Client()}
 
 	md, err := p.FetchRepoMetadata(context.Background(), "")
 	if err != nil {
@@ -275,7 +324,7 @@ func TestFetchRepoMetadata_OmitAuthWhenNoToken(t *testing.T) {
 
 		return fakegitserver.Response{Body: `{"description":"public"}`}
 	})
-	p := &github.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL()}
+	p := &github.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL(), HTTPClient: srv.Client()}
 
 	md, err := p.FetchRepoMetadata(context.Background(), "owner/repo")
 	if err != nil {
@@ -293,11 +342,11 @@ func TestFetchRepoMetadata_HTTPErrorPropagates(t *testing.T) {
 	srv.OnGet("/repos/owner/repo", func(_ fakegitserver.Request) fakegitserver.Response {
 		return fakegitserver.Response{Status: 404, Body: `{"message":"Not Found"}`}
 	})
-	p := &github.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL()}
+	p := &github.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL(), HTTPClient: srv.Client()}
 
 	_, err := p.FetchRepoMetadata(context.Background(), "owner/repo")
-	if err == nil {
-		t.Fatal("expected error on 404")
+	if !errors.Is(err, errs.ErrMissingInput) {
+		t.Fatalf("err = %v, want the 404 class propagated (ErrMissingInput)", err)
 	}
 }
 
@@ -312,7 +361,7 @@ func TestValidateToken_HappyPath(t *testing.T) {
 		return fakegitserver.Response{Body: `{}`}
 	})
 
-	p := &github.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL()}
+	p := &github.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL(), HTTPClient: srv.Client()}
 	if err := p.ValidateToken(context.Background(), "github_pat_AAAA", "owner/repo"); err != nil {
 		t.Fatalf("ValidateToken: %v", err)
 	}
@@ -324,8 +373,8 @@ func TestValidateToken_EmptyTokenError(t *testing.T) {
 	p := &github.Provider{Env: envFunc(nil)}
 
 	err := p.ValidateToken(context.Background(), "", "owner/repo")
-	if err == nil {
-		t.Fatal("expected error on empty token")
+	if !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
 	}
 }
 
@@ -335,11 +384,11 @@ func TestValidateToken_HTTP403(t *testing.T) {
 	srv.OnGet("/repos/owner/repo", func(_ fakegitserver.Request) fakegitserver.Response {
 		return fakegitserver.Response{Status: 403, Body: `{"message":"forbidden"}`}
 	})
-	p := &github.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL()}
+	p := &github.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL(), HTTPClient: srv.Client()}
 
 	err := p.ValidateToken(context.Background(), "github_pat_AAAA", "owner/repo")
-	if err == nil {
-		t.Fatal("expected 403 error")
+	if !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
 	}
 }
 
@@ -353,7 +402,7 @@ func TestValidateBotPermissions_AllProbesPass(t *testing.T) {
 		})
 	}
 
-	p := &github.Provider{Env: envFunc(map[string]string{"GITHUB_TOKEN": "ghs_AAA"}), APIBaseOverride: srv.URL()}
+	p := &github.Provider{Env: envFunc(map[string]string{"GITHUB_TOKEN": "ghs_AAA"}), APIBaseOverride: srv.URL(), HTTPClient: srv.Client()}
 
 	bp, err := p.ValidateBotPermissions(context.Background(), "owner/repo")
 	if err != nil {
@@ -371,7 +420,7 @@ func TestValidateBotPermissions_BranchesProbeFailsWarn(t *testing.T) {
 	srv.OnGet("/user", func(_ fakegitserver.Request) fakegitserver.Response { return fakegitserver.Response{Body: `{}`} })
 	srv.OnGet("/repos/owner/repo", func(_ fakegitserver.Request) fakegitserver.Response { return fakegitserver.Response{Body: `{}`} })
 	// /branches not registered → 404.
-	p := &github.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL()}
+	p := &github.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL(), HTTPClient: srv.Client()}
 
 	bp, err := p.ValidateBotPermissions(context.Background(), "owner/repo")
 	if err != nil {
@@ -394,7 +443,7 @@ func TestFetchRepoMetadata_ReadsAPIBaseFromEnv(t *testing.T) {
 		return fakegitserver.Response{Body: `{}`}
 	})
 	// No APIBaseOverride — the adapter must read GITHUB_API_URL.
-	p := &github.Provider{Env: envFunc(map[string]string{"GITHUB_API_URL": srv.URL()})}
+	p := &github.Provider{Env: envFunc(map[string]string{"GITHUB_API_URL": srv.URL()}), HTTPClient: srv.Client()}
 	if _, err := p.FetchRepoMetadata(context.Background(), "owner/repo"); err != nil {
 		t.Fatal(err)
 	}

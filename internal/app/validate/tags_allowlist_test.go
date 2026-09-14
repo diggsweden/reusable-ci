@@ -17,10 +17,10 @@ import (
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
 	"github.com/ProtonMail/go-crypto/openpgp/packet"
 
-	adapteropenpgp "github.com/diggsweden/reusable-ci/v3/internal/adapters/openpgp"
 	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+	adapteropenpgp "github.com/diggsweden/reusable-ci/v3/internal/pgp"
 )
 
 const gpgSignedTagBody = "object abc\ntype commit\n-----BEGIN PGP SIGNATURE-----\n...\n-----END PGP SIGNATURE-----\n"
@@ -251,19 +251,17 @@ func TestTagSignature_GPG_AllowlistHonoursEveryKeyInABlock(t *testing.T) {
 	}
 }
 
-// TestTagSignature_GPG_ConcatenatedKeyBlocksLoseAllButTheFirst records a
-// defect, not a guarantee.
+// TestTagSignature_GPG_AllowlistHonoursEveryConcatenatedBlock covers the
+// file shape the documentation tells operators to produce.
 //
 // docs/verification.md describes allowed_gpg_keys.asc as "one or more PGP
-// PUBLIC KEY BLOCK sections concatenated" and tells operators to add a
-// key with `gpg --armor --export <email> >> .reusable-ci/allowed_gpg_keys.asc`.
-// That append produces a second armor block, and only the first block is
-// read -- so a signer added by following the documented instructions is
-// denied, with no error and no warning about the half-read file.
-//
-// It fails closed, so this denies a legitimate signer rather than
-// admitting an unauthorised one. See docs/open-questions.md.
-func TestTagSignature_GPG_ConcatenatedKeyBlocksLoseAllButTheFirst(t *testing.T) {
+// PUBLIC KEY BLOCK sections concatenated" and says to add a key with
+// `gpg --armor --export <email> >> .reusable-ci/allowed_gpg_keys.asc`.
+// That append writes a second armor block. Reading only the first one
+// denied a signer added exactly as documented -- silently, with the key
+// count in the refusal as the only hint -- and it bit during key
+// rotation, the one time the file deliberately holds two keys.
+func TestTagSignature_GPG_AllowlistHonoursEveryConcatenatedBlock(t *testing.T) {
 	t.Parallel()
 
 	outgoing, _ := armoredPublicKey(t)
@@ -286,14 +284,92 @@ func TestTagSignature_GPG_ConcatenatedKeyBlocksLoseAllButTheFirst(t *testing.T) 
 		RequireAllowlistedSigner: true,
 		AllowedGPGKeysPath:       writeGPGKeysFile(t, concatenated),
 	})
-	if !errors.Is(err, errs.ErrPermissionDenied) {
-		t.Fatalf("err = %v, want ErrPermissionDenied (the appended key is not seen)", err)
+	if err != nil {
+		t.Fatalf("the appended key was not authorised: %v\n%s", err, out.String())
 	}
 
-	// The count in the message is the only hint that the file was read
-	// only in part.
-	if !strings.Contains(err.Error(), "1 key(s)") {
-		t.Errorf("error should show how many keys were parsed: %v", err)
+	if !strings.Contains(out.String(), "Signer fingerprint is authorised") {
+		t.Errorf("missing authorised note:\n%s", out.String())
+	}
+}
+
+// TestTagSignature_GPG_V6KeyAuthorisesItsSigner covers the other length a
+// primary-key fingerprint comes in.
+//
+// A v6 fingerprint (RFC 9580) is SHA-256, so 64 hex characters rather
+// than v4's 40. The allowlist accepted only 40, so a committed v6 key
+// derived an empty set and refused its own signer while naming
+// "0 key(s)" for a file the operator can see holds a key. gnupg
+// generates v6 from 2.5.x, so the length is the only thing that has to
+// change for a project to hit it.
+func TestTagSignature_GPG_V6KeyAuthorisesItsSigner(t *testing.T) {
+	t.Parallel()
+
+	keyArmor, fpr := armoredV6PublicKey(t)
+
+	if len(fpr) != 64 {
+		t.Fatalf("fixture is not a v6 fingerprint (%d chars) -- this test no longer covers the v6 length", len(fpr))
+	}
+
+	gitr := &fakeTagGit{
+		body:                 gpgSignedTagBody,
+		verifySigOK:          true,
+		verifySigFingerprint: fpr,
+		verifySigSigner:      "V6 Signer <v6@example.com>",
+	}
+
+	var out bytes.Buffer
+
+	err := appvalidate.TagSignature(context.Background(), gitr, &out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.TagSignatureInput{
+		Tag:                      "v1.0.0",
+		RequireAllowlistedSigner: true,
+		AllowedGPGKeysPath:       writeGPGKeysFile(t, keyArmor),
+	})
+	if err != nil {
+		t.Fatalf("a committed v6 key did not authorise its own signer: %v\n%s", err, out.String())
+	}
+}
+
+// TestTagSignature_GPG_UnparsableAllowlistIsNotNoAllowlist is the
+// fail-open direction, and the one that would matter.
+//
+// A present file that yields no usable fingerprints must never be
+// treated as "no allowlist": that path warns and accepts any valid
+// signature when require-authorization is off. allowlistPresent keys off
+// the file having bytes rather than off the derived set, so the refusal
+// has to come from the parse instead -- which is what this pins.
+func TestTagSignature_GPG_UnparsableAllowlistIsNotNoAllowlist(t *testing.T) {
+	t.Parallel()
+
+	_, fpr := armoredPublicKey(t)
+
+	gitr := &fakeTagGit{
+		body:                 gpgSignedTagBody,
+		verifySigOK:          true,
+		verifySigFingerprint: fpr,
+		verifySigSigner:      "Allowed Signer <signer@example.com>",
+	}
+
+	// Present, non-empty, and not a key: the shape a truncated or
+	// hand-edited bundle takes.
+	notAKey := []byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nnot base64 at all\n-----END PGP PUBLIC KEY BLOCK-----\n")
+
+	var out bytes.Buffer
+
+	err := appvalidate.TagSignature(context.Background(), gitr, &out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.TagSignatureInput{
+		Tag:                      "v1.0.0",
+		RequireAllowlistedSigner: false,
+		AllowedGPGKeysPath:       writeGPGKeysFile(t, notAKey),
+	})
+	// Malformed rather than merely non-nil: a refusal because the
+	// derived set came out empty would satisfy err != nil while the file
+	// was still being read in part, which is the defect next door.
+	if !errors.Is(err, errs.ErrMalformedInput) {
+		t.Fatalf("err = %v, want ErrMalformedInput\n%s", err, out.String())
+	}
+
+	if strings.Contains(out.String(), "NO signer allowlist") {
+		t.Errorf("reported as having no allowlist, but the file is present:\n%s", out.String())
 	}
 }
 
@@ -371,94 +447,6 @@ func armoredV6PublicKey(t *testing.T) ([]byte, string) {
 	}
 
 	return buf.Bytes(), fps[0]
-}
-
-// TestTagSignature_GPG_V6KeyIsNotAuthorised records what happens when
-// allowed_gpg_keys.asc holds a modern OpenPGP key.
-//
-// AllowedFingerprintSet.Add accepts exactly 40 hex characters -- the v4
-// primary-key fingerprint length -- and returns false for anything else.
-// A v6 fingerprint is 32 bytes, so it renders as 64 characters and is
-// dropped. buildGPGAllowlist discards Add's return value, so nothing
-// says so.
-//
-// The outcome is fail-closed, which is why this is recorded rather than
-// treated as a hole: the file is non-empty, so the allowlist counts as
-// present, and the signer is refused. What the operator is told is that
-// their fingerprint "is not authorised (0 key(s) in
-// .reusable-ci/allowed_gpg_keys.asc)" -- naming a count of zero for a
-// file they can see holds a key.
-//
-// Recorded in docs/open-questions.md ("A v6 OpenPGP key in
-// allowed_gpg_keys.asc authorises nobody").
-func TestTagSignature_GPG_V6KeyIsNotAuthorised(t *testing.T) {
-	t.Parallel()
-
-	keyArmor, fpr := armoredV6PublicKey(t)
-
-	// The signature itself verifies: the key is in the keyring handed to
-	// the verifier. Only the allowlist lookup fails.
-	gitr := &fakeTagGit{
-		body:                 gpgSignedTagBody,
-		verifySigOK:          true,
-		verifySigFingerprint: fpr,
-		verifySigSigner:      "V6 Signer <v6@example.com>",
-	}
-
-	var out bytes.Buffer
-
-	err := appvalidate.TagSignature(context.Background(), gitr, &out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.TagSignatureInput{
-		Tag:                      "v1.0.0",
-		RequireAllowlistedSigner: true,
-		AllowedGPGKeysPath:       writeGPGKeysFile(t, keyArmor),
-	})
-	if err == nil {
-		t.Fatalf("a v6 key now authorises its own signer -- close the open question and delete this test\n%s", out.String())
-	}
-
-	// Fail-closed is the part that must not regress: a derived allowlist
-	// that came out empty must never be treated as "no allowlist", which
-	// warns and passes when require-authorization is off.
-	if !errors.Is(err, errs.ErrPermissionDenied) {
-		t.Fatalf("err = %v, want ErrPermissionDenied", err)
-	}
-
-	if !strings.Contains(err.Error(), "0 key(s)") {
-		t.Errorf("the count in the refusal is no longer zero, so the allowlist may now hold the key: %v", err)
-	}
-}
-
-// TestTagSignature_GPG_V6KeyDoesNotDegradeToNoAllowlist is the fail-open
-// direction of the same defect, and the one that would matter. With
-// require-authorization off, a file that derives to an empty allowlist
-// must still be an allowlist: treating it as absent would warn and pass,
-// accepting any valid signature.
-func TestTagSignature_GPG_V6KeyDoesNotDegradeToNoAllowlist(t *testing.T) {
-	t.Parallel()
-
-	keyArmor, fpr := armoredV6PublicKey(t)
-
-	gitr := &fakeTagGit{
-		body:                 gpgSignedTagBody,
-		verifySigOK:          true,
-		verifySigFingerprint: fpr,
-		verifySigSigner:      "V6 Signer <v6@example.com>",
-	}
-
-	var out bytes.Buffer
-
-	err := appvalidate.TagSignature(context.Background(), gitr, &out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.TagSignatureInput{
-		Tag:                      "v1.0.0",
-		RequireAllowlistedSigner: false,
-		AllowedGPGKeysPath:       writeGPGKeysFile(t, keyArmor),
-	})
-	if err == nil {
-		t.Fatalf("a present allowlist that derived to zero keys was treated as absent and the signer accepted:\n%s", out.String())
-	}
-
-	if strings.Contains(out.String(), "NO signer allowlist") {
-		t.Errorf("reported as having no allowlist, but the file is present:\n%s", out.String())
-	}
 }
 
 // The warn-and-proceed branch had no test at all, though its

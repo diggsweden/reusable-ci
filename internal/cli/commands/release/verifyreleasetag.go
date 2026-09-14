@@ -22,13 +22,13 @@ import (
 func verifyTagCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "validate-tag",
-		Usage: "re-validate the release tag against the remote: checkout==release-sha, tag points to it, and not superseded",
+		Usage: "re-validate the release tag against the remote: checkout==release-sha, annotated tag object matches, tag points to it, and not superseded",
 		Description: `EXAMPLE:
    reusable-ci release validate-tag --tag v1.2.3 --release-sha abc... --repo-url https://github.com/org/app`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagReleaseSHA, Sources: cli.EnvVars("RELEASE_SHA"), Usage: "commit the release is built from"},
 			&cli.StringFlag{Name: flagTag, Sources: cienv.Tag(), Usage: "release tag (e.g. v1.2.3)"},
-			&cli.StringFlag{Name: "repo-url", Sources: cli.EnvVars("REPO_URL"), Usage: "remote repository URL for ls-remote"},
+			&cli.StringFlag{Name: "repo-url", Sources: cli.EnvVars("REPO_URL"), Usage: "remote repository URL for ls-remote (defaults to origin)"},
 			&cli.StringFlag{Name: "token", Usage: "read token for a private repository; omit to use the runner token, scoped to its issuing server"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {

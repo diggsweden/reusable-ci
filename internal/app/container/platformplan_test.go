@@ -6,10 +6,13 @@ package container_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
 
@@ -43,18 +46,28 @@ func TestPlatformPlan_EmitsMatrixAndSuffix(t *testing.T) {
 func TestPlatformPlan_RejectsUnsupportedPlatform(t *testing.T) {
 	t.Parallel()
 
-	_, err := appcontainer.PlatformPlan(context.Background(), fakeoutputsink.New(t), nil, appcontainer.PlatformPlanInput{
-		Platforms: "linux/amd64, linux/arm/v7",
-	})
-	if err == nil || !strings.Contains(err.Error(), "unsupported container platform") {
-		t.Fatalf("err = %v", err)
-	}
+	// Both the matrix and the single-platform input go through the same
+	// check, and a platform this builder cannot produce is a validation
+	// failure rather than a bad flag: the value is well-formed, it just
+	// names something native builds do not support.
+	for name, in := range map[string]appcontainer.PlatformPlanInput{
+		"in the matrix":     {Platforms: "linux/amd64, linux/arm/v7"},
+		"as the sole build": {Platform: "windows/amd64"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	_, err = appcontainer.PlatformPlan(context.Background(), fakeoutputsink.New(t), nil, appcontainer.PlatformPlanInput{
-		Platform: "windows/amd64",
-	})
-	if err == nil || !strings.Contains(err.Error(), "unsupported container platform") {
-		t.Fatalf("err = %v", err)
+			sink := fakeoutputsink.New(t)
+
+			_, err := appcontainer.PlatformPlan(context.Background(), sink, nil, in)
+			if !errors.Is(err, errs.ErrValidation) || !strings.Contains(fmt.Sprint(err), "unsupported container platform") {
+				t.Errorf("err = %v, want ErrValidation naming the platform", err)
+			}
+
+			if got := sink.Keys(); len(got) != 0 {
+				t.Errorf("emitted %q for a refused platform set", got)
+			}
+		})
 	}
 }
 
@@ -79,13 +92,19 @@ func TestPlatformPlan_DefaultsEmptyPlatforms(t *testing.T) {
 func TestPlatformPlan_RejectsCommaOnlyPlatforms(t *testing.T) {
 	t.Parallel()
 
-	_, err := appcontainer.PlatformPlan(context.Background(), fakeoutputsink.New(t), nil, appcontainer.PlatformPlanInput{Platforms: ", ,"})
-	if err == nil || !strings.Contains(err.Error(), "platforms is empty") {
-		t.Fatalf("err = %v", err)
+	sink := fakeoutputsink.New(t)
+
+	_, err := appcontainer.PlatformPlan(context.Background(), sink, nil, appcontainer.PlatformPlanInput{Platforms: ", ,"})
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(fmt.Sprint(err), "platforms is empty") {
+		t.Errorf("err = %v, want ErrUsage — separators with nothing between them is a caller mistake", err)
+	}
+
+	if got := sink.Keys(); len(got) != 0 {
+		t.Errorf("emitted %q for a refused platform set", got)
 	}
 }
 
-func TestPlatformSuffix(t *testing.T) {
+func TestPlatformSuffix_DropsLinuxAndKeepsOtherOSes(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct{ in, want string }{

@@ -9,7 +9,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
-func TestNormalizeResult(t *testing.T) {
+func TestNormalizeResult_MapsKnownSpellingsAndDefaultsToSkipped(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -68,7 +68,7 @@ func TestNormalizeJobStatus_FailClosed(t *testing.T) {
 	}
 }
 
-func TestStatusIcon(t *testing.T) {
+func TestStatusIcon_ShowsTheFailureIconForAnythingUnknown(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{

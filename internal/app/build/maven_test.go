@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -90,6 +91,10 @@ func TestMavenMetadata_WritesAllOutputsAndStatusLineFromPOM(t *testing.T) {
 
 	if got := out.String(); got != "Project: se.digg.example:demo:1.2.3-SNAPSHOT\n" {
 		t.Errorf("out = %q", got)
+	}
+
+	if !slices.Equal(sink.Order(), []string{"version", "group-id", "artifact-id", "is-snapshot"}) {
+		t.Fatalf("metadata order=%v", sink.Order())
 	}
 }
 
@@ -208,7 +213,7 @@ func TestMavenLibrary_RunsCompileTestPackage_WithProfile(t *testing.T) {
 
 	wantPackage := []string{"--batch-mode", "--errors", "package", "-DskipTests=false", "-Pcentral-release", "-Dgpg.skip=true"} //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	for i, want := range [][]string{wantCompile, wantTest, wantPackage} {
-		if !equalArgs(ops.runs[i], want) {
+		if !slices.Equal(ops.runs[i], want) {
 			t.Errorf("invocation %d:\n got: %v\nwant: %v", i, ops.runs[i], want)
 		}
 	}
@@ -237,7 +242,7 @@ func TestMavenLibrary_SkipTestsTrue_OmitsTestPhase(t *testing.T) {
 	wantPackage := []string{"-q", "package", "-DskipTests=true", "-Dgpg.skip=true"}
 
 	for i, want := range [][]string{wantCompile, wantPackage} {
-		if !equalArgs(ops.runs[i], want) {
+		if !slices.Equal(ops.runs[i], want) {
 			t.Errorf("invocation %d:\n got: %v\nwant: %v", i, ops.runs[i], want)
 		}
 	}
@@ -251,12 +256,16 @@ func TestMavenLibrary_NoProfile_OmitsPFlag(t *testing.T) {
 		t.Fatalf("MavenLibrary: %v", err)
 	}
 
-	for _, run := range ops.runs {
-		for _, a := range run {
-			if strings.HasPrefix(a, "-P") {
-				t.Errorf("unexpected -P flag in %v", run)
-			}
-		}
+	// Every invocation, exactly, as the profile and skip-tests siblings do.
+	// Scanning for a "-P" prefix said nothing about what the three runs did
+	// carry, so an omitted phase or a stray flag was invisible here.
+	want := [][]string{
+		{"-q", "clean", "compile"},
+		{"-q", "test"},
+		{"-q", "package", "-DskipTests=false", "-Dgpg.skip=true"},
+	}
+	if !slices.EqualFunc(ops.runs, want, slices.Equal) {
+		t.Errorf("mvn runs =\n%v\nwant\n%v", ops.runs, want)
 	}
 }
 
@@ -272,29 +281,15 @@ func TestMavenLibrary_BannerLinesGoToStdout(t *testing.T) {
 
 	got := out.String()
 	for _, want := range []string{
-		"Building Maven library with sources and javadoc...",
+		"Building Maven library lifecycle...",
 		"Using Maven profile: central-release",
 		"Running tests...",
-		"Creating library package with sources and javadoc...",
+		"Packaging library with project-configured artifacts...",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("out missing %q\n--- out ---\n%s", want, got)
 		}
 	}
-}
-
-func equalArgs(a, b []string) bool { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if len(a) != len(b) {
-		return false
-	}
-
-	for i := range a {
-		if a[i] != b[i] { //nolint:gosec // len(a)==len(b) checked above.
-			return false
-		}
-	}
-
-	return true
 }
 
 func TestMavenApplication_AddsSkipTests(t *testing.T) {
@@ -311,7 +306,7 @@ func TestMavenApplication_AddsSkipTests(t *testing.T) {
 	}
 
 	want := []string{"--batch-mode", "--errors", "clean", "package", "-DskipTests"}
-	if !equalArgs(ops.runs[0], want) {
+	if !slices.Equal(ops.runs[0], want) {
 		t.Errorf("args = %v, want %v", ops.runs[0], want)
 	}
 }
@@ -328,16 +323,18 @@ func TestMavenApplication_OmitsSkipTestsByDefault(t *testing.T) {
 	// followed could not have found it anyway: the flag is always written
 	// -DskipTests=<bool>, so searching for the bare token never matches.
 	want := []string{"--batch-mode", "clean", "package"}
-	if !equalArgs(ops.runs[0], want) {
+	if !slices.Equal(ops.runs[0], want) {
 		t.Errorf("args = %v, want %v", ops.runs[0], want)
 	}
 }
 
+var errMavenRunFailed = errors.New("mvn exited non-zero")
+
 func TestMavenApplication_PropagatesError(t *testing.T) {
-	ops := &fakeMaven{runErr: errors.New("boom")} //nolint:err113 // test mock error
+	ops := &fakeMaven{runErr: errMavenRunFailed}
 
 	err := appbuild.MavenApplication(context.Background(), ops, &bytes.Buffer{}, &bytes.Buffer{}, appbuild.MavenApplicationInput{})
-	if err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, errMavenRunFailed) {
+		t.Fatalf("err = %v, want the tool's own error to survive wrapping", err)
 	}
 }

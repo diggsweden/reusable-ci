@@ -6,16 +6,21 @@ package security
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
+	domainsummary "github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // TrivyOps abstracts the trivy adapter for dependency injection.
@@ -61,6 +66,8 @@ type ScanDependenciesInput struct {
 // helper so the top-to-bottom flow reads like a sequence diagram:
 // configure → scan HEAD → optionally diff against base → derive
 // secondary reports → render summary → decide pass/fail.
+//
+//nolint:cyclop // validate scope and destinations before the ordered HEAD/base/report phases.
 func ScanDependencies(
 	ctx context.Context,
 	trivy TrivyOps,
@@ -75,36 +82,87 @@ func ScanDependencies(
 		return err
 	}
 
-	printScanDepsBanner(w, cfg)
-
-	deps := scanDepsDeps{trivy: trivy, gitRepo: gitRepo, w: w, stderr: stderr, annot: annot}
-
-	workDir, err := os.MkdirTemp("", "scan-deps-") //nolint:govet // err is already declared above.
-	if err != nil {
-		return fmt.Errorf("mkdir tmp: %w", err)
+	if err = validateReportPaths(cfg.sarifFile, cfg.gitlabDepFile); err != nil {
+		return err
 	}
 
-	defer func() { _ = os.RemoveAll(workDir) }()
+	if cfg.mode == security.ScanModeDiff && cfg.baseRef != "" { //nolint:nestif // one preflight scope binds both scans without moving process cwd.
+		root, err := gitRepo.Run(ctx, "rev-parse", "--show-toplevel") //nolint:govet // scope-local errors are handled before any scan effect.
+		if err != nil {
+			return fmt.Errorf("resolve comparison repository: %w", err)
+		}
 
-	headJSON := filepath.Join(workDir, "head-vulns.json")
+		root = strings.TrimSpace(root)
+		if root == "" {
+			return fmt.Errorf("comparison repository root is empty: %w", errs.ErrUsage)
+		}
 
-	headBody, headIDs, err := scanHead(ctx, deps, cfg, headJSON)
+		absolute, err := filepath.Abs(cfg.scanPath)
+		if err != nil {
+			return err
+		}
+
+		relative, err := filepath.Rel(root, absolute)
+		if err != nil || !pathsafe.Relative(relative) {
+			return fmt.Errorf("dependency diff scope must stay inside the repository: %w", errs.ErrUsage)
+		}
+
+		info, err := os.Lstat(absolute)
+		if err != nil {
+			return fmt.Errorf("inspect dependency scope: %w", err)
+		}
+
+		parent := filepath.Dir(absolute)
+		if info.IsDir() {
+			parent = absolute
+		} else if !info.Mode().IsRegular() {
+			return fmt.Errorf("dependency scope must be a real directory or regular file: %w", errs.ErrUsage)
+		}
+
+		scopeRoot, err := pathsafe.OpenRoot(parent)
+		if err != nil {
+			return err
+		}
+
+		_ = scopeRoot.Close()
+		cfg.relativeScope = relative
+		cfg.scanPath = absolute
+	}
+
+	if aliasErr := validateScanInputReports(cfg.scanPath, cfg.sarifFile, cfg.gitlabDepFile); aliasErr != nil {
+		return aliasErr
+	}
+
+	workDir, err := prepareScanReports(cfg.sarifFile, cfg.gitlabDepFile)
 	if err != nil {
 		return err
 	}
 
-	newIDs, modeUsed, err := diffAgainstBase(ctx, deps, cfg, workDir, headIDs)
+	defer func() { _ = os.RemoveAll(workDir) }()
+
+	printScanDepsBanner(w, cfg)
+
+	deps := scanDepsDeps{trivy: trivy, gitRepo: gitRepo, w: w, stderr: stderr, annot: annot}
+
+	headJSON := filepath.Join(workDir, "head-vulns.json")
+
+	headBody, headFindings, err := scanHead(ctx, deps, cfg, headJSON)
+	if err != nil {
+		return err
+	}
+
+	newFindings, modeUsed, err := diffAgainstBase(ctx, deps, cfg, workDir, headFindings)
 	if err != nil {
 		return err
 	}
 
 	deriveSecondaryReports(ctx, deps, cfg, headJSON)
 
-	if err := writeScanDepsSummary(ctx, summary, cfg, modeUsed, headBody, newIDs); err != nil {
+	if err := writeScanDepsSummary(ctx, summary, cfg, modeUsed, headBody, newFindings); err != nil {
 		return err
 	}
 
-	return reportScanDepsVerdict(w, annot, cfg, newIDs)
+	return reportScanDepsVerdict(w, annot, cfg, newFindings)
 }
 
 // scanDepsDeps is the collaborator set the dependency-scan phases share:
@@ -130,6 +188,7 @@ type scanDepsDeps struct {
 // scanDepsConfig is the resolved, defaulted input view used internally
 // by every phase. Lifts the cmp.Or defaulting out of the orchestrator.
 type scanDepsConfig struct {
+	relativeScope  string
 	failOnSev      string
 	mode           security.ScanMode
 	scanPath       string
@@ -156,6 +215,10 @@ type scanDepsConfig struct {
 // identically-named flag). The sibling `NormalizeOpengrepFailSeverity`
 // has always refused unknown input; this brings the two into line.
 func resolveScanDepsConfig(in ScanDependenciesInput) (scanDepsConfig, error) {
+	if in.ScanMode != "" && in.ScanMode != security.ScanModeDiff && in.ScanMode != security.ScanModeFull {
+		return scanDepsConfig{}, fmt.Errorf("unsupported dependency scan mode %q: %w", in.ScanMode, errs.ErrUsage)
+	}
+
 	if in.FailOnSeverity != "" && !security.ParseDepSeverity(in.FailOnSeverity).IsKnown() {
 		return scanDepsConfig{}, fmt.Errorf(
 			"scan dependencies: unknown --fail-on-severity %q (want low, moderate, high or critical; note this flag takes ONE word, unlike `security scan container` which takes a comma-list): %w",
@@ -184,35 +247,40 @@ func printScanDepsBanner(w io.Writer, cfg scanDepsConfig) {
 }
 
 // scanHead runs trivy against the working tree and returns the raw JSON
-// body alongside the extracted vulnerability IDs.
+// body alongside the extracted findings.
 func scanHead(
 	ctx context.Context,
 	deps scanDepsDeps,
 	cfg scanDepsConfig,
 	outputJSON string,
-) ([]byte, []string, error) {
+) ([]byte, []security.VulnFinding, error) {
 	_, _ = fmt.Fprintln(deps.w, "Scanning HEAD for vulnerabilities...")
 
-	if _, runErr := deps.trivy.RunInherit(ctx, deps.w, deps.stderr,
+	code, runErr := deps.trivy.RunInherit(ctx, deps.w, deps.stderr,
 		"fs", "--format", "json", "--severity", cfg.severityFilter,
-		"--scanners", "vuln", "--output", outputJSON, cfg.scanPath); runErr != nil {
+		"--scanners", "vuln", "--output", outputJSON, cfg.scanPath)
+	if runErr != nil {
 		return nil, nil, fmt.Errorf("trivy fs: %w", runErr)
 	}
 
-	body, err := os.ReadFile(outputJSON) //nolint:gosec // outputJSON is locally-built filename.
+	if code != 0 {
+		return nil, nil, fmt.Errorf("trivy fs exited with status %d: %w", code, errs.ErrDependencyUnavailable)
+	}
+
+	body, err := readJSONScanReport(outputJSON)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read head scan output %s: %w", outputJSON, err)
 	}
 
-	ids, err := security.ExtractTrivyVulnIDs(body)
+	findings, err := security.ExtractTrivyFindings(body)
 	if err != nil {
-		return nil, nil, fmt.Errorf("extract head ids: %w", err)
+		return nil, nil, fmt.Errorf("extract head findings: %w", err)
 	}
 
-	return body, ids, nil
+	return body, findings, nil
 }
 
-// diffAgainstBase resolves which vulnerability IDs are "new" given the
+// diffAgainstBase resolves which findings are "new" given the
 // configured mode. The returned modeUsed is the human-readable mode
 // string for the summary table — it carries fall-back annotations
 // ("full (worktree fallback)", "full (no base ref)") that aren't part
@@ -222,21 +290,21 @@ func diffAgainstBase(
 	deps scanDepsDeps,
 	cfg scanDepsConfig,
 	workDir string,
-	headIDs []string,
-) ([]string, string, error) {
+	headFindings []security.VulnFinding,
+) ([]security.VulnFinding, string, error) {
 	switch {
 	case cfg.mode == security.ScanModeDiff && cfg.baseRef != "":
-		return scanBaseRefViaWorktree(ctx, deps, cfg, workDir, headIDs)
+		return scanBaseRefViaWorktree(ctx, deps, cfg, workDir, headFindings)
 	case cfg.mode == security.ScanModeDiff && cfg.baseRef == "":
 		deps.annot.Warningf("Diff mode requested but no base ref available. Running full scan.")
 
-		_, _ = fmt.Fprintf(deps.w, "Total vulnerabilities: %d\n\n", len(headIDs))
+		_, _ = fmt.Fprintf(deps.w, "Total vulnerabilities: %d\n\n", len(headFindings))
 
-		return headIDs, "full (no base ref)", nil
+		return headFindings, "full (no base ref)", nil
 	default:
-		_, _ = fmt.Fprintf(deps.w, "Total vulnerabilities: %d\n\n", len(headIDs))
+		_, _ = fmt.Fprintf(deps.w, "Total vulnerabilities: %d\n\n", len(headFindings))
 
-		return headIDs, "full", nil
+		return headFindings, "full", nil
 	}
 }
 
@@ -252,13 +320,15 @@ func diffAgainstBase(
 // in .git/worktrees/ — that would surface as a "gitdir file points
 // to non-existent location" warning on the next CLI run against the
 // same checkout.
+//
+//nolint:nonamedreturns // deferred bounded cleanup joins its failure with the primary operation error.
 func scanBaseRefViaWorktree(
 	ctx context.Context,
 	deps scanDepsDeps,
 	cfg scanDepsConfig,
 	workDir string,
-	headIDs []string,
-) ([]string, string, error) {
+	headFindings []security.VulnFinding,
+) (findings []security.VulnFinding, mode string, err error) {
 	_, _ = fmt.Fprintf(deps.w, "Diff mode: scanning base ref %q for comparison...\n", cfg.baseRef)
 
 	worktreeDir := filepath.Join(workDir, "base-worktree")
@@ -268,36 +338,47 @@ func scanBaseRefViaWorktree(
 	if !ok {
 		deps.annot.Warningf("Could not create worktree for base ref %q. Falling back to full scan.", cfg.baseRef)
 
-		return headIDs, "full (worktree fallback)", nil
+		return headFindings, "full (worktree fallback)", nil
 	}
 
 	defer func() {
-		_, _ = deps.gitRepo.Run(ctx, "worktree", "remove", "-f", worktreeDir)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+
+		if _, cleanupErr := deps.gitRepo.Run(cleanupCtx, "worktree", "remove", "-f", worktreeDir); cleanupErr != nil {
+			err = errors.Join(err, fmt.Errorf("remove dependency worktree: %w", cleanupErr))
+		}
 	}()
 
 	baseJSON := filepath.Join(workDir, "base-vulns.json")
-	if _, runErr := deps.trivy.RunInherit(ctx, deps.w, deps.stderr,
+
+	code, runErr := deps.trivy.RunInherit(ctx, deps.w, deps.stderr,
 		"fs", "--format", "json", "--severity", cfg.severityFilter,
-		"--scanners", "vuln", "--output", baseJSON, worktreeDir); runErr != nil {
+		"--scanners", "vuln", "--output", baseJSON, filepath.Join(worktreeDir, cfg.relativeScope))
+	if runErr != nil {
 		return nil, "", fmt.Errorf("trivy fs (base): %w", runErr)
 	}
 
-	baseBody, err := os.ReadFile(baseJSON) //nolint:gosec // baseJSON is locally-built filename.
+	if code != 0 {
+		return nil, "", fmt.Errorf("trivy fs (base) exited with status %d: %w", code, errs.ErrDependencyUnavailable)
+	}
+
+	baseBody, err := readJSONScanReport(baseJSON)
 	if err != nil {
 		return nil, "", fmt.Errorf("read base scan output %s: %w", baseJSON, err)
 	}
 
-	baseIDs, err := security.ExtractTrivyVulnIDs(baseBody)
+	baseFindings, err := security.ExtractTrivyFindings(baseBody)
 	if err != nil {
-		return nil, "", fmt.Errorf("extract base ids: %w", err)
+		return nil, "", fmt.Errorf("extract base findings: %w", err)
 	}
 
-	newIDs := security.DiffNewIDs(baseIDs, headIDs)
-	_, _ = fmt.Fprintf(deps.w, "Base vulnerabilities: %d\n", len(baseIDs))
-	_, _ = fmt.Fprintf(deps.w, "Head vulnerabilities: %d\n", len(headIDs))
-	_, _ = fmt.Fprintf(deps.w, "New vulnerabilities:  %d\n\n", len(newIDs))
+	newFindings := security.DiffNewFindings(baseFindings, headFindings)
+	_, _ = fmt.Fprintf(deps.w, "Base vulnerabilities: %d\n", len(baseFindings))
+	_, _ = fmt.Fprintf(deps.w, "Head vulnerabilities: %d\n", len(headFindings))
+	_, _ = fmt.Fprintf(deps.w, "New vulnerabilities:  %d\n\n", len(newFindings))
 
-	return newIDs, "diff", nil
+	return newFindings, "diff", nil
 }
 
 // deriveSecondaryReports converts the head-scan JSON into SARIF (for
@@ -315,20 +396,29 @@ func deriveSecondaryReports(
 	}
 
 	_, _ = fmt.Fprintln(deps.w, "Converting JSON to SARIF...")
+	sarifPath := filepath.Join(filepath.Dir(headJSON), "report.sarif")
 
-	if _, err := deps.trivy.RunInherit(ctx, deps.w, deps.w,
-		"convert", "--format", "sarif", "--output", cfg.sarifFile, headJSON); err != nil {
+	code, err := deps.trivy.RunInherit(ctx, deps.w, deps.stderr,
+		"convert", "--format", "sarif", "--output", sarifPath, headJSON)
+	if err != nil {
 		deps.annot.Warningf("trivy convert failed: %v", err)
+	} else if code != 0 {
+		deps.annot.Warningf("trivy convert exited with status %d", code)
+	} else if err := publishScanReport(sarifPath, cfg.sarifFile, true); err != nil {
+		deps.annot.Warningf("publish converted SARIF: %v", err)
 	}
 
 	_, _ = fmt.Fprintln(deps.w, "Generating GitLab dependency-scanning report...")
 
+	gitlabPath := filepath.Join(filepath.Dir(headJSON), "gitlab.json")
 	if _, err := TrivyToGitLabDep(TransformInput{
 		InputPath:    headJSON,
-		OutputPath:   cfg.gitlabDepFile,
+		OutputPath:   gitlabPath,
 		TrivyVersion: cfg.trivyVersion,
 	}); err != nil {
 		deps.annot.Warningf("TrivyToGitLabDep: %v", err)
+	} else if err := publishScanReport(gitlabPath, cfg.gitlabDepFile, true); err != nil {
+		deps.annot.Warningf("publish GitLab dependency report: %v", err)
 	}
 }
 
@@ -338,14 +428,29 @@ func writeScanDepsSummary(
 	cfg scanDepsConfig,
 	modeUsed string,
 	headBody []byte,
-	newIDs []string,
+	newFindings []security.VulnFinding,
 ) error {
-	rows, _ := security.FilterVulnRowsByID(headBody, newIDs)
+	rows, _ := security.FilterVulnRows(headBody, newFindings)
+
+	// Package names and versions come from the scanned lockfiles, which a
+	// pull request controls. These cells are plain text, not code spans, so
+	// a pipe, a newline, a link or an HTML tag in one must render as the
+	// characters rather than reshape the table or the page.
+	for index, row := range rows {
+		rows[index] = security.VulnRow{
+			ID:        domainsummary.LiteralText(row.ID),
+			Severity:  domainsummary.LiteralText(row.Severity),
+			Package:   domainsummary.LiteralText(row.Package),
+			Installed: domainsummary.LiteralText(row.Installed),
+			Fixed:     domainsummary.LiteralText(row.Fixed),
+		}
+	}
+
 	if err := summary.Append(ctx, security.RenderScanDepsSummary(security.ScanDepsSummaryInput{
 		Mode:           modeUsed,
 		FailOnSeverity: cfg.failOnSev,
 		SeverityFilter: cfg.severityFilter,
-		NewCount:       len(newIDs),
+		NewCount:       len(newFindings),
 		NewRows:        rows,
 	})); err != nil {
 		return fmt.Errorf("append summary: %w", err)
@@ -354,19 +459,19 @@ func writeScanDepsSummary(
 	return nil
 }
 
-func reportScanDepsVerdict(w io.Writer, annot output.Annotator, cfg scanDepsConfig, newIDs []string) error {
-	if len(newIDs) == 0 {
+func reportScanDepsVerdict(w io.Writer, annot output.Annotator, cfg scanDepsConfig, newFindings []security.VulnFinding) error {
+	if len(newFindings) == 0 {
 		_, _ = fmt.Fprintf(w, "%s No new vulnerabilities found at severity %s or above\n", clicolor.Check(w), cfg.failOnSev)
 
 		return nil
 	}
 
 	noun := "vulnerabilities"
-	if len(newIDs) == 1 {
+	if len(newFindings) == 1 {
 		noun = "vulnerability"
 	}
 
-	msg := fmt.Sprintf("Found %d new %s at severity %s or above", len(newIDs), noun, cfg.failOnSev)
+	msg := fmt.Sprintf("Found %d new %s at severity %s or above", len(newFindings), noun, cfg.failOnSev)
 	annot.Errorf("%s", msg)
 	// Domain rule failure (scan threshold exceeded) — wrap so the CLI
 	// exits with ExitCodeValidation (1), not ExitCodeSoftware (70).

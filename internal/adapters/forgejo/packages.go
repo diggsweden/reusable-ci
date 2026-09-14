@@ -8,6 +8,8 @@ import (
 	"fmt"
 
 	"code.gitea.io/sdk/gitea"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 const forgejoPackagePageSize = 50
@@ -48,6 +50,15 @@ func (p *Provider) ListContainerPackageVersions(ctx context.Context, owner, name
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
+
+		// A server repeating its Link header would otherwise be followed
+		// until the job timed out, collecting the same page each time.
+		if resp.NextPage <= page {
+			return nil, fmt.Errorf("forgejo list container package versions %s/%s: next page %d does not advance past page %d: %w",
+				owner, name, resp.NextPage, page, errs.ErrMalformedInput)
+		}
+
+		page = resp.NextPage - 1
 	}
 
 	return versions, nil

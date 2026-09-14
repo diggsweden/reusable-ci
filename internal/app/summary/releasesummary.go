@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	domainsummary "github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
@@ -48,17 +49,17 @@ func ReleaseSummary(ctx context.Context, sink ci.SummarySink, in ReleaseSummaryI
 
 	icon := domainsummary.StatusIcon
 
-	prepare, err := domainsummary.ParseStageResultEnvelope(in.PrepareStageJSON)
+	prepare, err := stageResultFor(in.PrepareStageJSON, "prepare")
 	if err != nil {
 		return fmt.Errorf("prepare-stage result-json: %w", err)
 	}
 
-	build, err := domainsummary.ParseStageResultEnvelope(in.BuildStageJSON)
+	build, err := stageResultFor(in.BuildStageJSON, "build")
 	if err != nil {
 		return fmt.Errorf("build-stage result-json: %w", err)
 	}
 
-	publish, err := domainsummary.ParseStageResultEnvelope(in.PublishStageJSON)
+	publish, err := stageResultFor(in.PublishStageJSON, "publish")
 	if err != nil {
 		return fmt.Errorf("publish-stage result-json: %w", err)
 	}
@@ -88,7 +89,7 @@ func ReleaseSummary(ctx context.Context, sink ci.SummarySink, in ReleaseSummaryI
 	_, _ = fmt.Fprintf(&b, "| **Version** | `%s` |\n", domainsummary.SanitizeCell(in.ReleaseVersion))
 	_, _ = fmt.Fprintf(&b, "| **Branch** | `%s` |\n", domainsummary.SanitizeCell(in.ReleaseBranch))
 	_, _ = fmt.Fprintf(&b, "| **Commit** | `%s` |\n", domainsummary.SanitizeCell(in.ReleaseCommit))
-	_, _ = fmt.Fprintf(&b, "| **Released By** | @%s |\n", domainsummary.SanitizeCell(in.ReleaseActor))
+	_, _ = fmt.Fprintf(&b, "| **Released By** | @%s |\n", domainsummary.LiteralText(in.ReleaseActor))
 	_, _ = fmt.Fprintf(&b, "| **Released At** | %s |\n\n", now.UTC().Format("2006-01-02 15:04:05 UTC"))
 	_, _ = fmt.Fprintf(&b, "## Job Status\n")
 	_, _ = fmt.Fprintf(&b, "| Job | Status |\n")
@@ -106,7 +107,7 @@ func ReleaseSummary(ctx context.Context, sink ci.SummarySink, in ReleaseSummaryI
 		{"Build Cargo", target(build, pipeline.TargetCargo)},
 		{"Build Gradle Android", target(build, pipeline.TargetGradleAndroid)},
 		{"Build Xcode", target(build, pipeline.TargetXcodeIOS)},
-		{"Publish GitHub", target(publish, pipeline.TargetForgePackages)},
+		{"Publish Forge Packages", target(publish, pipeline.TargetForgePackages)},
 		{"Publish Maven Central", target(publish, pipeline.TargetMavenCentral)},
 		{"Publish Apple App Store", target(publish, pipeline.TargetXcodeIOS)},
 		{"Publish Google Play", target(publish, pipeline.TargetGooglePlay)},
@@ -116,18 +117,32 @@ func ReleaseSummary(ctx context.Context, sink ci.SummarySink, in ReleaseSummaryI
 		{"Promote Image → dev", reported(in.PromoteDevResult)},
 		{"Promote Image → staging", reported(in.PromoteStagingResult)},
 		{"Promote Image → release", reported(in.PromoteReleaseResult)},
-		{"GitHub Release", in.CreateReleaseResult},
+		{"Forge Release", in.CreateReleaseResult},
 	}
 	for _, r := range rows {
 		_, _ = fmt.Fprintf(&b, "| %s | %s |\n", r.label, icon(r.result))
 	}
 
 	_, _ = fmt.Fprintf(&b, "\n## Resources\n")
-	_, _ = fmt.Fprintf(&b, "- [Release](%s)\n",
-		domainsummary.ReleaseURL(in.URLs, in.ServerURL, in.Repository, in.ReleaseVersion))
-	_, _ = fmt.Fprintf(&b, "- [Packages](%s)\n",
-		domainsummary.PackagesURL(in.URLs, in.ServerURL, in.Repository))
-	_, _ = fmt.Fprintf(&b, "- [Workflow Run](%s)\n\n", in.RunURL)
+	b.WriteString(resourceLine("Release", domainsummary.ReleaseURL(in.URLs, in.ServerURL, in.Repository, in.ReleaseVersion)))
+	b.WriteString(resourceLine("Packages", domainsummary.PackagesURL(in.URLs, in.ServerURL, in.Repository)))
+	b.WriteString(resourceLine("Workflow Run", in.RunURL))
+	b.WriteString("\n")
 
 	return sink.Append(ctx, b.String())
+}
+
+// Empty slots are intentionally skipped; a supplied envelope must identify the
+// stage whose result the caller is about to display.
+func stageResultFor(value, stage string) (domainsummary.StageResultEnvelope, error) {
+	envelope, err := domainsummary.ParseStageResultEnvelope(value)
+	if err != nil {
+		return envelope, err
+	}
+
+	if strings.TrimSpace(value) != "" && envelope.Stage != stage {
+		return envelope, fmt.Errorf("expected %s stage, received %q: %w", stage, envelope.Stage, errs.ErrMalformedInput)
+	}
+
+	return envelope, nil
 }

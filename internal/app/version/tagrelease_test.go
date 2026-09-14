@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	appversion "github.com/diggsweden/reusable-ci/v3/internal/app/version"
@@ -17,48 +18,96 @@ import (
 
 // fakeTagReleaseRepo records the create-once tag operations.
 type fakeTagReleaseRepo struct {
-	exists       bool
-	existsErr    error
-	remoteExists bool
-	remoteErr    error
-	remote       string
-	remoteTag    string
-	createErr    error
-	pushErr      error
-	created      string
-	createdRef   string
-	createdSign  bool
-	pushed       string
-	pushedToken  runcontext.Credential
+	destinationErr    error
+	destinationChecks int
+	revRefs           []string
+	tagType           string
+	typeErr           error
+	signatureErr      error
+	typeRefs          []string
+	verified          []string
+	exists            bool
+	remoteExists      bool
+	localSHA          string
+	remoteSHA         string
+	remote            string
+	remoteTag         string
+	created           string
+	createdRef        string
+	createdSign       bool
+	pushed            string
+	pushedToken       runcontext.Credential
+}
+
+func (f *fakeTagReleaseRepo) CheckOriginPushDestination(_ context.Context) error {
+	f.destinationChecks++
+
+	return f.destinationErr
 }
 
 func (f *fakeTagReleaseRepo) TagExists(_ context.Context, _ string) (bool, error) {
-	return f.exists, f.existsErr
+	return f.exists, nil
 }
 
-func (f *fakeTagReleaseRepo) RemoteTagExists(_ context.Context, remote, tag string) (bool, error) {
+func (f *fakeTagReleaseRepo) TagSHA(_ context.Context, _ string) (string, error) {
+	return f.localSHA, nil
+}
+
+func (f *fakeTagReleaseRepo) RemoteTagCommitIfExists(_ context.Context, remote, tag string, _ runcontext.Credential) (string, bool, error) {
 	f.remote = remote
 	f.remoteTag = tag
 
-	return f.remoteExists, f.remoteErr
+	return f.remoteSHA, f.remoteExists, nil
+}
+
+func (f *fakeTagReleaseRepo) RemoteTagObjectIfExists(_ context.Context, _, _ string, _ runcontext.Credential) (string, bool, error) {
+	return tagObject, f.remoteExists, nil
+}
+
+func (f *fakeTagReleaseRepo) CatFileType(_ context.Context, ref string) (string, error) {
+	f.typeRefs = append(f.typeRefs, ref)
+	if f.tagType != "" {
+		return f.tagType, f.typeErr
+	}
+
+	return "tag", f.typeErr
+}
+
+func (f *fakeTagReleaseRepo) VerifyConfiguredTagSignature(_ context.Context, tag string) error {
+	f.verified = append(f.verified, tag)
+
+	return f.signatureErr
 }
 
 func (f *fakeTagReleaseRepo) CreateTag(_ context.Context, tag, ref string, signed bool) error {
 	f.created, f.createdRef, f.createdSign = tag, ref, signed
 
-	return f.createErr
+	return nil
 }
 
 func (f *fakeTagReleaseRepo) PushTagNoForce(_ context.Context, tag string, cred runcontext.Credential) error {
 	f.pushed = tag
 	f.pushedToken = cred
 
-	return f.pushErr
+	return nil
 }
 
-func (f *fakeTagReleaseRepo) RevParse(_ context.Context, _ string) (string, error) {
-	return "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", nil
+func (f *fakeTagReleaseRepo) RevParse(_ context.Context, ref string) (string, error) {
+	f.revRefs = append(f.revRefs, ref)
+	if ref != "HEAD" {
+		return tagObject, nil
+	}
+
+	return headSHA, nil
 }
+
+const (
+	// headSHA is what RevParse answers for HEAD -- the commit a new tag
+	// would be created at.
+	headSHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	// tagObject is what an existing tag object resolves to.
+	tagObject = "0123456789abcdef0123456789abcdef01234567"
+)
 
 func TestTagRelease_CreatesOnceAtHeadAndPushesNoForce(t *testing.T) {
 	t.Parallel()
@@ -73,8 +122,8 @@ func TestTagRelease_CreatesOnceAtHeadAndPushesNoForce(t *testing.T) {
 		t.Fatalf("TagRelease: %v", err)
 	}
 
-	if repo.created != "v3.5.7" || repo.createdRef != "HEAD" || !repo.createdSign {
-		t.Errorf("CreateTag got (%q,%q,%v), want (v3.5.7,HEAD,true)", repo.created, repo.createdRef, repo.createdSign)
+	if repo.created != "v3.5.7" || repo.createdRef != headSHA || !repo.createdSign {
+		t.Errorf("CreateTag got (%q,%q,%v), want (v3.5.7,%s,true)", repo.created, repo.createdRef, repo.createdSign, headSHA)
 	}
 
 	if repo.remote != "origin" || repo.remoteTag != "v3.5.7" {
@@ -96,7 +145,7 @@ func TestTagRelease_CreatesOnceAtHeadAndPushesNoForce(t *testing.T) {
 		t.Errorf("output = %+v, want tag v3.5.7 + non-empty release-sha", res)
 	}
 
-	if !bytes.Contains(out.Bytes(), []byte("Release tag v3.5.7 created at deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")) {
+	if !bytes.Contains(out.Bytes(), []byte("Release tag v3.5.7 created at "+headSHA)) {
 		t.Errorf("stdout = %q, want legacy success line", out.String())
 	}
 }
@@ -137,7 +186,7 @@ func TestTagRelease_DryRunSkipsMutationsAndNarrates(t *testing.T) {
 
 	// (b) Each skipped mutation is narrated.
 	for _, want := range []string{
-		"[dry-run] would create signed tag v3.5.7 at HEAD (deadbeefdeadbeefdeadbeefdeadbeefdeadbeef)",
+		"[dry-run] would create signed tag v3.5.7 at HEAD (" + headSHA + ")",
 		"[dry-run] would push tag v3.5.7 to origin (no force)",
 	} {
 		if !bytes.Contains(out.Bytes(), []byte(want)) {
@@ -150,22 +199,26 @@ func TestTagRelease_DryRunSkipsMutationsAndNarrates(t *testing.T) {
 	}
 
 	// The preview still reports the SHA the tag would point at.
-	if res.Tag != "v3.5.7" || res.ReleaseSHA != "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" {
+	if res.Tag != "v3.5.7" || res.ReleaseSHA != headSHA {
 		t.Errorf("output = %+v, want tag + HEAD sha", res)
 	}
 }
 
-// TestTagRelease_DryRunStillRefusesWhenTagExists proves validation is not
-// weakened by the preview: the create-once refusal fires in dry-run too.
-func TestTagRelease_DryRunStillRefusesWhenTagExists(t *testing.T) {
+func TestTagRelease_DryRunExistingExactLocalTagOnlyNarratesPush(t *testing.T) {
 	t.Parallel()
 
-	repo := &fakeTagReleaseRepo{exists: true}
+	repo := &fakeTagReleaseRepo{exists: true, localSHA: headSHA}
+
+	var out bytes.Buffer
 
 	_, err := appversion.TagRelease(context.Background(), repo,
-		appversion.TagReleaseInput{Tag: "v3.5.7", Signed: true, DryRun: true}, nil, &bytes.Buffer{})
-	if !errors.Is(err, errs.ErrValidation) {
-		t.Fatalf("err = %v, want ErrValidation (create-once refusal in dry-run)", err)
+		appversion.TagReleaseInput{Tag: "v3.5.7", Signed: true, DryRun: true}, nil, &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(out.String(), "would create") || !strings.Contains(out.String(), "would push") {
+		t.Errorf("dry-run output = %q, want push only", out.String())
 	}
 }
 
@@ -201,6 +254,44 @@ func TestTagRelease_RefusesWhenRemoteTagExists(t *testing.T) {
 	}
 }
 
+func TestTagRelease_ExactRemoteTagIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeTagReleaseRepo{exists: true, localSHA: headSHA, remoteExists: true, remoteSHA: headSHA}
+
+	var out bytes.Buffer
+
+	res, err := appversion.TagRelease(context.Background(), repo,
+		appversion.TagReleaseInput{Tag: "v3.5.7", Signed: true}, fakeoutputsink.New(t), &out)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if repo.created != "" || repo.pushed != "" {
+		t.Fatalf("exact rerun mutated tag: created=%q pushed=%q", repo.created, repo.pushed)
+	}
+
+	if res.ReleaseSHA != headSHA || !strings.Contains(out.String(), "rerun is a no-op") {
+		t.Errorf("result=%+v output=%q", res, out.String())
+	}
+}
+
+func TestTagRelease_ExactLocalTagIsPushedAfterInterruptedRun(t *testing.T) {
+	t.Parallel()
+
+	repo := &fakeTagReleaseRepo{exists: true, localSHA: headSHA}
+
+	_, err := appversion.TagRelease(context.Background(), repo,
+		appversion.TagReleaseInput{Tag: "v3.5.7", Signed: true}, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if repo.created != "" || repo.pushed != "v3.5.7" {
+		t.Errorf("created=%q pushed=%q, want existing local tag pushed only", repo.created, repo.pushed)
+	}
+}
+
 func TestTagRelease_RequiresTag(t *testing.T) {
 	t.Parallel()
 
@@ -230,5 +321,29 @@ func TestTagRelease_RequiresStableSingleLineTag(t *testing.T) {
 				t.Fatalf("invalid tag should not reach git operations: repo=%+v", repo)
 			}
 		})
+	}
+}
+
+func TestTagRelease_RefusesUninspectedDestination(t *testing.T) {
+	t.Parallel()
+
+	for _, dry := range []bool{false, true} {
+		for _, remote := range []string{"upstream", "https://forge.example/owner/repo.git", "origin"} {
+			repo := &fakeTagReleaseRepo{destinationErr: errs.ErrValidation}
+			sink := fakeoutputsink.New(t)
+
+			var out bytes.Buffer
+
+			res, err := appversion.TagRelease(t.Context(), repo, appversion.TagReleaseInput{Tag: "v1.2.3", Remote: remote, DryRun: dry}, sink, &out)
+
+			want, checks := errs.ErrUsage, 0
+			if remote == "origin" {
+				want, checks = errs.ErrValidation, 1
+			}
+
+			if !errors.Is(err, want) || res != nil || repo.destinationChecks != checks || len(repo.revRefs) != 0 || repo.remoteTag != "" || repo.created != "" || repo.pushed != "" || len(sink.Keys()) != 0 || out.Len() != 0 {
+				t.Fatalf("remote=%s dry=%v err=%v checks=%d: unexpected inspection or mutation", remote, dry, err, repo.destinationChecks)
+			}
+		}
 	}
 }

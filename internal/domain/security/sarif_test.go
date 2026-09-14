@@ -5,7 +5,8 @@ package security_test
 
 import (
 	"bytes"
-	"reflect"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/owenrumney/go-sarif/v3/pkg/report/v210/sarif"
@@ -66,7 +67,20 @@ func writeAndAssert(t *testing.T, report *security.TrivyReport, opts security.Op
 	}
 }
 
-func TestTrivyToSARIF_MapsSeveritiesToLevels(t *testing.T) {
+// TestTrivyToSARIF_SerialisesTheExpectedDocumentShape checks that the document
+// carries the fields a SARIF consumer requires, and nothing more than that.
+//
+// It was called MapsSeveritiesToLevels, which is a claim it cannot support:
+// every assertion below is a substring search over the serialised bytes, so
+// swapping CRITICAL to note and LOW to error leaves all three levels present
+// and the test green. A reader scanning for "is the severity mapping tested?"
+// would have stopped here and found an answer that was not true.
+//
+// The mapping itself is asserted per result, structurally, in
+// TestTrivyToSARIF_SeverityLevelIsPerResult. This one is named for what it
+// does: the schema version, the tool identity, the rule IDs and the image
+// reference all reach the output.
+func TestTrivyToSARIF_SerialisesTheExpectedDocumentShape(t *testing.T) {
 	t.Parallel()
 	writeAndAssert(t, sample(), security.Options{
 		ImageRef:     "ghcr.io/example/img@sha256:deadbeef",
@@ -76,11 +90,13 @@ func TestTrivyToSARIF_MapsSeveritiesToLevels(t *testing.T) {
 		`"version": "2.1.0"`,
 		`"name": "Trivy"`,
 		`"version": "0.69.3"`,
-		`"ruleId": "CVE-2025-0001"`, // CRITICAL → error
+		// The levels are listed as strings that must be present, not as a
+		// mapping: which finding gets which level is not observable here.
+		`"ruleId": "CVE-2025-0001"`,
+		`"ruleId": "CVE-2025-0002"`,
+		`"ruleId": "CVE-2025-0003"`,
 		`"level": "error"`,
-		`"ruleId": "CVE-2025-0002"`, // MEDIUM → warning
 		`"level": "warning"`,
-		`"ruleId": "CVE-2025-0003"`, // LOW → note
 		`"level": "note"`,
 		`"ghcr.io/example/img@sha256:deadbeef"`,
 	})
@@ -142,7 +158,7 @@ func TestTrivyToSARIF_SeverityLevelIsPerResult(t *testing.T) {
 		"CVE-EMPTY":     "none",
 		"CVE-LOWERCASE": "error",
 	}
-	if !reflect.DeepEqual(got, want) {
+	if !maps.Equal(got, want) {
 		t.Errorf("levels = %v, want %v", got, want)
 	}
 }
@@ -155,43 +171,100 @@ func TestTrivyToSARIF_RuleSetIsDeterministicallyOrdered(t *testing.T) {
 		t.Fatalf("runs = %d, want 1", len(doc.Runs))
 	}
 
-	rules := doc.Runs[0].Tool.Driver.Rules
-	if len(rules) != 3 {
-		t.Fatalf("rule count = %d, want 3 (one per unique CVE)", len(rules))
+	got := make([]string, 0, len(doc.Runs[0].Tool.Driver.Rules))
+
+	for _, rule := range doc.Runs[0].Tool.Driver.Rules {
+		id := ""
+		if rule.ID != nil {
+			id = *rule.ID
+		}
+
+		got = append(got, id)
 	}
-	// CVE ids sort lexicographically.
+
+	// One rule per unique CVE, and CVE ids sort lexicographically.
 	want := []string{"CVE-2025-0001", "CVE-2025-0002", "CVE-2025-0003"}
-
-	for i, r := range rules { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		got := ""
-		if r.ID != nil {
-			got = *r.ID
-		}
-
-		if got != want[i] {
-			t.Errorf("rules[%d].ID = %q, want %q", i, got, want[i])
-		}
+	if !slices.Equal(got, want) {
+		t.Errorf("rule ids = %v, want %v", got, want)
 	}
 }
 
-func TestTrivyToSARIF_ResultsAreDeterministicallyOrdered(t *testing.T) {
+// TestTrivyToSARIF_ResultsAreSortedByRuleIDThenMessage pins the order the
+// doc comment promises: "(CVE id, then message) so retries produce
+// byte-identical output". Feeding the same report twice cannot show that,
+// because this code path has no map iteration to be unstable — deleting
+// the sort entirely leaves such a test passing. Only input whose order
+// differs from the wanted output can see the sort at all.
+//
+// Trivy groups findings per target and does not order them, so the same
+// scan re-run can hand us the same CVEs in a different sequence; without
+// the sort the SARIF bytes churn and every retry looks like a new report.
+func TestTrivyToSARIF_ResultsAreSortedByRuleIDThenMessage(t *testing.T) {
 	t.Parallel()
 
-	first := security.TrivyToSARIF(sample(), security.Options{})
-	second := security.TrivyToSARIF(sample(), security.Options{})
+	// Deliberately scrambled: descending ids, and the two CVE-2025-0004
+	// findings arrive with the later message first so the tiebreak has
+	// something to do.
+	report := &security.TrivyReport{
+		Results: []security.TrivyResult{
+			{Vulnerabilities: []security.TrivyVulnerability{
+				{VulnerabilityID: "CVE-2025-0004", PkgName: "zeta", Severity: "LOW", Title: "second"},
+				{VulnerabilityID: "CVE-2025-0009", PkgName: "b", Severity: "LOW", Title: "t"},
+			}},
+			{Vulnerabilities: []security.TrivyVulnerability{
+				{VulnerabilityID: "CVE-2025-0004", PkgName: "alpha", Severity: "LOW", Title: "first"},
+				{VulnerabilityID: "CVE-2025-0001", PkgName: "a", Severity: "LOW", Title: "t"},
+			}},
+		},
+	}
 
-	var b1, b2 bytes.Buffer
-	if err := first.PrettyWrite(&b1); err != nil {
+	doc := security.TrivyToSARIF(report, security.Options{})
+
+	type finding struct{ id, msg string }
+
+	got := make([]finding, 0, len(doc.Runs[0].Results))
+
+	for _, res := range doc.Runs[0].Results {
+		got = append(got, finding{id: strOrEmpty(res.RuleID), msg: strOrEmpty(res.Message.Text)})
+	}
+
+	want := []finding{
+		{id: "CVE-2025-0001", msg: "t — a"},
+		{id: "CVE-2025-0004", msg: "first — alpha"},
+		{id: "CVE-2025-0004", msg: "second — zeta"},
+		{id: "CVE-2025-0009", msg: "t — b"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("result order = %v, want %v", got, want)
+	}
+}
+
+// TestTrivyToSARIF_IsByteStableAcrossRuns is the property the ordering
+// exists to deliver: a re-run of the same scan must produce the same file,
+// so a checksummed report does not churn.
+func TestTrivyToSARIF_IsByteStableAcrossRuns(t *testing.T) {
+	t.Parallel()
+
+	var first, second bytes.Buffer
+	if err := security.TrivyToSARIF(sample(), security.Options{}).PrettyWrite(&first); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := second.PrettyWrite(&b2); err != nil {
+	if err := security.TrivyToSARIF(sample(), security.Options{}).PrettyWrite(&second); err != nil {
 		t.Fatal(err)
 	}
 
-	if !bytes.Equal(b1.Bytes(), b2.Bytes()) {
-		t.Errorf("identical input produced non-identical SARIF — sort is non-deterministic")
+	if !bytes.Equal(first.Bytes(), second.Bytes()) {
+		t.Error("identical input produced non-identical SARIF")
 	}
+}
+
+func strOrEmpty(p *string) string {
+	if p == nil {
+		return ""
+	}
+
+	return *p
 }
 
 // resultByRuleID returns the message text and location URI of the result

@@ -88,7 +88,7 @@ func (r *Repo) InitWithObjectFormat(ctx context.Context, format string) error {
 
 	switch format {
 	case "sha1":
-		// git's default; no flag needed.
+		args = append(args, "--object-format=sha1")
 	case "sha256":
 		args = append(args, "--object-format=sha256")
 	default:
@@ -133,7 +133,20 @@ func (r *Repo) Fetch(ctx context.Context, remoteURL string, refspecs []string, c
 	args = append(args, defaultRemote)
 	args = append(args, refspecs...)
 
-	return r.runEnv(ctx, authEnv(remoteURL, cred), args...)
+	return r.runFetch(ctx, remoteURL, cred, args)
+}
+
+// runFetch runs a checkout fetch with the credential's header appended after
+// any GIT_CONFIG_* entries the process inherited. Replacing the inherited count
+// instead would silently drop an operator's URL rewrite or transport setting
+// whenever a token is present, and only then.
+func (r *Repo) runFetch(ctx context.Context, remoteURL string, cred runcontext.Credential, args []string) error {
+	env, err := appendRemoteAuthConfig(authEnv(remoteURL, cred), os.Getenv("GIT_CONFIG_COUNT"))
+	if err != nil {
+		return err
+	}
+
+	return r.runEnv(ctx, env, args...)
 }
 
 // FetchBranch runs `git fetch <remote> <branch>` with transient HTTP auth.
@@ -158,7 +171,7 @@ func (r *Repo) FetchTags(ctx context.Context, remoteURL string, cred runcontext.
 	args := append(r.safeDirArgs(), "-c", "protocol.version=2",
 		"fetch", "--quiet", "--tags", "--prune", "--no-recurse-submodules", defaultRemote)
 
-	return r.runEnv(ctx, authEnv(remoteURL, cred), args...)
+	return r.runFetch(ctx, remoteURL, cred, args)
 }
 
 // FetchAllRefs fetches every branch into refs/remotes/origin/* plus all tags —
@@ -171,7 +184,7 @@ func (r *Repo) FetchAllRefs(ctx context.Context, remoteURL string, cred runconte
 		"fetch", "--quiet", "--prune", "--no-recurse-submodules", defaultRemote,
 		"+refs/heads/*:refs/remotes/origin/*", "+refs/tags/*:refs/tags/*")
 
-	return r.runEnv(ctx, authEnv(remoteURL, cred), args...)
+	return r.runFetch(ctx, remoteURL, cred, args)
 }
 
 // authEnv builds the git environment that injects forge-neutral HTTP Basic
@@ -260,7 +273,7 @@ func (r *Repo) CheckoutDetach(ctx context.Context, ref string) error {
 // Checkout checks out a ref by name, with hooks disabled for release flows that
 // only need to move the working tree after creating an immutable tag.
 func (r *Repo) Checkout(ctx context.Context, ref string) error {
-	_, err := r.Run(ctx, "-c", "core.hooksPath=/dev/null", "checkout", ref)
+	_, err := r.Run(ctx, "-c", hooksDisabledConfig, "checkout", ref)
 
 	return err
 }
@@ -273,6 +286,7 @@ func (r *Repo) FetchTagForceFromRemote(ctx context.Context, remote, tag string, 
 	}
 
 	ref := refsTagsPrefix + tag
+
 	env, err := r.remoteAuthEnv(ctx, remote, cred)
 	if err != nil {
 		return err

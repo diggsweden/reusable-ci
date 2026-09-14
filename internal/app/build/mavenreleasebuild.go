@@ -5,8 +5,10 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	appsummary "github.com/diggsweden/reusable-ci/v3/internal/app/summary"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/build"
@@ -26,8 +28,8 @@ const (
 type MavenReleaseBuildInput struct {
 	ReleaseBuildOptions
 
-	// BuildType selects the build shape: "app" (clean package) or "lib"
-	// (compile/test/package with sources + javadoc).
+	// BuildType selects the lifecycle: "app" (clean package) or "lib"
+	// (compile/test/package with an optional project-owned profile).
 	BuildType string
 	// CLIOpts is $MAVEN_CLI_OPTS already split into argv.
 	CLIOpts []string
@@ -86,20 +88,31 @@ type mavenDeps struct {
 //
 // It is the Maven sibling of GoReleaseBuild — the binary-owned build sequence
 // (Design Rule 1). mvn runs in the process working directory (the forge job's
-// working-directory), matching MavenOps. The SBOM is best-effort (failure warns
-// + reports failure status but does not fail the build).
+// working-directory), matching MavenOps. When enabled, the Build SBOM is a
+// mandatory release deliverable and generation failure fails the build.
 //
-//nolint:varnamelen // idiomatic short names (w/in) — testing/http/io conventions, matching the sibling build funcs.
+//nolint:cyclop,varnamelen // linear preflight/install/expand/build/report sequence; idiomatic w/in writer/input names.
 func MavenReleaseBuild(ctx context.Context, summarySink ci.SummarySink, ops MavenOps, w, stderr io.Writer, in MavenReleaseBuildInput) error {
 	if in.BuildType != mavenBuildTypeApp && in.BuildType != mavenBuildTypeLib {
 		return fmt.Errorf("build-type must be %q or %q, got %q: %w", mavenBuildTypeApp, mavenBuildTypeLib, in.BuildType, errs.ErrUsage)
 	}
 
-	if err := MavenInstall(ctx, ops, in.CLIOpts, w, stderr); err != nil {
-		return fmt.Errorf("mvn install: %w", err)
+	if in.EnableBuildSBOM && strings.TrimSpace(in.SBOMToolVersion) == "" {
+		return fmt.Errorf("SBOM tool version is required: %w", errs.ErrUsage)
 	}
 
-	meta, err := resolveMavenMetadata(ctx, ops, MavenMetadataInput{Dir: in.Dir})
+	pom, err := loadMavenPOM(MavenMetadataInput{Dir: in.Dir})
+	if err != nil {
+		return err
+	}
+
+	if installErr := MavenInstall(ctx, ops, in.CLIOpts, w, stderr); installErr != nil {
+		return fmt.Errorf("mvn install: %w", installErr)
+	}
+
+	// Expansion stays after install so Maven can resolve sibling modules. Keep
+	// the preflight's selected local coordinates rather than reading a new POM.
+	meta, err := resolveMavenMetadata(ctx, ops, pom)
 	if err != nil {
 		return err
 	}
@@ -149,12 +162,13 @@ func mavenBuildArtifact(ctx context.Context, deps mavenDeps, in MavenReleaseBuil
 func mavenSBOMStep(ctx context.Context, deps mavenDeps, in MavenReleaseBuildInput) error {
 	outcome := outcomeSkipped
 
+	var generationErr error
+
 	if in.EnableBuildSBOM {
 		outcome = outcomeSuccess
 		if err := MavenBuildSBOM(ctx, deps.ops, in.CLIOpts, in.SBOMToolVersion, deps.w, deps.stderr); err != nil {
 			outcome = outcomeFailure
-
-			_, _ = fmt.Fprintf(deps.stderr, "WARN: Maven Build SBOM generation failed (continuing): %v\n", err)
+			generationErr = fmt.Errorf("maven Build SBOM generation failed: %w", err)
 		}
 	}
 
@@ -163,7 +177,11 @@ func mavenSBOMStep(ctx context.Context, deps mavenDeps, in MavenReleaseBuildInpu
 		Outcome:   outcome,
 		WorkDir:   defaultDir(in.Dir),
 	}); err != nil {
-		return fmt.Errorf("write SBOM status: %w", err)
+		return errors.Join(generationErr, fmt.Errorf("write SBOM status: %w", err))
+	}
+
+	if generationErr != nil {
+		return generationErr
 	}
 
 	return nil

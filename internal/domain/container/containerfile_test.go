@@ -25,6 +25,10 @@ func TestContainerfileRebuildsFromSource_KnownPatterns(t *testing.T) {
 		{"gradle_build", "RUN gradle build", true},
 		{"gradle_assemble", "RUN gradle assemble", true},
 		{"npm_run_build", "RUN npm run build", true},
+		// Only the second npm pattern matches this form, so without it that
+		// pattern had no fixture of its own and could be deleted unnoticed.
+		{"npm_build_then_run", "RUN npm --workspace web build && npm run start", true},
+		{"mvnw_install", "RUN ./mvnw install", true},
 		{"go_build", "RUN go build -o /out/demo ./cmd/demo", true},
 		{"plain_copy_only_build", "FROM alpine\nCOPY app /app\nCMD [\"/app\"]", false},
 		{"empty", "", false},

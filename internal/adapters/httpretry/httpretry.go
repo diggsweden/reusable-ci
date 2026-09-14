@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
 // Package httpretry wraps an http.RoundTripper with retry-on-transient-failure
-// semantics: 502/503/504, 429 Too Many Requests (honouring Retry-After),
-// and DNS/connection errors. Permanent failures (4xx other than 429,
-// 2xx, 3xx) pass through unchanged.
+// semantics for safe reads: GET and HEAD requests may retry 502/503/504, 429
+// Too Many Requests (honouring Retry-After), and DNS/connection errors.
+// Mutations are sent once because these failures do not prove the server did
+// not commit the request.
 //
 // The transport is safe for use as a drop-in replacement for
 // http.DefaultTransport. Use it via:
@@ -17,6 +18,7 @@ package httpretry
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 
@@ -30,6 +32,7 @@ import (
 	"time"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"math/bits"
 )
 
 // Config tunes the retry behaviour. Zero values get safe defaults.
@@ -48,17 +51,24 @@ type Config struct {
 	// Inner is the transport actually doing the requests. Tests inject
 	// an httptest-backed transport; production leaves nil → http.DefaultTransport.
 	Inner http.RoundTripper
-	// Clock is the time source used for sleep + Retry-After Date parsing.
+	// Clock is the time source used for the retry wait and for
+	// Retry-After Date parsing.
 	// Tests inject a fake; production leaves nil → real clock.
 	Clock Clock
 }
 
 // Clock is the minimal interface the retry loop needs from a clock.
-// Production wires the real clock; tests use a fake to advance virtual
-// time without sleeping.
+// Production wires the real clock; tests use a fake to make the waits
+// instant while still observing the durations that were asked for.
+//
+// NewTimer rather than a blocking Sleep(d): the retry wait must lose a
+// race against context cancellation (see Transport.sleep), and a
+// blocking sleep cannot be interrupted. Returning a *time.Timer keeps
+// Stop() available, so an abandoned wait releases its timer instead of
+// leaving one armed for up to MaxDelay.
 type Clock interface {
-	Sleep(d time.Duration)
 	Now() time.Time
+	NewTimer(d time.Duration) *time.Timer
 }
 
 // Defaults applied when Config fields are left zero.
@@ -72,8 +82,8 @@ const (
 // realClock is the production Clock backed by stdlib time.
 type realClock struct{}
 
-func (realClock) Sleep(d time.Duration) { time.Sleep(d) }
-func (realClock) Now() time.Time        { return time.Now() }
+func (realClock) Now() time.Time                       { return time.Now() }
+func (realClock) NewTimer(d time.Duration) *time.Timer { return time.NewTimer(d) }
 
 // Transport is the http.RoundTripper that applies the retry policy.
 type Transport struct {
@@ -112,13 +122,19 @@ func NewTransport(cfg Config) *Transport {
 
 // RoundTrip implements http.RoundTripper.
 //
-// Methods that are not idempotent (POST without Idempotency-Key) are
-// retried only on transport-level errors and 502/503/504 responses,
-// where the server has stated it didn't accept the request. 429 is
-// retried for every method — it explicitly invites a retry.
+// Only GET and HEAD are retried. A request with a body is retryable only when
+// net/http can recreate that body through GetBody. Mutations require
+// operation-specific idempotency or reconciliation and therefore pass through
+// to the inner transport exactly once.
 //
 //nolint:cyclop // retry loop with one branch per backoff/abort/replay/result class.
 func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if !retryableRequest(req) {
+		resp, err := t.cfg.Inner.RoundTrip(req)
+
+		return resp, safeTransportError(err)
+	}
+
 	var (
 		resp        *http.Response
 		err         error
@@ -129,10 +145,10 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	for attempt := range t.cfg.MaxAttempts {
 		// Rewind a request body on retries: net/http consumes the body
 		// on the first send, so subsequent attempts need a fresh reader.
-		if attempt > 0 && req.GetBody != nil {
+		if attempt > 0 && req.Body != nil && req.Body != http.NoBody {
 			body, bodyErr := req.GetBody()
 			if bodyErr != nil {
-				return nil, bodyErr
+				return nil, safeTransportError(bodyErr)
 			}
 
 			req.Body = body
@@ -142,14 +158,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 		retryReason = retryDecision(resp, err)
 		if retryReason == "" {
-			return resp, err
-		}
-
-		// Drain + close the response body before retrying so the
-		// connection can be reused.
-		if resp != nil {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
+			return resp, safeTransportError(err)
 		}
 
 		if attempt == t.cfg.MaxAttempts-1 {
@@ -159,6 +168,12 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		delay := t.computeDelay(attempt, resp)
 		if cumulative+delay > t.cfg.MaxCumulativeDelay {
 			break
+		}
+
+		// Drain + close only when another attempt will be made. The terminal
+		// response is consumed once by the exhaustion path below.
+		if resp != nil {
+			drainAndClose(resp)
 		}
 
 		// Make the retry observable: a flaky-but-recovering downstream
@@ -178,7 +193,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 
 	if err != nil {
-		return nil, err
+		return nil, safeTransportError(err)
 	}
 	// Permanent failure shape: surface a typed sentinel so callers can
 	// distinguish "we retried, it's still not working" from a fresh 5xx.
@@ -190,15 +205,43 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		case http.StatusTooManyRequests:
 			drainAndClose(resp)
 
-			return nil, errs.ErrRateLimited
+			return nil, exhaustedError(req, resp, errs.ErrRateLimited)
 		case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 			drainAndClose(resp)
 
-			return nil, errs.ErrDependencyUnavailable
+			return nil, exhaustedError(req, resp, errs.ErrDependencyUnavailable)
 		}
 	}
 
 	return resp, nil
+}
+
+// exhaustedError names the request and terminal status behind a retry
+// sentinel, so "rate limited" reaches the operator with what was throttled
+// rather than as a bare class. Only the method and host are public diagnostics.
+func exhaustedError(req *http.Request, resp *http.Response, sentinel error) error {
+	return fmt.Errorf("%s %s: HTTP %d, retries exhausted: %w", req.Method, req.URL.Host, resp.StatusCode, sentinel)
+}
+
+type transportError struct{ cause error }
+
+func (e transportError) Error() string { return "HTTP transport failed" }
+func (e transportError) Unwrap() error { return e.cause }
+
+func safeTransportError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	return transportError{cause: err}
+}
+
+func retryableRequest(req *http.Request) bool {
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		return false
+	}
+
+	return req.Body == nil || req.Body == http.NoBody || req.GetBody != nil
 }
 
 // drainAndClose consumes the body so the underlying connection can be
@@ -217,11 +260,9 @@ func drainAndClose(resp *http.Response) {
 // pair indicates a retryable failure, or "" when the result is final.
 func retryDecision(resp *http.Response, err error) string {
 	if err != nil {
-		// net/http surfaces transport errors as plain errors; nothing
-		// here is method-specific. We treat them all as retryable for
-		// the GETs we make; POSTs without GetBody won't even reach this
-		// point on retry, but we still try.
-		return "transport: " + err.Error()
+		// RoundTrip reaches this decision only for replayable GET/HEAD
+		// requests; mutations bypass the retry loop entirely.
+		return "transport failure"
 	}
 
 	if resp == nil {
@@ -232,9 +273,7 @@ func retryDecision(resp *http.Response, err error) string {
 	case http.StatusTooManyRequests:
 		return "429 Too Many Requests"
 	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		// Server is explicitly saying it didn't accept the request.
-		// Safe to retry regardless of method.
-		return strconv.Itoa(resp.StatusCode) + " " + resp.Status
+		return strconv.Itoa(resp.StatusCode) + " " + http.StatusText(resp.StatusCode)
 	}
 
 	return ""
@@ -249,9 +288,28 @@ func (t *Transport) computeDelay(attempt int, resp *http.Response) time.Duration
 	}
 	// Full jitter exponential backoff: rand within [0, 2^attempt * base].
 	// Mitigates thundering-herd when many workflows retry simultaneously.
-	upper := t.cfg.BaseDelay << uint(attempt) //nolint:gosec // small attempt bound
-	if upper > t.cfg.MaxDelay {
-		upper = t.cfg.MaxDelay
+	//
+	// The shift saturates instead of wrapping. Doubling a Duration is a shift
+	// on an int64, and it used to be taken unguarded: with a one-second base
+	// the product passes MaxInt64 at attempt 34 and comes back NEGATIVE, so
+	// the cap below (a negative value is not greater than MaxDelay) left it
+	// negative and rand.Int64N panicked on a non-positive bound — a crash
+	// inside a retry, which is the one place a caller has asked not to fail.
+	// Past attempt 62 the shift reaches zero instead, and a zero backoff is a
+	// hot loop against whatever was already refusing the request.
+	//
+	// Neither is reachable with the retry counts this package ships, and both
+	// are reachable from a Config an adopter supplies, which is why the bound
+	// is enforced here rather than assumed at the call site.
+	upper := t.cfg.MaxDelay
+	if base := t.cfg.BaseDelay; base > 0 && attempt >= 0 && attempt < bits.LeadingZeros64(uint64(base)) {
+		if shifted := base << uint(attempt); shifted < upper { //nolint:gosec // bounded by the guard above.
+			upper = shifted
+		}
+	}
+
+	if upper <= 0 {
+		return 0
 	}
 
 	// nosemgrep: go.lang.security.audit.crypto.math_random.math-random-used
@@ -274,8 +332,13 @@ func (t *Transport) retryAfterDelay(resp *http.Response) (time.Duration, bool) {
 		return 0, false
 	}
 
-	if secs, err := strconv.Atoi(h); err == nil && secs > 0 {
-		return capDelay(time.Duration(secs)*time.Second, t.cfg.MaxDelay), true
+	if strings.Trim(h, "0123456789") == "" {
+		secs, err := strconv.ParseInt(h, 10, 64)
+		if err != nil || secs > int64(t.cfg.MaxDelay/time.Second) {
+			return t.cfg.MaxDelay, true
+		}
+
+		return time.Duration(secs) * time.Second, true
 	}
 
 	if when, err := http.ParseTime(h); err == nil {
@@ -298,7 +361,7 @@ func capDelay(d, maxDelay time.Duration) time.Duration {
 // sleep honours context cancellation. Returns false when the context
 // expires during the sleep; true when the sleep ran to completion.
 func (t *Transport) sleep(ctx context.Context, d time.Duration) bool {
-	timer := time.NewTimer(d)
+	timer := t.cfg.Clock.NewTimer(d)
 	defer timer.Stop()
 
 	select {

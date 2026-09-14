@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // FileSigner signs one SBOM file, emitting a detached signature sidecar
@@ -26,7 +28,7 @@ type FileSigner interface {
 // SignAssembled signs every assembled SBOM under dir — files matching
 // *-sbom.spdx.json / *-sbom.cyclonedx.json — producing a <file>.bundle each.
 // Mode-agnostic: it runs after any assemble mode and signs whatever landed.
-func SignAssembled(ctx context.Context, signer FileSigner, dir string, w, stderr io.Writer) error { //nolint:varnamelen // idiomatic short names (w) — testing/http/io conventions.
+func SignAssembled(ctx context.Context, signer FileSigner, dir string, w io.Writer) error { //nolint:varnamelen // idiomatic short names (w) — testing/http/io conventions.
 	files, err := findAssembledSBOMs(dir)
 	if err != nil {
 		return err
@@ -58,16 +60,32 @@ func findAssembledSBOMs(dir string) ([]string, error) {
 		dir = "."
 	}
 
+	root, err := pathsafe.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = root.Close() }()
+
 	var out []string
 
-	walkErr := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	walkErr := fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err //nolint:wrapcheck // walker error surfaced as-is.
 		}
 
 		name := d.Name()
 		if strings.HasSuffix(name, "-sbom.spdx.json") || strings.HasSuffix(name, "-sbom.cyclonedx.json") {
-			out = append(out, path)
+			info, statErr := root.Lstat(path)
+			if statErr != nil {
+				return statErr
+			}
+
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("SBOM must be a confined regular file: %w", errs.ErrValidation)
+			}
+
+			out = append(out, filepath.Join(dir, path))
 		}
 
 		return nil

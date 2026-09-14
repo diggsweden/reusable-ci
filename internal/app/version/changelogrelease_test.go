@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	appversion "github.com/diggsweden/reusable-ci/v3/internal/app/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domaingit "github.com/diggsweden/reusable-ci/v3/internal/domain/git"
@@ -19,20 +21,35 @@ import (
 )
 
 type fakeChangelogReleaseRepo struct {
-	cfg          map[string]string
-	remoteName   string
-	remoteURL    string
-	status       string
-	added        []string
-	commit       domaingit.CommitInput
-	pushedBranch string
-	tagged       string
-	tagSigned    bool
-	pushedTag    string
-	checkedOut   string
+	cfg               map[string]string
+	remoteName        string
+	remoteURL         string
+	status            string
+	added             []string
+	commit            domaingit.CommitInput
+	pushedBranch      string
+	tagged            string
+	tagSigned         bool
+	pushedTag         string
+	checkedOut        string
+	calls             []string
+	destinationChecks int
+	destinationFailAt int
+}
+
+func (f *fakeChangelogReleaseRepo) CheckOriginPushDestination(_ context.Context) error {
+	f.calls = append(f.calls, "destination")
+
+	f.destinationChecks++
+	if f.destinationChecks == f.destinationFailAt {
+		return errs.ErrValidation
+	}
+
+	return nil
 }
 
 func (f *fakeChangelogReleaseRepo) Config(_ context.Context, key, value string) error {
+	f.calls = append(f.calls, "config:"+key)
 	if f.cfg == nil {
 		f.cfg = map[string]string{}
 	}
@@ -43,6 +60,7 @@ func (f *fakeChangelogReleaseRepo) Config(_ context.Context, key, value string) 
 }
 
 func (f *fakeChangelogReleaseRepo) SetRemoteURL(_ context.Context, remote, url string) error {
+	f.calls = append(f.calls, "set-url")
 	f.remoteName = remote
 	f.remoteURL = url
 
@@ -50,22 +68,27 @@ func (f *fakeChangelogReleaseRepo) SetRemoteURL(_ context.Context, remote, url s
 }
 
 func (f *fakeChangelogReleaseRepo) StatusPorcelain(_ context.Context, _ string) (string, error) {
+	f.calls = append(f.calls, "status")
+
 	return f.status, nil
 }
 
 func (f *fakeChangelogReleaseRepo) AddPathspecsStrict(_ context.Context, pathspecs []string) error {
+	f.calls = append(f.calls, "add")
 	f.added = append([]string{}, pathspecs...)
 
 	return nil
 }
 
 func (f *fakeChangelogReleaseRepo) Commit(_ context.Context, in domaingit.CommitInput) error {
+	f.calls = append(f.calls, "commit")
 	f.commit = in
 
 	return nil
 }
 
 func (f *fakeChangelogReleaseRepo) PushBranchNoForce(_ context.Context, branch string, _ runcontext.Credential) error {
+	f.calls = append(f.calls, "push-branch")
 	f.pushedBranch = branch
 
 	return nil
@@ -81,8 +104,26 @@ func (f *fakeChangelogReleaseRepo) TagExists(_ context.Context, _ string) (bool,
 	return false, nil
 }
 
-func (f *fakeChangelogReleaseRepo) RemoteTagExists(_ context.Context, _, _ string) (bool, error) {
-	return false, nil
+func (f *fakeChangelogReleaseRepo) TagSHA(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
+func (f *fakeChangelogReleaseRepo) RemoteTagCommitIfExists(_ context.Context, repository, _ string, _ runcontext.Credential) (string, bool, error) {
+	f.calls = append(f.calls, "remote-tag:"+repository)
+
+	return "", false, nil
+}
+
+func (f *fakeChangelogReleaseRepo) RemoteTagObjectIfExists(_ context.Context, _, _ string, _ runcontext.Credential) (string, bool, error) {
+	return "", false, nil
+}
+
+func (f *fakeChangelogReleaseRepo) CatFileType(_ context.Context, _ string) (string, error) {
+	return "tag", nil
+}
+
+func (f *fakeChangelogReleaseRepo) VerifyConfiguredTagSignature(_ context.Context, _ string) error {
+	return nil
 }
 
 func (f *fakeChangelogReleaseRepo) CreateTag(_ context.Context, tag, _ string, signed bool) error {
@@ -314,7 +355,83 @@ func TestChangelogRelease_RequiresStableTag(t *testing.T) {
 	}
 }
 
-func TestParseChangelogReleaseGitURL(t *testing.T) {
+func TestChangelogBinding_RejectsUnsupportedRemoteAndBranchBeforeEffects(t *testing.T) {
+	t.Parallel()
+
+	for _, dry := range []bool{false, true} {
+		for _, bad := range []string{"upstream", "--mirror", "+main", "+main:other", "main:other"} {
+			in := appversion.ChangelogReleaseInput{Tag: "v1.2.3", Repository: "owner/repo", GitURL: "ssh://git@forge.example/owner/repo.git", AuthorName: "Fixture", AuthorEmail: "fixture@example.invalid", SigningKeyPath: "/fixture-key", DryRun: dry}
+			if bad == "upstream" {
+				in.RemoteName = bad
+			} else {
+				in.Branch = bad
+			}
+
+			repo := &fakeChangelogReleaseRepo{}
+			sink := fakeoutputsink.New(t)
+
+			var out bytes.Buffer
+
+			require.ErrorIs(t, appversion.ChangelogReleasePreflight(in), errs.ErrUsage)
+			res, err := appversion.ChangelogRelease(t.Context(), repo, sink, &out, in)
+			require.ErrorIs(t, err, errs.ErrUsage)
+			require.Nil(t, res)
+			require.Empty(t, repo.calls)
+			require.Empty(t, out.String())
+			require.Empty(t, sink.Keys())
+		}
+	}
+}
+
+func TestChangelogBinding_DestinationCheckedBeforeEffectsAndAfterSetup(t *testing.T) {
+	for _, failAt := range []int{1, 2, 0} {
+		dir := t.TempDir()
+		t.Chdir(dir)
+		writeFile(t, dir, "CHANGELOG.md", "# changed\n")
+		writeFile(t, dir, "commit-msg.txt", "chore(release): bump to v1.2.3\n")
+
+		in := appversion.ChangelogReleaseInput{Tag: "v1.2.3", Repository: "owner/repo", GitURL: "ssh://git@forge.example/owner/repo.git", AuthorName: "Fixture", AuthorEmail: "fixture@example.invalid", SigningKeyPath: "/fixture-key", Token: runcontext.OperatorCredential("fixture-token")}
+		repo := &fakeChangelogReleaseRepo{status: " M CHANGELOG.md", destinationFailAt: failAt}
+		sink := fakeoutputsink.New(t)
+
+		var out bytes.Buffer
+
+		res, err := appversion.ChangelogRelease(t.Context(), repo, sink, &out, in)
+
+		want := []string{"destination"}
+		if failAt != 1 {
+			want = append(want, "status", "remote-tag:"+in.GitURL, "config:user.name", "config:user.email", "config:gpg.format", "config:user.signingkey", "config:commit.gpgsign", "set-url", "destination")
+			// No local config rollback is promised after the second refusal.
+			require.Equal(t, in.GitURL, repo.remoteURL)
+			require.Equal(t, in.AuthorName, repo.cfg["user.name"])
+		} else {
+			require.Empty(t, repo.cfg)
+			require.Empty(t, repo.remoteURL)
+		}
+
+		if failAt != 0 {
+			require.ErrorIs(t, err, errs.ErrValidation)
+			require.Nil(t, res)
+			require.Empty(t, repo.added)
+			require.Empty(t, repo.commit.MessageFile)
+			require.Empty(t, repo.pushedBranch)
+			require.Empty(t, repo.tagged)
+			require.Empty(t, sink.Keys())
+			require.Empty(t, out.String())
+		} else {
+			require.NoError(t, err)
+			require.NotNil(t, res)
+
+			want = append(want, "add", "commit", "push-branch", "destination", "remote-tag:origin")
+
+			require.Equal(t, "main", repo.pushedBranch)
+		}
+
+		require.Equal(t, want, repo.calls)
+	}
+}
+
+func TestParseChangelogReleaseGitURL_AcceptsOnlyPasswordlessSSHGitURLs(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -330,7 +447,7 @@ func TestParseChangelogReleaseGitURL(t *testing.T) {
 		{name: "scp form", rawURL: "git@git.example.test:owner/repository.git", repository: "owner/repository", wantErr: true},
 		{name: "wrong scheme", rawURL: "https://git@git.example.test/owner/repository.git", repository: "owner/repository", wantErr: true},
 		{name: "wrong user", rawURL: "ssh://deploy@git.example.test/owner/repository.git", repository: "owner/repository", wantErr: true},
-		{name: "password", rawURL: "ssh://git:secret@git.example.test/owner/repository.git", repository: "owner/repository", wantErr: true},
+		{name: "password", rawURL: "ssh://git:secret@git.example.test/owner/repository.git", repository: "owner/repository", wantErr: true}, //nolint:gosec // Synthetic password-bearing URL verifies rejection.
 		{name: "missing hostname", rawURL: "ssh://git@/owner/repository.git", repository: "owner/repository", wantErr: true},
 		{name: "empty explicit port", rawURL: "ssh://git@git.example.test:/owner/repository.git", repository: "owner/repository", wantErr: true},
 		{name: "nonnumeric port", rawURL: "ssh://git@git.example.test:ssh/owner/repository.git", repository: "owner/repository", wantErr: true},

@@ -12,7 +12,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
-func TestXcodeListBuiltArtifacts(t *testing.T) {
+func TestXcodeListBuiltArtifacts_ListsOnlyTheExportedIPA(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
 	fsys.WriteFile(filepath.Join("build", "export", "Demo.ipa"), []byte("fake-ipa"))
@@ -30,17 +30,9 @@ func TestXcodeListBuiltArtifacts(t *testing.T) {
 	}
 }
 
-// TestXcodeListBuiltArtifacts_SkipsArchiveBundles records a real gap.
-//
-// xcodebuild produces .xcarchive as a bundle *directory*, and the walk
-// returns early on every directory, so an archive is never listed. The
-// previous fixture wrote build/app.xcarchive as a plain file -- which
-// xcodebuild never produces -- and the test passed on that basis alone.
-//
-// It matters most on the unsigned path, whose only output is the archive:
-// that build reports "No artifacts found" for a build that succeeded. See
-// docs/open-questions.md.
-func TestXcodeListBuiltArtifacts_SkipsArchiveBundles(t *testing.T) {
+// TestXcodeListBuiltArtifacts_ListsArchiveBundles uses the directory shape
+// xcodebuild actually writes rather than an impossible plain .xcarchive file.
+func TestXcodeListBuiltArtifacts_ListsArchiveBundles(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.Chdir()
 
@@ -54,7 +46,7 @@ func TestXcodeListBuiltArtifacts_SkipsArchiveBundles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, want := out.String(), "Built artifacts:\nNo artifacts found\n"; got != want {
+	if got, want := out.String(), "Built artifacts:\n"+filepath.Join("build", "app.xcarchive")+"\n"; got != want {
 		t.Errorf("listing = %q, want %q", got, want)
 	}
 }

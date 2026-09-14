@@ -216,7 +216,7 @@ func verifyReleaseImageEvidence(ctx context.Context, verifier imageEvidenceVerif
 	if err := verifier.VerifyImage(ctx, domaincontainer.ImageVerifyRequest{ImageRef: ref, KeyRef: publicKey}, &errBuf); err != nil {
 		printReleaseImageVerificationError(out, ref, "signature", errBuf.Bytes())
 
-		return fmt.Errorf("release image verify: signature verification failed for %s: %w", ref, err)
+		return wrapVerificationFailure("release image verify: signature verification failed for "+ref, err)
 	}
 
 	errBuf.Reset()
@@ -224,7 +224,7 @@ func verifyReleaseImageEvidence(ctx context.Context, verifier imageEvidenceVerif
 	if err := verifier.VerifyAttestation(ctx, domaincontainer.AttestationVerifyRequest{ImageRef: ref, PredicateType: domaincontainer.PredicateTypeCycloneDX, KeyRef: publicKey}, &errBuf); err != nil {
 		printReleaseImageVerificationError(out, ref, "CycloneDX attestation", errBuf.Bytes())
 
-		return fmt.Errorf("release image verify: CycloneDX attestation verification failed for %s: %w", ref, err)
+		return wrapVerificationFailure("release image verify: CycloneDX attestation verification failed for "+ref, err)
 	}
 
 	errBuf.Reset()
@@ -233,7 +233,7 @@ func verifyReleaseImageEvidence(ctx context.Context, verifier imageEvidenceVerif
 	if err := verifier.VerifyAttestationOutput(ctx, domaincontainer.AttestationVerifyRequest{ImageRef: ref, PredicateType: domaincontainer.PredicateTypeSLSAProvenance1, KeyRef: publicKey}, &provenance, &errBuf); err != nil {
 		printReleaseImageVerificationError(out, ref, "SLSA provenance attestation", errBuf.Bytes())
 
-		return fmt.Errorf("release image verify: SLSA provenance attestation verification failed for %s: %w", ref, err)
+		return wrapVerificationFailure("release image verify: SLSA provenance attestation verification failed for "+ref, err)
 	}
 
 	if err := releaseImageProvenanceAttestationMatches(provenance.Bytes(), expected); err != nil {
@@ -262,7 +262,7 @@ func releaseImageCanBeReattested(ctx context.Context, verifier imageEvidenceVeri
 		_, _ = fmt.Fprintf(out, "re-attest declined: cosign verify did not pass for %s:\n", ref)
 		printReleaseImageVerificationError(out, ref, "signature", errBuf.Bytes())
 
-		return fmt.Errorf("release image verify: re-attestation signature precheck failed: %w", err)
+		return wrapVerificationFailure("release image verify: re-attestation signature precheck failed", err)
 	}
 
 	errBuf.Reset()
@@ -271,7 +271,7 @@ func releaseImageCanBeReattested(ctx context.Context, verifier imageEvidenceVeri
 		_, _ = fmt.Fprintf(out, "re-attest declined: cosign verify-attestation (cyclonedx) did not pass for %s:\n", ref)
 		printReleaseImageVerificationError(out, ref, "CycloneDX attestation", errBuf.Bytes())
 
-		return fmt.Errorf("release image verify: re-attestation CycloneDX precheck failed: %w", err)
+		return wrapVerificationFailure("release image verify: re-attestation CycloneDX precheck failed", err)
 	}
 
 	inspectRef := releaseImageDigestOnlyRef(ref)

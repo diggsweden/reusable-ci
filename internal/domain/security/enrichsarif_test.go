@@ -4,14 +4,19 @@
 package security_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/security"
 )
 
 func TestEnrichGitHubSARIF_AddsMatchBasedID(t *testing.T) {
+	t.Parallel()
+
 	body := []byte(`{
   "runs": [{
     "results": [{
@@ -35,6 +40,8 @@ func TestEnrichGitHubSARIF_AddsMatchBasedID(t *testing.T) {
 }
 
 func TestEnrichGitHubSARIF_LeavesExistingHashAlone(t *testing.T) {
+	t.Parallel()
+
 	body := []byte(`{
   "runs": [{
     "results": [{
@@ -57,6 +64,8 @@ func TestEnrichGitHubSARIF_LeavesExistingHashAlone(t *testing.T) {
 }
 
 func TestEnrichGitHubSARIF_FallbackCompositeHash(t *testing.T) {
+	t.Parallel()
+
 	body := []byte(`{
   "runs": [{
     "results": [{
@@ -74,13 +83,15 @@ func TestEnrichGitHubSARIF_FallbackCompositeHash(t *testing.T) {
 
 	fp := firstPartialFingerprints(t, got)
 
-	want := "MY-RULE|src/foo.go|42|missing semicolon"
+	want := `["MY-RULE","src/foo.go","42","missing semicolon"]`
 	if fp["primaryLocationLineHash"] != want {
 		t.Errorf("hash = %q, want %q", fp["primaryLocationLineHash"], want)
 	}
 }
 
 func TestEnrichGitHubSARIF_DefaultsOnMissingFields(t *testing.T) {
+	t.Parallel()
+
 	body := []byte(`{
   "runs": [{
     "results": [{}]
@@ -93,12 +104,14 @@ func TestEnrichGitHubSARIF_DefaultsOnMissingFields(t *testing.T) {
 	}
 
 	fp := firstPartialFingerprints(t, got)
-	if fp["primaryLocationLineHash"] != "rule|unknown|0|" {
-		t.Errorf("got %q, want rule|unknown|0|", fp["primaryLocationLineHash"])
+	if fp["primaryLocationLineHash"] != `["rule","unknown","0",""]` {
+		t.Errorf("unexpected default identity: %q", fp["primaryLocationLineHash"])
 	}
 }
 
 func TestEnrichGitHubSARIF_EmptyExistingHashTreatedAsAbsent(t *testing.T) {
+	t.Parallel()
+
 	body := []byte(`{
   "runs": [{
     "results": [{
@@ -121,6 +134,8 @@ func TestEnrichGitHubSARIF_EmptyExistingHashTreatedAsAbsent(t *testing.T) {
 }
 
 func TestEnrichGitHubSARIF_PassesThroughNonObjectInputs(t *testing.T) {
+	t.Parallel()
+
 	got, err := security.EnrichGitHubSARIF([]byte(`[1,2,3]`))
 	if err != nil {
 		t.Fatal(err)
@@ -256,8 +271,8 @@ func TestEnrichGitHubSARIF_EnrichesEveryResultInEveryRun(t *testing.T) {
 	}
 
 	want := [][]string{
-		{"A|a.go|1|first", "B|b.go|2|second"},
-		{"C|c.go|3|third"},
+		{`["A","a.go","1","first"]`, `["B","b.go","2","second"]`},
+		{`["C","c.go","3","third"]`},
 	}
 
 	if len(doc.Runs) != len(want) {
@@ -275,4 +290,84 @@ func TestEnrichGitHubSARIF_EnrichesEveryResultInEveryRun(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestEnrichGitHubSARIF_OnlyMissingHashesAreAddedAndNumbersKeepTheirSpelling
+// runs one document through twice. Its results mix the three cases in one
+// run: a hash already present, a matchBasedId to reuse, and a fallback built
+// from a line number past float64's exact range. The expected tree is the
+// input decoded with UseNumber plus exactly the added hashes, so a changed
+// number, a replaced hash or any other edit is a difference -- decoding both
+// sides into float64, as the preservation test above does, would round them
+// alike and hide it. The second pass must change nothing.
+func TestEnrichGitHubSARIF_OnlyMissingHashesAreAddedAndNumbersKeepTheirSpelling(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`{"runs":[{"properties":{"rank":123456789012345678901234567890},"results":[
+{"ruleId":"KEPT","partialFingerprints":{"primaryLocationLineHash":"kept","other":"x"}},
+{"ruleId":"MATCH","fingerprints":{"matchBasedId/v1":"m-1"},"properties":{"score":0.10000000000000000555}},
+{"ruleId":"FALLBACK","message":{"text":"big"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"z.go"},"region":{"startLine":9007199254740993}}}]}
+]}]}`)
+
+	first, err := security.EnrichGitHubSARIF(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := decodeWithNumbers(t, []byte(`{"runs":[{"properties":{"rank":123456789012345678901234567890},"results":[
+{"ruleId":"KEPT","partialFingerprints":{"primaryLocationLineHash":"kept","other":"x"}},
+{"ruleId":"MATCH","fingerprints":{"matchBasedId/v1":"m-1"},"properties":{"score":0.10000000000000000555},"partialFingerprints":{"primaryLocationLineHash":"m-1"}},
+{"ruleId":"FALLBACK","message":{"text":"big"},"locations":[{"physicalLocation":{"artifactLocation":{"uri":"z.go"},"region":{"startLine":9007199254740993}}}],
+ "partialFingerprints":{"primaryLocationLineHash":"[\"FALLBACK\",\"z.go\",\"9007199254740993\",\"big\"]"}}
+]}]}`))
+
+	if got := decodeWithNumbers(t, first); !reflect.DeepEqual(got, want) {
+		t.Errorf("enriched document =\n%#v\nwant\n%#v", got, want)
+	}
+
+	second, err := security.EnrichGitHubSARIF(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(second, first) {
+		t.Errorf("second pass changed the document:\nfirst  %s\nsecond %s", first, second)
+	}
+}
+
+// TestSARIFRewriters_ClassifyMalformedDocuments pins the error class for a
+// document that is not one JSON value. It had none, so the CLI reported a
+// truncated SARIF file as an internal error (exit 70) rather than bad input.
+func TestSARIFRewriters_ClassifyMalformedDocuments(t *testing.T) {
+	t.Parallel()
+
+	for name, body := range map[string]string{
+		"truncated":     `{"runs":[`,
+		"two values":    `{} {}`,
+		"not json":      `runs`,
+		"empty":         ``,
+		"trailing junk": `{"runs":[]} x`,
+	} {
+		if _, err := security.EnrichGitHubSARIF([]byte(body)); !errors.Is(err, errs.ErrMalformedInput) {
+			t.Errorf("enrich %s: err = %v, want ErrMalformedInput", name, err)
+		}
+
+		if _, err := security.SetSARIFCategory([]byte(body), "cat"); !errors.Is(err, errs.ErrMalformedInput) {
+			t.Errorf("category %s: err = %v, want ErrMalformedInput", name, err)
+		}
+	}
+}
+
+func decodeWithNumbers(t *testing.T, body []byte) map[string]any {
+	t.Helper()
+
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+
+	var doc map[string]any
+	if err := decoder.Decode(&doc); err != nil {
+		t.Fatal(err)
+	}
+
+	return doc
 }

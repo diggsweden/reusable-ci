@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -25,6 +26,21 @@ import (
 // No t.Parallel(): mockbinary prepends to PATH via t.Setenv.
 
 const testPublicKey = "-----BEGIN PUBLIC KEY-----\nMFkw\n-----END PUBLIC KEY-----\n"
+
+func TestPublicKey_PropagatesWriterFailure(t *testing.T) {
+	bins := mockbinary.New(t)
+	bins.Add("cosign", `printf '%s' '`+testPublicKey+`'`)
+
+	reader, writer := io.Pipe()
+
+	_ = reader.Close()
+	defer func() { _ = writer.Close() }()
+
+	adapter := &cosign.Adapter{Bin: bins.Path("cosign")}
+	if err := adapter.PublicKey(context.Background(), "cosign.key", writer, io.Discard); !errors.Is(err, io.ErrClosedPipe) {
+		t.Errorf("err = %v, want io.ErrClosedPipe", err)
+	}
+}
 
 func TestPublicKey_WritesTheKeyToTheCallersWriter(t *testing.T) {
 	bins := mockbinary.New(t)
@@ -132,7 +148,7 @@ func TestPublicKey_RejectsAnEmptyKeyRef(t *testing.T) {
 // looking like a successful one to a caller that only checks the writer.
 func TestPublicKey_FailureWritesNoKey(t *testing.T) {
 	bins := mockbinary.New(t)
-	bins.Add("cosign", `printf 'no such key\n' >&2; exit 2`)
+	bins.Add("cosign", `printf 'incomplete public key'; printf 'no such key\n' >&2; exit 2`)
 
 	var out, errOut bytes.Buffer
 

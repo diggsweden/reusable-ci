@@ -32,7 +32,7 @@ func New() *cli.Command {
 		Commands: slices.Concat(
 			cmdmeta.WithCategory("Assemble & publish",
 				resolveGroup(), assembleCmd(), prepareDistCmd(), assembleDistCmd(), downloadArtifactsCmd(), checksumsCmd(),
-				notesCmd(), sbomZipCmd(), filesGroup(), attachmentsGroup(), signPublishContextCmd(), publishCmd()),
+				notesCmd(), sbomZipCmd(), filesGroup(), attachmentsGroup(), signPublishContextCmd(), publishCmd(), publishSelfRuntimeCLICmd()),
 			cmdmeta.WithCategory("Sign", gpgGroup(), sshGroup(), signCmd(), provenanceCmd()),
 			cmdmeta.WithCategory("Verify (trust boundary)",
 				distDigestCmd(), verifyDistCmd(), verifyRequestCmd(), verifyTagCmd(), verifyChangelogCmd()),

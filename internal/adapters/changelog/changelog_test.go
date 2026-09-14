@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/changelog"
@@ -23,10 +24,10 @@ if [ -n "${SSH_SIGNING_KEY:-}" ] || [ -n "${FORGEJO_TOKEN:-}" ]; then
   exit 1
 fi
 case "$*" in
-  '--config full.yml --next-tag v1.2.3 --output CHANGELOG.md')
+  '--config full.yml --repository-url https://forgejo.example/owner/repository --next-tag v1.2.3 --output CHANGELOG.md')
     printf '# changelog\n' >CHANGELOG.md
     ;;
-  '--config body.yml --next-tag v1.2.3 v1.2.3')
+  '--config body.yml --repository-url https://forgejo.example/owner/repository --next-tag v1.2.3 v1.2.3')
     printf 'body\n'
     ;;
   *)
@@ -41,13 +42,13 @@ esac
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	r := changelog.New()
+	r := &changelog.Renderer{UnsetEnv: []string{"SSH_SIGNING_KEY", "FORGEJO_TOKEN"}}
 
-	if err := r.RenderFull(context.Background(), "git-chglog", "full.yml", "v1.2.3", "CHANGELOG.md"); err != nil {
+	if err := r.RenderFull(context.Background(), "git-chglog", "full.yml", "v1.2.3", "CHANGELOG.md", "https://forgejo.example/owner/repository"); err != nil {
 		t.Fatal(err)
 	}
 
-	body, err := r.RenderBody(context.Background(), "git-chglog", "body.yml", "v1.2.3")
+	body, err := r.RenderBody(context.Background(), "git-chglog", "body.yml", "v1.2.3", "https://forgejo.example/owner/repository")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,11 +87,11 @@ esac
 	t.Chdir(t.TempDir())
 
 	r := changelog.New()
-	if err := r.RenderFull(context.Background(), "git-cliff", "cliff.toml", "v1.2.3", "CHANGELOG.md"); err != nil {
+	if err := r.RenderFull(context.Background(), "git-cliff", "cliff.toml", "v1.2.3", "CHANGELOG.md", "https://forgejo.example/owner/repository"); err != nil {
 		t.Fatal(err)
 	}
 
-	body, err := r.RenderBody(context.Background(), "git-cliff", "body.toml", "v1.2.3")
+	body, err := r.RenderBody(context.Background(), "git-cliff", "body.toml", "v1.2.3", "https://forgejo.example/owner/repository")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,5 +107,27 @@ esac
 
 	if !slices.Contains(invocations[0].Args, "--unreleased") || !slices.Contains(invocations[0].Args, "--tag") {
 		t.Fatalf("git-cliff args = %v", invocations[0].Args)
+	}
+}
+
+// TestRenderer_BodyIsStdoutAlone covers what git-cliff prints beside the
+// body. It writes warnings to stderr while exiting 0, and a combined read
+// put " WARN  git_cliff_core::changelog > No releases found" inside a
+// release bump commit message. Stderr reaches the caller only on failure.
+func TestRenderer_BodyIsStdoutAlone(t *testing.T) {
+	m := mockbinary.New(t)
+	m.Add("git-cliff", `printf ' WARN  git_cliff_core::changelog > No releases found\n' >&2; printf 'feat: body\n'`)
+
+	r := &changelog.Renderer{GitCliffBin: m.Path("git-cliff")}
+
+	body, err := r.RenderBody(context.Background(), "git-cliff", "cliff.toml", "v1.2.3", "")
+	if err != nil || body != "feat: body" {
+		t.Fatalf("body = %q, %v; want stdout alone", body, err)
+	}
+
+	m.Add("git-cliff", `printf 'config error\n' >&2; exit 1`)
+
+	if _, err := r.RenderBody(context.Background(), "git-cliff", "cliff.toml", "v1.2.3", ""); err == nil || !strings.Contains(err.Error(), "config error") {
+		t.Fatalf("a failing renderer's stderr did not reach the error: %v", err)
 	}
 }

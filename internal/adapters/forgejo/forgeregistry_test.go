@@ -188,3 +188,24 @@ func TestResolveForgeNPMRegistry_Forgejo(t *testing.T) {
 		t.Errorf("npm registry = %+v", reg)
 	}
 }
+
+// TestResolveForgeRegistries_RefuseARepositoryWithoutOwnerOrName: both
+// package registries need an owner, and a repository missing either half is
+// refused as a usage error rather than building a URL from what is left.
+func TestResolveForgeRegistries_RefuseARepositoryWithoutOwnerOrName(t *testing.T) {
+	t.Parallel()
+
+	for _, repository := range []string{"owner", "owner/", "/repo", ""} {
+		p := &forgejo.Provider{Env: envMap(map[string]string{
+			"FORGEJO_SERVER_URL": "https://codeberg.org", "FORGEJO_REPOSITORY": repository, "FORGEJO_TOKEN": "ft",
+		})}
+
+		if _, err := p.ResolveForgeMavenRegistry(); !errors.Is(err, errs.ErrUsage) {
+			t.Errorf("maven with %q: err = %v, want ErrUsage", repository, err)
+		}
+
+		if _, err := p.ResolveForgeNPMRegistry(); !errors.Is(err, errs.ErrUsage) {
+			t.Errorf("npm with %q: err = %v, want ErrUsage", repository, err)
+		}
+	}
+}

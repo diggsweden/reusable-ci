@@ -23,6 +23,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
@@ -48,56 +50,65 @@ const maxReadSize = 64 << 20 // 64 MiB
 // clig.dev "don't hang on a TTY" rule.
 func ReadFile(path string) ([]byte, error) {
 	if path == StdSentinel {
-		if StdinIsCharDevice() {
-			return nil, fmt.Errorf("%q expects piped or redirected input, not a terminal: %w", path, errs.ErrUsage)
-		}
-
-		body, err := io.ReadAll(io.LimitReader(os.Stdin, maxReadSize+1))
-		if err != nil {
-			return nil, fmt.Errorf("read from stdin: %w", err)
-		}
-
-		if len(body) > maxReadSize {
-			return nil, fmt.Errorf("stdin input exceeds %d MiB: %w", maxReadSize>>20, errs.ErrMalformedInput)
-		}
-
-		return body, nil
+		return readStdin(os.Stdin)
 	}
 
-	if info, err := os.Stat(path); err == nil && info.Size() > maxReadSize {
+	file, err := openReadFile(path)
+	if err != nil {
+		return nil, classifyReadError(err)
+	}
+	defer func() { _ = file.Close() }()
+
+	return readRegularFile(file, path)
+}
+
+// ReadFileInRoot applies the regular-file and size policy without reopening a
+// caller's confined input by an ambient pathname. It never interprets stdin.
+func ReadFileInRoot(root *os.Root, path string) ([]byte, error) {
+	file, err := openRootReadFile(root, path)
+	if err != nil {
+		return nil, classifyReadError(err)
+	}
+	defer func() { _ = file.Close() }()
+
+	return readRegularFile(file, path)
+}
+
+func readRegularFile(file fs.File, path string) ([]byte, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return nil, classifyReadError(err)
+	}
+
+	if !info.Mode().IsRegular() {
+		if info.IsDir() {
+			return nil, fmt.Errorf("%q is a directory, not a file: %w", path, errs.ErrMissingInput)
+		}
+
+		return nil, fmt.Errorf("%q is not a regular input file: %w", path, errs.ErrMissingInput)
+	}
+
+	if info.Size() > maxReadSize {
 		return nil, fmt.Errorf("%s is %d MiB, larger than the %d MiB input bound: %w", path, info.Size()>>20, maxReadSize>>20, errs.ErrMalformedInput)
 	}
 
-	body, err := os.ReadFile(path) //nolint:gosec // path is a CLI-flag value under operator control.
+	body, err := readBounded(file)
 	if err != nil {
-		return nil, classifyReadError(path, err)
+		return nil, classifyReadError(err)
 	}
 
 	return body, nil
 }
 
-// classifyReadError maps a filesystem read failure onto the project's
-// typed sentinels so main()'s exit-code ladder reports the right sysexits
-// code: a path the user pointed at that doesn't exist is their input
-// error (EX_NOINPUT), an unreadable path is a permission error
-// (EX_NOPERM), and a path that's a directory rather than a file is also
-// an operator path mistake (EX_NOINPUT) — none is the internal-bug
-// default (EX_SOFTWARE) the unclassified error would otherwise fall
-// through to. The original os error message is preserved so the operator
-// still sees the path.
-func classifyReadError(path string, err error) error {
+// classifyReadError preserves the original cause while classifying missing and
+// unreadable inputs. Directory classification uses the opened descriptor above:
+// re-statting a pathname could inspect a replacement or an unrelated cwd entry.
+func classifyReadError(err error) error {
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return fmt.Errorf("%w: %w", err, errs.ErrMissingInput)
 	case errors.Is(err, fs.ErrPermission):
 		return fmt.Errorf("%w: %w", err, errs.ErrPermissionDenied)
-	}
-
-	// A path that exists but isn't a regular file (a directory, most
-	// commonly) is the operator pointing the flag at the wrong thing, not
-	// an internal bug.
-	if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
-		return fmt.Errorf("%q is a directory, not a file: %w", path, errs.ErrMissingInput)
 	}
 
 	return err
@@ -184,17 +195,19 @@ func writeFileAtomic(path string, data []byte, perm fs.FileMode) error {
 // returned io.WriteCloser must be Closed by the caller; the stdout-bound
 // closer is a no-op, so a single `defer w.Close()` is correct in both
 // modes.
+//
+// O_TRUNC is the half that is easy to lose and silent when lost: writing
+// shorter content over a longer existing file must leave the file shorter, not
+// leave the old tail behind. A truncated-looking SBOM with the previous run's
+// JSON after it is still valid-ish text and parses as something.
+//
+// The destination must not be a symlink; see openWriteNoFollow.
 func CreateWriter(path string, perm fs.FileMode) (io.WriteCloser, error) {
 	if path == StdSentinel {
 		return stdoutWriter{}, nil
 	}
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm) //nolint:gosec // path is a CLI-flag value; perm is caller-supplied.
-	if err != nil {
-		return nil, err
-	}
-
-	return f, nil
+	return openWriteNoFollow(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
 }
 
 // stdoutWriter is a no-op-closing writer that targets os.Stdout. Using
@@ -204,3 +217,107 @@ type stdoutWriter struct{}
 
 func (stdoutWriter) Write(p []byte) (int, error) { return os.Stdout.Write(p) }
 func (stdoutWriter) Close() error                { return nil }
+
+// AppendLines appends one line per entry to path, creating it 0644 when
+// absent — the shape of the runner's env and path files ($GITHUB_ENV,
+// $FORGEJO_PATH, …). The runner reads those files line by line, so an entry
+// containing a line break would smuggle a second entry in; such an entry is
+// refused before anything is written.
+func AppendLines(path string, lines ...string) error {
+	for _, line := range lines {
+		if strings.ContainsAny(line, "\r\n") {
+			return fmt.Errorf("refusing to append to %s: an entry contains a line break: %w", path, errs.ErrValidation)
+		}
+	}
+
+	file, err := openWriteNoFollow(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("open %s: %w", path, err)
+	}
+
+	if err := writeLinesAndClose(file, lines); err != nil {
+		return fmt.Errorf("append to %s: %w", path, err)
+	}
+
+	return nil
+}
+
+// writeLinesAndClose writes each line and closes the destination, reporting
+// both failures when both happen.
+//
+// Close is not a formality on an appended file: a write can succeed into the
+// page cache and the flush fail at close, so discarding the close error would
+// report a successful append that never reached the disk. For $GITHUB_ENV that
+// means later steps silently missing a variable the run believed it had set.
+//
+// It takes an io.WriteCloser rather than the *os.File so a close failure can be
+// injected. The delayed-close case cannot be produced portably against a real
+// file, and stating the join logic in a comment was the evidence this had
+// before; a seam is the difference between describing the behaviour and
+// checking it.
+func writeLinesAndClose(dst io.WriteCloser, lines []string) error {
+	var err error
+
+	for _, line := range lines {
+		if _, err = fmt.Fprintln(dst, line); err != nil {
+			break
+		}
+	}
+
+	return errors.Join(err, dst.Close())
+}
+
+// OpenAppendNoFollow opens a runner-supplied output file for appending and
+// refuses a symlinked destination.
+//
+// It exists because three places write files whose PATH arrives in the
+// environment: this package's AppendLines ($GITHUB_ENV, $FORGEJO_PATH), the
+// GitHub Actions output sink ($GITHUB_OUTPUT) and the GitLab dotenv sink. All
+// three opened the path directly and followed whatever link was there, and
+// each had its own copy of the open. One hardened entry point is the fix; a
+// fourth copy would have been the next bug.
+func OpenAppendNoFollow(path string, perm fs.FileMode) (*os.File, error) {
+	return openWriteNoFollow(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, perm)
+}
+
+// openWriteNoFollow opens a destination for writing and refuses when the final
+// path component is a symlink.
+//
+// The three output paths in this package used to disagree about this, and two
+// of them wrote somewhere the caller never named. WriteFile renames a temporary
+// file into place, which REPLACES a symlink and leaves its target untouched.
+// CreateWriter and AppendLines opened the path directly, which FOLLOWS the link
+// and writes through to whatever it points at.
+//
+// WriteFile keeps its behaviour, because replacing the link already satisfies
+// the property: the write lands at the path the caller named and the link's
+// target is never touched. The two that follow the link cannot get there by
+// replacing — for them the equivalent would be silently discarding a link the
+// caller may not have known was there — so they refuse instead. The shared rule
+// is that no output path in this package writes THROUGH a link to another file.
+//
+// That difference matters because these destinations are not always the
+// program's own choice. AppendLines writes the runner's $GITHUB_ENV and
+// $FORGEJO_PATH files, whose paths arrive in the environment; CreateWriter
+// writes report and SBOM destinations that arrive as flag values. Anything able
+// to place a symlink at one of those paths could redirect the write.
+//
+// Refusing is the narrow fix, and narrow matters: O_NOFOLLOW rejects only when
+// the FINAL component is a link, so a runner handing over a real file — which
+// is what runners do — is unaffected, and only the substitution case fails.
+// A caller that genuinely means "write through this link" can resolve it first
+// and say so.
+func openWriteNoFollow(path string, flag int, perm fs.FileMode) (*os.File, error) {
+	file, err := os.OpenFile(path, flag|syscall.O_NOFOLLOW, perm) //nolint:gosec // path is a CLI-flag or runner-supplied value; perm is caller-supplied.
+	if err == nil {
+		return file, nil
+	}
+
+	// ELOOP is what O_NOFOLLOW reports for a symlinked final component. Saying
+	// which path was refused and why is the whole value of refusing here.
+	if errors.Is(err, syscall.ELOOP) {
+		return nil, fmt.Errorf("refusing to write through the symlink at %s: %w", path, errs.ErrValidation)
+	}
+
+	return nil, err
+}

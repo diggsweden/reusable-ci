@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
+	domsummary "github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 // ExtractedBinariesInput drives ExtractedBinaries.
@@ -25,10 +26,9 @@ type ExtractedBinariesInput struct {
 	Limit         int
 }
 
-// ExtractedBinaries appends the extracted-binary summary table to the
-// step summary, with a bounded file listing (`Limit`, default 50) so a
-// runaway extract stage doesn't produce a step summary GHA refuses to
-// render.
+// ExtractedBinaries appends metadata and a file listing capped by Limit
+// (default 50 for nonpositive values). This bounds listed entries, not
+// discovery, retained candidate paths or report bytes.
 func ExtractedBinaries(ctx context.Context, sink ci.SummarySink, in ExtractedBinariesInput) error {
 	dir := in.Dir
 	if dir == "" {
@@ -42,19 +42,19 @@ func ExtractedBinaries(ctx context.Context, sink ci.SummarySink, in ExtractedBin
 
 	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 
-	_, _ = fmt.Fprintf(&b, "### Extracted Binaries - %s (%s)\n\n", in.DisplayName, in.Platform)
-	_, _ = fmt.Fprintf(&b, "- **Stage:** %s\n", in.ExtractTarget)
-	_, _ = fmt.Fprintf(&b, "- **Artifact:** %s\n", in.ArtifactName)
-	_, _ = fmt.Fprintf(&b, "- **Platform:** %s\n", in.Platform)
+	_, _ = fmt.Fprintf(&b, "### Extracted Binaries - %s (%s)\n\n", domsummary.LiteralText(in.DisplayName), domsummary.LiteralText(in.Platform))
+	_, _ = fmt.Fprintf(&b, "- **Stage:** %s\n", domsummary.LiteralText(in.ExtractTarget))
+	_, _ = fmt.Fprintf(&b, "- **Artifact:** %s\n", domsummary.LiteralText(in.ArtifactName))
+	_, _ = fmt.Fprintf(&b, "- **Platform:** %s\n", domsummary.LiteralText(in.Platform))
 
 	if strings.TrimSpace(in.ExpectedNames) != "" {
-		_, _ = fmt.Fprintf(&b, "- **Binaries:** %s\n", in.ExpectedNames)
+		_, _ = fmt.Fprintf(&b, "- **Binaries:** %s\n", domsummary.LiteralText(in.ExpectedNames))
 	}
 
 	_, _ = fmt.Fprintf(&b, "\nFiles in extracted-binaries/:\n\n")
 
 	for _, path := range firstFiles(dir, limit) {
-		_, _ = fmt.Fprintf(&b, "%s\n", path)
+		_, _ = fmt.Fprintf(&b, "%s\n", domsummary.InlineCode(path))
 	}
 
 	return sink.Append(ctx, b.String())

@@ -53,3 +53,19 @@ contxt = "contxt"
 # exits 2 as an unknown subcommand, with the quieter omission case the
 # parent guard closes. The misspelling is the illustration.
 tagg = "tagg"
+
+# Deliberate malformed Android build-type fixture. The resolver must leave
+# the misspelling unmatched so the downstream empty-task refusal is covered.
+relase = "relase"
+
+# Tokens inside synthetic base64 credentials used to demonstrate the current
+# stderr-filter limit. They are encoded fixture data, not prose.
+Iy = "Iy"
+
+# Fragments of historical commit IDs cited by the review/rollout docs.
+daa = "daa"
+caf = "caf"
+
+# The "(?:ba)?sh" fragment of the shebang pattern in scripts/shellscripts_test.go
+# matches both sh and bash. It is regex syntax, not a word.
+ba = "ba"

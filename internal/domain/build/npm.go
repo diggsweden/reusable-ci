@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 // NPMSummaryInput drives RenderNPMSummary.
@@ -23,8 +25,8 @@ func RenderNPMSummary(in NPMSummaryInput, now time.Time) string {
 
 	_, _ = fmt.Fprintf(&b, "## NPM Build Summary 🔨\n")
 	_, _ = fmt.Fprintf(&b, "\n")
-	_, _ = fmt.Fprintf(&b, "- **Package:** `%s@%s`\n", in.PackageName, in.Version)
-	_, _ = fmt.Fprintf(&b, "- **Node.js:** %s\n", in.NodeVersion)
+	_, _ = fmt.Fprintf(&b, "- **Package:** %s\n", summary.InlineCode(in.PackageName+"@"+in.Version))
+	_, _ = fmt.Fprintf(&b, "- **Node.js:** %s\n", summary.LiteralText(in.NodeVersion))
 
 	if in.SkipTests {
 		_, _ = fmt.Fprintf(&b, "- **Tests:** ⊘ Skipped\n")

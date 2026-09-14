@@ -53,6 +53,9 @@ func TestRedactKeyMaterial_RedactsKnownMarkers(t *testing.T) {
 			name: "generic",
 			body: "-----BEGIN PRIVATE KEY-----\nMIIEvQIB...\n",
 		},
+		{name: "encrypted sigstore", body: "-----BEGIN ENCRYPTED SIGSTORE PRIVATE KEY-----\n...payload...\n"},
+		{name: "sigstore", body: "-----BEGIN SIGSTORE PRIVATE KEY-----\n...payload...\n"},
+		{name: "encrypted cosign", body: "-----BEGIN ENCRYPTED COSIGN PRIVATE KEY-----\n...payload...\n"},
 	}
 
 	for _, tc := range cases {
@@ -97,32 +100,40 @@ func TestRedactKeyMaterial_RedactsJWTShapedToken(t *testing.T) {
 	}
 }
 
-// TestRedactKeyMaterial_MinimalHeaderJWTIsNotRedacted records a gap.
+// TestRedactKeyMaterial_RedactsAMinimalHeaderJWT covers the smallest token
+// the spec allows, which is the one the pattern used to miss.
 //
-// The pattern requires 20 base64url characters after the leading "eyJ" in
-// every segment. A JWT header of just {"alg":"HS256"} -- valid, and the
-// smallest one RFC 7519 permits, since "typ" is optional -- encodes to
-// exactly 20 characters, which is 17 after the "eyJ". It therefore does
-// not match, and such a token is propagated into the error and the CI
-// log unredacted.
-//
-// Tokens whose header also carries "typ" or "kid" clear the floor and are
-// redacted; GitHub's OIDC tokens do. See docs/open-questions.md.
-func TestRedactKeyMaterial_MinimalHeaderJWTIsNotRedacted(t *testing.T) {
+// A header of just {"alg":"HS256"} is valid — "typ" is optional in RFC 7519 —
+// and encodes to 17 characters after the leading "eyJ". The first segment's
+// floor was 20, so a token carrying such a header did not match and reached
+// the CI log in full. Tokens whose header also carries "typ" or "kid" cleared
+// the floor and were redacted, which is why the gap survived: GitHub's OIDC
+// tokens are the ones most likely to appear here, and they carry "typ".
+func TestRedactKeyMaterial_RedactsAMinimalHeaderJWT(t *testing.T) {
 	t.Parallel()
 
-	// base64url({"alg":"HS256"}) = eyJhbGciOiJIUzI1NiJ9
-	minimal := []byte("auth failed: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk")
+	for _, tc := range []struct {
+		name  string
+		token string
+	}{
+		// base64url({"alg":"HS256"}) = eyJhbGciOiJIUzI1NiJ9 — 17 after "eyJ".
+		{name: "minimal header", token: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk"},
+		{name: "header with typ", token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk"},
+		{name: "minimal payload", token: "eyJhbGciOiJIUzI1NiJ9.e30.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk"},
+		{name: "unsecured", token: "eyJhbGciOiJub25lIn0.e30."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	if got := safeexec.RedactKeyMaterial(minimal); !bytes.Equal(got, minimal) {
-		t.Errorf("minimal-header JWT is now redacted -- good; update this test and docs/open-questions.md: %s", got)
-	}
+			got := string(safeexec.RedactKeyMaterial([]byte("auth failed: " + tc.token)))
+			if !strings.Contains(got, "JWT-shaped token") {
+				t.Errorf("token was not redacted; got: %s", got)
+			}
 
-	// The same token with "typ" in the header is caught, which is what
-	// makes the threshold rather than the shape the deciding factor.
-	withTyp := []byte("auth failed: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk")
-	if got := string(safeexec.RedactKeyMaterial(withTyp)); !strings.Contains(got, "JWT-shaped token") {
-		t.Errorf("a typ-carrying header should still be redacted: %s", got)
+			if strings.Contains(got, tc.token) {
+				t.Errorf("redacted output still contains the token: %s", got)
+			}
+		})
 	}
 }
 
@@ -130,8 +141,7 @@ func TestRedactKeyMaterial_DoesNotMatchShortDotSeparatedStrings(t *testing.T) {
 	t.Parallel()
 
 	// "foo.bar.baz" / filenames-with-dots / version strings must NOT
-	// trigger JWT redaction — the segment-length floor in the pattern
-	// is what guards against false positives.
+	// trigger JWT redaction: a JSON algorithm header is required.
 	for _, ok := range []string{
 		"reading file foo.bar.baz",
 		"version 1.2.3 released",
@@ -144,13 +154,41 @@ func TestRedactKeyMaterial_DoesNotMatchShortDotSeparatedStrings(t *testing.T) {
 	}
 }
 
+// TestRedactKeyMaterial_MentionsTheMatchingMarker pins the notice the operator
+// actually reads, and pins it as a WHOLE.
+//
+// Asking only whether the marker name appears in the output is a question the
+// unredacted body answers too: the marker is a substring of the key block, so a
+// redactor that returned the key verbatim satisfied it. That is not a
+// hypothetical — returning body unchanged left this test passing while every
+// byte of the private key came back. The marker name is the one part of the
+// notice that is copied from the input, so it is the one part that cannot carry
+// the assertion on its own.
+//
+// The whole notice is compared instead. It is a fixed string with one
+// substituted marker name, so there is nothing to approximate, and an exact
+// comparison also states what the redactor must NOT do: keep a prefix, append
+// the original, or preserve surrounding context.
 func TestRedactKeyMaterial_MentionsTheMatchingMarker(t *testing.T) {
 	t.Parallel()
 
-	body := []byte("oops\n-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END\n")
+	const secret = "c2VjcmV0LWtleS1ieXRlcw"
+
+	body := []byte("oops\n-----BEGIN OPENSSH PRIVATE KEY-----\n" + secret + "\n-----END OPENSSH PRIVATE KEY-----\n")
 
 	got := string(safeexec.RedactKeyMaterial(body))
-	if !strings.Contains(got, "BEGIN OPENSSH PRIVATE KEY") {
-		t.Errorf("redaction notice should name the marker so operators can debug; got: %s", got)
+
+	const want = "<output redacted: contained a private-key marker (BEGIN OPENSSH PRIVATE KEY)>"
+	if got != want {
+		t.Errorf("notice = %q, want exactly %q", got, want)
+	}
+
+	// Stated separately from the equality above so a future change to the
+	// notice's wording cannot quietly turn this into a leak: whatever the
+	// notice says, the key body and the surrounding output are not in it.
+	for _, leak := range []string{secret, "oops", "-----END OPENSSH PRIVATE KEY-----"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("redacted output still contains %q: %s", leak, got)
+		}
 	}
 }

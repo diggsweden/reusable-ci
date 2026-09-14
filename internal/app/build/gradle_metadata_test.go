@@ -34,6 +34,16 @@ func TestGradleMetadata_EmitsVersion(t *testing.T) {
 			want:  "1.2.3",
 		},
 		{
+			name:  "java properties separators are accepted",
+			props: "version = 1.2.3\n",
+			want:  "1.2.3",
+		},
+		{
+			name:  "colon separator is accepted",
+			props: "version: 1.2.3\n",
+			want:  "1.2.3",
+		},
+		{
 			name:  "indented line still counts",
 			props: "  version=1.2.3\n",
 			want:  "1.2.3",
@@ -91,13 +101,6 @@ func TestGradleMetadata_WarnsWhenMissing(t *testing.T) {
 		{name: "no version key", props: "org.gradle.jvmargs=-Xmx1g\n"},
 		{name: "no gradle.properties", props: ""},
 		{name: "version key with no value", props: "version=\n"},
-		{
-			// java.util.Properties accepts "version = 1.2.3", and this
-			// parser does not -- such a project is treated as versionless
-			// rather than refused. Recorded in docs/open-questions.md.
-			name:  "spaced assignment is not recognised",
-			props: "version = 1.2.3\n",
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

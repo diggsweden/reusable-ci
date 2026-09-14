@@ -5,10 +5,8 @@ package build
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +17,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // AndroidArtifactNamesInput drives AndroidArtifactNames.
@@ -161,12 +160,16 @@ func AndroidDecodeKeystore(w, stderr io.Writer, in AndroidDecodeKeystoreInput) e
 }
 
 // decodeAndroidKeystore writes the base64 keystore to a 0600 file outside the
-// project working dir and returns its absolute path. Shared by
-// AndroidDecodeKeystore (emits the $GITHUB_ENV line) and AndroidReleaseBuild
-// (sets the env in-process for the gradle build).
+// project working dir and returns its absolute path for the standalone command.
+// AndroidReleaseBuild separately owns its private staging directory and cleanup.
 func decodeAndroidKeystore(in AndroidDecodeKeystoreInput) (string, error) {
 	if in.Base64 == "" {
 		return "", fmt.Errorf("ANDROID_KEYSTORE secret not found but enable-signing is true: %w", errs.ErrPermissionDenied)
+	}
+
+	body, err := decodeMobileSecret(in.Base64)
+	if err != nil {
+		return "", err
 	}
 
 	dir, err := resolveKeystoreDir(in.Dir, in.TempDir)
@@ -174,13 +177,8 @@ func decodeAndroidKeystore(in AndroidDecodeKeystoreInput) (string, error) {
 		return "", err
 	}
 
-	body, err := base64.StdEncoding.DecodeString(strings.TrimSpace(in.Base64))
-	if err != nil {
-		return "", fmt.Errorf("decode keystore base64: %w: %w", err, errs.ErrMalformedInput)
-	}
-
 	path := filepath.Join(dir, "release.keystore")
-	if writeErr := os.WriteFile(path, body, 0o600); writeErr != nil {
+	if writeErr := writeMobileSecret(path, body); writeErr != nil {
 		return "", fmt.Errorf("write keystore: %w", writeErr)
 	}
 
@@ -209,7 +207,12 @@ func resolveKeystoreDir(explicit, tempDir string) (string, error) {
 		return tempDir, nil
 	}
 
-	dir, err := os.MkdirTemp("", "reusable-ci-keystore-")
+	root, err := mobileTempRoot()
+	if err != nil {
+		return "", err
+	}
+
+	dir, err := os.MkdirTemp(root, "reusable-ci-keystore-")
 	if err != nil {
 		return "", fmt.Errorf("mktemp keystore dir: %w", err)
 	}
@@ -237,7 +240,7 @@ type AndroidWriteSecretsPropertiesInput struct {
 // — the AndroidGradleBuild step works fine when secrets.properties
 // is absent.
 func AndroidWriteSecretsProperties(w io.Writer, in AndroidWriteSecretsPropertiesInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if strings.TrimSpace(in.Base64) == "" {
+	if in.Base64 == "" {
 		_, _ = fmt.Fprintln(w, "No SECRETS_PROPERTIES_BASE64 configured; skipping secrets.properties write")
 
 		return nil
@@ -254,17 +257,13 @@ func AndroidWriteSecretsProperties(w io.Writer, in AndroidWriteSecretsProperties
 	}
 	// Allow whitespace in the base64 payload (multi-line secrets pasted via
 	// GitHub's secret UI sometimes carry trailing newlines).
-	body, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(in.Base64), ""))
+	body, err := decodeMobileSecret(in.Base64)
 	if err != nil {
 		return fmt.Errorf("decode secrets.properties base64: %w: %w", err, errs.ErrMalformedInput)
 	}
 
-	if len(body) == 0 {
-		return fmt.Errorf("SECRETS_PROPERTIES_BASE64 decoded to zero bytes: %w", errs.ErrValidation)
-	}
-
 	path := filepath.Join(dir, "secrets.properties")
-	if err := os.WriteFile(path, body, 0o600); err != nil {
+	if err := writeMobileSecret(path, body); err != nil {
 		return fmt.Errorf("write secrets.properties: %w", err)
 	}
 
@@ -296,12 +295,16 @@ func AndroidResolveBuildTasks(ctx context.Context, sink ci.OutputSink, stderr io
 		return nil
 	}
 
-	tasks := build.ResolveAndroidBuildTasks(build.ResolveAndroidBuildTasksInput{
+	tasks, err := build.ResolveAndroidBuildTasks(build.ResolveAndroidBuildTasksInput{
 		Flavor:      in.Flavor,
 		BuildTypes:  in.BuildTypes,
 		IncludeAAB:  in.IncludeAAB,
 		BuildModule: in.BuildModule,
 	})
+	if err != nil {
+		return fmt.Errorf("resolve Android build tasks: %w", err)
+	}
+
 	if err := sink.Set(ctx, "tasks", tasks); err != nil {
 		return err
 	}
@@ -354,6 +357,10 @@ func AndroidListArtifacts(w io.Writer, in AndroidListArtifactsInput) error { //n
 		return fmt.Errorf("build module is required: pass --build-module <name> or set $BUILD_MODULE: %w", errs.ErrUsage)
 	}
 
+	if !pathsafe.Relative(in.BuildModule) || in.BuildModule == "." {
+		return fmt.Errorf("build module must be a relative child directory: %w", errs.ErrUsage)
+	}
+
 	root := in.Root
 	if root == "" {
 		var err error
@@ -366,38 +373,17 @@ func AndroidListArtifacts(w io.Writer, in AndroidListArtifactsInput) error { //n
 
 	outputs := filepath.Join(root, in.BuildModule, "build", "outputs")
 
-	_, _ = fmt.Fprintf(w, "Built artifacts:\n")
-
-	found := false
-
-	walkErr := filepath.WalkDir(outputs, func(path string, d fs.DirEntry, err error) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		if err != nil {
-			// Treat "outputs/" missing as "no artifacts" rather than a hard error.
-			if os.IsNotExist(err) {
-				return filepath.SkipAll
-			}
-
-			return err
-		}
-
-		if d.IsDir() {
-			return nil
-		}
-
-		ext := filepath.Ext(path)
-		if ext == ".apk" || ext == ".aab" {
-			_, _ = fmt.Fprintln(w, path)
-
-			found = true
-		}
-
-		return nil
-	})
-	if walkErr != nil {
-		return walkErr
+	paths, err := mobileArtifactPaths(outputs, false)
+	if err != nil {
+		return err
 	}
 
-	if !found {
+	_, _ = fmt.Fprintf(w, "Built artifacts:\n")
+	for _, path := range paths {
+		_, _ = fmt.Fprintln(w, filepath.Join(outputs, path))
+	}
+
+	if len(paths) == 0 {
 		_, _ = fmt.Fprintln(w, "No artifacts found")
 	}
 

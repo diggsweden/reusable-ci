@@ -65,16 +65,36 @@ func TestWebURLs_ResolveOnEveryForge(t *testing.T) {
 				{"release", urls.ReleaseWebURL(target.BaseURL(), slug, tag)},
 				{"packages", urls.PackagesWebURL(target.BaseURL(), slug)},
 			} {
-				assertPageResolves(t, ctx, target, page.what, page.url)
+				if status := pageStatus(ctx, t, target, page.what, page.url); status != http.StatusOK {
+					t.Errorf("%s %s page %s returned HTTP %d — the summary would print a dead link",
+						forge, page.what, page.url, status)
+				}
+			}
+
+			// The identity control. A forge that answered 200 for any path under
+			// the repository would pass the loop above with a wrong tag or slug,
+			// so the same links for a tag with no release and a repository that
+			// does not exist must not resolve. Status is the evidence rather than
+			// page text: both forges render these pages client-side, and their
+			// markup is not a contract.
+			for _, page := range []struct{ what, url string }{
+				{"unreleased tag", urls.ReleaseWebURL(target.BaseURL(), slug, "v0.0.0-never-released")},
+				{"missing repository", urls.PackagesWebURL(target.BaseURL(), slug+"-missing")},
+			} {
+				if status := pageStatus(ctx, t, target, page.what, page.url); status == http.StatusOK {
+					t.Errorf("%s %s page %s returned HTTP 200, so a 200 does not identify the linked release or repository",
+						forge, page.what, page.url)
+				}
 			}
 		})
 	}
 }
 
-// assertPageResolves fails unless the URL serves a page. A redirect is not
-// accepted: on both forges an unauthenticated redirect is how a missing or
-// private page is served, so following it would turn a dead link into a pass.
-func assertPageResolves(t *testing.T, ctx context.Context, target livetest.Target, what, url string) {
+// pageStatus fetches the URL anonymously and returns the status it answers
+// with. A redirect is not followed: on both forges an unauthenticated redirect
+// is how a missing or private page is served, so following it would turn a dead
+// link into a pass.
+func pageStatus(ctx context.Context, t *testing.T, target livetest.Target, what, url string) int {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -90,10 +110,7 @@ func assertPageResolves(t *testing.T, ctx context.Context, target livetest.Targe
 		t.Fatalf("%s %s page %s: %v", target.Forge, what, url, err)
 	}
 
-	defer func() { _ = resp.Body.Close() }()
+	_ = resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("%s %s page %s returned HTTP %d — the summary would print a dead link",
-			target.Forge, what, url, resp.StatusCode)
-	}
+	return resp.StatusCode
 }

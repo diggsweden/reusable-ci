@@ -23,6 +23,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -40,12 +41,14 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/httpretry"
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // osLinux is the only image platform OS reusable-ci selects from an index.
 const osLinux = "linux"
+
+const unknownPlatform = "unknown"
 
 // Adapter resolves, copies, and assembles image manifests over the registry
 // API. It satisfies imageledger.Registry and the manifest-helper registry
@@ -90,6 +93,13 @@ func (a *Adapter) ResolveDigest(ctx context.Context, ref string) (string, error)
 // found again here when a rollback on a forge that drops untagged manifests
 // exited 69 instead of saying the image was gone.
 func classifyRegistryError(err error) error {
+	// A reference the library could not parse never reached a registry, and
+	// retrying it cannot succeed: it is the caller's input.
+	var badName *name.ErrBadName
+	if errors.As(err, &badName) {
+		return errs.ErrUsage
+	}
+
 	var transportErr *transport.Error
 	if errors.As(err, &transportErr) {
 		if transportErr.StatusCode == http.StatusNotFound {
@@ -247,7 +257,7 @@ func findLinuxArchDescriptor(manifest *v1.IndexManifest, ref, arch string) (*v1.
 			continue
 		}
 
-		if child.Platform.OS != "" && child.Platform.OS != osLinux {
+		if child.Platform.OS != osLinux {
 			continue
 		}
 
@@ -296,6 +306,10 @@ func imageConfigMetadata(img v1.Image, ref string) (string, map[string]string, e
 // same on GitHub, Forgejo and GitLab. The children already live in the
 // repository, so only the index manifest is written.
 func (a *Adapter) MergeManifest(ctx context.Context, image string, digests, tags []string) error {
+	if err := domaincontainer.ValidateManifestTags(image, tags); err != nil {
+		return err
+	}
+
 	index := v1.ImageIndex(empty.Index)
 
 	for _, digest := range digests {
@@ -312,6 +326,10 @@ func (a *Adapter) MergeManifest(ctx context.Context, image string, digests, tags
 		index = mutate.AppendManifests(index, addenda...)
 	}
 
+	if err := validateIndexPlatforms(index); err != nil {
+		return err
+	}
+
 	for _, tag := range tags {
 		ref, err := a.parse(tag)
 		if err != nil {
@@ -321,6 +339,31 @@ func (a *Adapter) MergeManifest(ctx context.Context, image string, digests, tags
 		if err := remote.WriteIndex(ref, index, a.remoteOpts(ctx)...); err != nil {
 			return fmt.Errorf("merge manifest: write index to %s: %w: %w", tag, err, classifyRegistryError(err))
 		}
+	}
+
+	return nil
+}
+
+func validateIndexPlatforms(index v1.ImageIndex) error {
+	manifest, err := index.IndexManifest()
+	if err != nil {
+		return fmt.Errorf("read merged index: %w: %w", err, errs.ErrMalformedInput)
+	}
+
+	seen := map[[3]string]bool{}
+
+	for _, child := range manifest.Manifests {
+		platform := child.Platform
+		if platform == nil || platform.OS == "" || platform.Architecture == "" || platform.OS == unknownPlatform || platform.Architecture == unknownPlatform {
+			continue
+		}
+
+		key := [3]string{platform.OS, platform.Architecture, platform.Variant}
+		if seen[key] {
+			return fmt.Errorf("merged index contains a duplicate platform: %w", errs.ErrValidation)
+		}
+
+		seen[key] = true
 	}
 
 	return nil
@@ -434,8 +477,8 @@ func layoutImage(dir string) (v1.Image, error) {
 		return nil, fmt.Errorf("read oci index in %s: %w: %w", dir, err, errs.ErrMalformedInput)
 	}
 
-	if len(manifest.Manifests) == 0 {
-		return nil, fmt.Errorf("oci layout %s contains no image: %w", dir, errs.ErrMalformedInput)
+	if len(manifest.Manifests) != 1 {
+		return nil, fmt.Errorf("oci layout %s must contain exactly one image: %w", dir, errs.ErrMalformedInput)
 	}
 
 	img, err := idx.Image(manifest.Manifests[0].Digest)
@@ -461,7 +504,6 @@ func (a *Adapter) remoteOpts(ctx context.Context) []remote.Option {
 	return []remote.Option{
 		remote.WithContext(ctx),
 		remote.WithAuthFromKeychain(a.keychain()),
-		remote.WithTransport(httpretry.NewTransport(httpretry.Config{})),
 	}
 }
 
@@ -471,7 +513,6 @@ func (a *Adapter) craneOpts(ctx context.Context, refs ...string) []crane.Option 
 	opts := []crane.Option{
 		crane.WithContext(ctx),
 		crane.WithAuthFromKeychain(a.keychain()),
-		crane.WithTransport(httpretry.NewTransport(httpretry.Config{})),
 	}
 
 	if allLoopback(refs) {
@@ -581,11 +622,22 @@ func loopbackRef(ref string) bool {
 // discovering in a failed delete.
 func LoopbackHost(registry string) bool { return isLoopbackHost(registry) }
 
+// loopbackName is the one loopback host that is a name rather than an address.
+const loopbackName = "localhost"
+
 func isLoopbackHost(registry string) bool {
 	host := registry
-	if i := strings.LastIndex(host, ":"); i >= 0 {
-		host = host[:i]
+	if splitHost, _, err := net.SplitHostPort(registry); err == nil {
+		host = splitHost
 	}
 
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+	// A bare IPv6 literal carries no port but may still be bracketed.
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	if host == loopbackName {
+		return true
+	}
+
+	ip := net.ParseIP(host)
+
+	return ip != nil && ip.IsLoopback()
 }

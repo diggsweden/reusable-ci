@@ -6,6 +6,8 @@ package build
 import (
 	"fmt"
 	"strings"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 // SwiftLintOutcome is the result of one Swift linter invocation.
@@ -38,9 +40,7 @@ func RenderSwiftFormatBlock(outcome SwiftLintOutcome, output string) string {
 	case SwiftLintFailed:
 		_, _ = fmt.Fprintln(&b, "## Swift Format Issues 🔴")
 		_, _ = fmt.Fprintln(&b, "")
-		_, _ = fmt.Fprintln(&b, "```")
-		writeStripped(&b, output)
-		_, _ = fmt.Fprintln(&b, "```")
+		writeFenced(&b, output)
 	case SwiftLintNoFiles:
 		_, _ = fmt.Fprintln(&b, "## Swift Format ⊘")
 		_, _ = fmt.Fprintln(&b, "")
@@ -66,15 +66,11 @@ func RenderSwiftLintBlock(outcome SwiftLintOutcome, output string) string {
 	case SwiftLintFailed:
 		_, _ = fmt.Fprintln(&b, "## SwiftLint Issues 🔴")
 		_, _ = fmt.Fprintln(&b, "")
-		_, _ = fmt.Fprintln(&b, "```")
-		writeStripped(&b, output)
-		_, _ = fmt.Fprintln(&b, "```")
+		writeFenced(&b, output)
 	case SwiftLintWarned:
 		_, _ = fmt.Fprintln(&b, "## SwiftLint Warnings ⚠️")
 		_, _ = fmt.Fprintln(&b, "")
-		_, _ = fmt.Fprintln(&b, "```")
-		writeStripped(&b, output)
-		_, _ = fmt.Fprintln(&b, "```")
+		writeFenced(&b, output)
 	case SwiftLintNoFiles:
 		// SwiftLint walks the directory tree itself — there is no
 		// caller-side "no files" path. Block left empty so the caller
@@ -115,24 +111,29 @@ func RenderSwiftLintSummary(in SwiftLintSummaryInput) string {
 }
 
 // SwiftLintAggregateFailed reports whether the summary should signal a
-// failed run — at least one enabled linter has result "failure".
+// failed run: at least one enabled linter's row reads Fail. That is every
+// result other than success and skipped, so a cancelled or unrecognised
+// result fails the run as its row says, rather than showing Fail and exiting
+// zero.
 func SwiftLintAggregateFailed(in SwiftLintSummaryInput) bool {
-	return (in.SwiftFormatEnabled && in.SwiftFormatResult == "failure") ||
-		(in.SwiftLintEnabled && in.SwiftLintResult == "failure")
+	return swiftLinterFailed(in.SwiftFormatEnabled, in.SwiftFormatResult) ||
+		swiftLinterFailed(in.SwiftLintEnabled, in.SwiftLintResult)
+}
+
+func swiftLinterFailed(enabled bool, result string) bool {
+	return enabled && result != "success" && result != "skipped"
 }
 
 func swiftLinterRow(enabled bool, result string) string {
-	if !enabled {
+	switch {
+	case !enabled:
 		return "🔸 Disabled"
-	}
-
-	switch result {
-	case "success":
-		return "✓ Pass"
-	case "skipped":
-		return "− Skipped"
-	default:
+	case swiftLinterFailed(enabled, result):
 		return "✗ Fail"
+	case result == "success":
+		return "✓ Pass"
+	default:
+		return "− Skipped"
 	}
 }
 
@@ -140,8 +141,22 @@ func swiftLinterRow(enabled bool, result string) string {
 // Mirrors `cat output.txt` behavior where the file already ends
 // in a newline; without this every Markdown fence picks up a stray blank
 // line.
-func writeStripped(b *strings.Builder, s string) {
-	trimmed := strings.TrimRight(s, "\n")
-	b.WriteString(trimmed)
+// writeFenced writes linter output as a fenced code block whose fence is
+// longer than any run of backticks inside it.
+//
+// The fence used to be a fixed "```", so output containing a line of three
+// backticks -- a Swift string literal, a doc comment, a file path chosen by
+// whoever opened the pull request -- closed the block early and everything
+// after it rendered as Markdown in the step summary. CommonMark closes a fence
+// only on a run at least as long as the opener, so a longer opener keeps the
+// output literal without altering a byte of it.
+func writeFenced(b *strings.Builder, output string) { //nolint:varnamelen // b is the builder, as in every renderer in this package.
+	fence := summary.CodeFence(output)
+
+	b.WriteString(fence)
+	b.WriteByte('\n')
+	b.WriteString(strings.TrimRight(output, "\n"))
+	b.WriteByte('\n')
+	b.WriteString(fence)
 	b.WriteByte('\n')
 }

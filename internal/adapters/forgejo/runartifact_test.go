@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/forgejo"
+	domainartifact "github.com/diggsweden/reusable-ci/v3/internal/domain/artifact"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
@@ -36,29 +37,50 @@ type jsonObj = map[string]any
 // answer to the name (0 / 1 / many), exercising the exactly-one guard.
 // runtimeServerNamed is runtimeServer with the artifact name under the
 // test's control, so a forge reporting a hostile name can be simulated.
-func runtimeServerNamed(t *testing.T, name string, entries map[string]string) *httptest.Server {
+// runtimeService is where a download test's provider reaches the runtime API:
+// an in-memory handler at runtimeFakeURL for API semantics, or a loopback
+// listener for the redirect tests that need two real origins.
+type runtimeService struct {
+	URL    string
+	client *http.Client
+}
+
+// runtimeFakeURL is the runtime origin the in-memory fakes answer for.
+const runtimeFakeURL = "https://runtime.forgejo.invalid"
+
+// serveRuntime answers every runtime request with handler in memory.
+func serveRuntime(handler http.Handler) runtimeService {
+	return runtimeService{URL: runtimeFakeURL, client: inMemoryClient(handler)}
+}
+
+// listenerRuntime adapts a loopback server for the two-origin tests.
+func listenerRuntime(srv *httptest.Server) runtimeService {
+	return runtimeService{URL: srv.URL, client: srv.Client()}
+}
+
+func runtimeServerNamed(t *testing.T, name string, entries map[string]string) runtimeService {
 	t.Helper()
 
 	return runtimeServerWith(t, name, entries, 1)
 }
 
-func runtimeServer(t *testing.T, entries map[string]string, matchCount int) *httptest.Server {
+func runtimeServer(t *testing.T, entries map[string]string, matchCount int) runtimeService {
 	t.Helper()
 
 	return runtimeServerWith(t, artifactName, entries, matchCount)
 }
 
-func runtimeServerWith(t *testing.T, name string, entries map[string]string, matchCount int) *httptest.Server {
+func runtimeServerWith(t *testing.T, name string, entries map[string]string, matchCount int) runtimeService {
 	t.Helper()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return serveRuntime(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+runtimeToken {
 			w.WriteHeader(http.StatusUnauthorized)
 
 			return
 		}
 
-		base := "http://" + r.Host
+		base := runtimeFakeURL
 
 		switch r.URL.Path {
 		case "/_apis/pipelines/workflows/7/artifacts":
@@ -94,27 +116,26 @@ func runtimeServerWith(t *testing.T, name string, entries map[string]string, mat
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
-	t.Cleanup(srv.Close)
-
-	return srv
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v) //nolint:errchkjson // test fixture; the map values are always encodable.
 }
 
-func runtimeProvider(srv *httptest.Server) *forgejo.Provider {
+func runtimeProvider(srv runtimeService) *forgejo.Provider {
 	return &forgejo.Provider{
 		Env: envMap(map[string]string{
 			"ACTIONS_RUNTIME_URL":   srv.URL,
 			"ACTIONS_RUNTIME_TOKEN": runtimeToken,
 			"FORGEJO_RUN_ID":        "7",
 		}),
-		HTTPClient: srv.Client(),
+		HTTPClient: srv.client,
 	}
 }
 
 func TestDownloadRunArtifact_HappyPath(t *testing.T) {
+	t.Parallel()
+
 	srv := runtimeServer(t, map[string]string{
 		"dist/a.txt":     "alpha",
 		"dist/sub/b.txt": "bravo",
@@ -136,7 +157,337 @@ func TestDownloadRunArtifact_HappyPath(t *testing.T) {
 	}
 }
 
+func TestDownloadRunArtifact_RejectsOversizedRuntimeJSON(t *testing.T) {
+	t.Parallel()
+
+	const maxRuntimeJSONBytes = 16 << 20
+
+	srv := serveRuntime(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, strings.Repeat(" ", maxRuntimeJSONBytes+1))
+	}))
+
+	_, err := runtimeProvider(srv).DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Name: "dist", Dir: t.TempDir()})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("oversized runtime JSON error = %v, want ErrValidation", err)
+	}
+}
+
+func TestDownloadRunArtifact_RejectsOversizedDeclaredTotalBeforeContentRequest(t *testing.T) {
+	t.Parallel()
+
+	contentRequested := false
+
+	srv := serveRuntime(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/_apis/pipelines/workflows/7/artifacts":
+			writeJSON(w, jsonObj{"value": []jsonObj{{"name": "dist", "fileContainerResourceUrl": runtimeFakeURL + "/container"}}})
+		case "/container":
+			writeJSON(w, jsonObj{"value": []jsonObj{{
+				"path": "dist/huge", "itemType": "file",
+				"contentLocation": runtimeFakeURL + "/file", "fileLength": domainartifact.MaxTotalBytes + 1,
+			}}})
+		case "/file":
+			contentRequested = true
+			_, _ = io.WriteString(w, "unexpected")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	_, err := runtimeProvider(srv).DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Name: "dist", Dir: t.TempDir()})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("oversized declared total error = %v, want ErrValidation", err)
+	}
+
+	if contentRequested {
+		t.Fatal("oversized declared artifact requested file content")
+	}
+}
+
+func TestDownloadRunArtifact_RejectsExistingDestinationSymlink(t *testing.T) {
+	t.Parallel()
+
+	srv := runtimeServer(t, map[string]string{"dist/a.txt": "new"}, 1)
+	dir := t.TempDir()
+
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink(outside, filepath.Join(dir, "a.txt")); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	_, err := runtimeProvider(srv).DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Name: "dist", Dir: dir})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("existing destination symlink error = %v, want ErrValidation", err)
+	}
+
+	if got, readErr := os.ReadFile(outside); readErr != nil || string(got) != "outside" {
+		t.Fatalf("outside target changed: body=%q err=%v", got, readErr)
+	}
+
+	info, err := os.Lstat(filepath.Join(dir, "a.txt"))
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("rejected destination symlink changed: info=%v err=%v", info, err)
+	}
+}
+
+func TestDownloadRunArtifact_RejectsSymlinkedDestinationRootOrAncestor(t *testing.T) {
+	t.Parallel()
+
+	srv := runtimeServer(t, map[string]string{"dist/a.txt": "new"}, 1)
+	base := t.TempDir()
+
+	realDest := filepath.Join(base, "real")
+	if err := os.MkdirAll(realDest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	linked := filepath.Join(base, "linked")
+	if err := os.Symlink(realDest, linked); err != nil {
+		t.Skipf("symlinks unsupported: %v", err)
+	}
+
+	for _, dir := range []string{linked, filepath.Join(linked, "child")} {
+		_, err := runtimeProvider(srv).DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Name: "dist", Dir: dir})
+		if !errors.Is(err, errs.ErrValidation) {
+			t.Errorf("destination %q error = %v, want ErrValidation", dir, err)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(realDest, "a.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("symlink destination was written through: %v", err)
+	}
+}
+
+func TestDownloadRunArtifact_StripsTokenFromCrossOriginContentURL(t *testing.T) {
+	t.Parallel()
+
+	var receivedAuthorization string
+
+	blob := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAuthorization = r.Header.Get("Authorization")
+		_, _ = w.Write([]byte("payload"))
+	}))
+	t.Cleanup(blob.Close)
+
+	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+runtimeToken {
+			w.WriteHeader(http.StatusUnauthorized)
+
+			return
+		}
+
+		base := "http://" + r.Host
+		switch r.URL.Path {
+		case "/_apis/pipelines/workflows/7/artifacts":
+			writeJSON(w, jsonObj{"value": []jsonObj{{"name": "dist", "fileContainerResourceUrl": base + "/container"}}})
+		case "/container":
+			writeJSON(w, jsonObj{"value": []jsonObj{{
+				"path": "dist/value", "itemType": "file", "contentLocation": blob.URL + "/value", "fileLength": 7,
+			}}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(runtime.Close)
+
+	p := runtimeProvider(listenerRuntime(runtime))
+
+	p.HTTPClient = blob.Client()
+	if _, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Name: "dist", Dir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+
+	if receivedAuthorization != "" {
+		t.Fatalf("cross-origin content request leaked Authorization %q", receivedAuthorization)
+	}
+}
+
+func TestDownloadRunArtifact_TokenlessRedirectsStayHTTPSAndCredentialFree(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu      sync.Mutex
+		headers []string
+		blob    *httptest.Server
+	)
+
+	blob = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+
+		headers = append(headers, r.Header.Get("Authorization"))
+		mu.Unlock()
+
+		switch r.URL.Path {
+		case "/first":
+			http.Redirect(w, r, blob.URL+"/second", http.StatusFound)
+		case "/second":
+			http.Redirect(w, r, blob.URL+"/value", http.StatusTemporaryRedirect)
+		case "/value":
+			_, _ = w.Write([]byte("payload"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(blob.Close)
+
+	if err := downloadRuntimeContentURL(t, blob.URL+"/first", blob.Client()); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(headers) != 3 {
+		t.Fatalf("tokenless redirect requests = %d, want 3", len(headers))
+	}
+
+	for index, header := range headers {
+		if header != "" {
+			t.Errorf("tokenless redirect request %d leaked Authorization %q", index, header)
+		}
+	}
+}
+
+func TestDownloadRunArtifact_RejectsTokenlessRedirectToHTTP(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu     sync.Mutex
+		called bool
+	)
+
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		called = true
+		mu.Unlock()
+
+		_, _ = w.Write([]byte("payload"))
+	}))
+	t.Cleanup(plain.Close)
+
+	secure := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+"/value", http.StatusFound)
+	}))
+	t.Cleanup(secure.Close)
+
+	err := downloadRuntimeContentURL(t, secure.URL+"/first", secure.Client())
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("tokenless HTTP redirect error = %v, want ErrValidation", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if called {
+		t.Fatal("tokenless HTTP redirect destination was requested")
+	}
+}
+
+func TestDownloadRunArtifact_BoundsTokenlessRedirectCount(t *testing.T) {
+	t.Parallel()
+
+	var (
+		mu       sync.Mutex
+		requests int
+		blob     *httptest.Server
+	)
+
+	blob = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+		http.Redirect(w, r, blob.URL+"/loop", http.StatusFound)
+	}))
+	t.Cleanup(blob.Close)
+
+	err := downloadRuntimeContentURL(t, blob.URL+"/loop", blob.Client())
+	if !errors.Is(err, errs.ErrDependencyUnavailable) {
+		t.Fatalf("redirect loop error = %v, want ErrDependencyUnavailable", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if requests > 10 {
+		t.Fatalf("redirect loop made %d requests, want at most 10", requests)
+	}
+}
+
+func downloadRuntimeContentURL(t *testing.T, contentURL string, client *http.Client) error {
+	t.Helper()
+
+	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+runtimeToken {
+			w.WriteHeader(http.StatusUnauthorized)
+
+			return
+		}
+
+		base := "http://" + r.Host
+		switch r.URL.Path {
+		case "/_apis/pipelines/workflows/7/artifacts":
+			writeJSON(w, jsonObj{"value": []jsonObj{{"name": "dist", "fileContainerResourceUrl": base + "/container"}}})
+		case "/container":
+			writeJSON(w, jsonObj{"value": []jsonObj{{
+				"path": "dist/value", "itemType": "file", "contentLocation": contentURL, "fileLength": 7,
+			}}})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(runtime.Close)
+
+	p := runtimeProvider(listenerRuntime(runtime))
+	p.HTTPClient = client
+	_, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Name: "dist", Dir: t.TempDir()})
+
+	return err
+}
+
+func TestDownloadRunArtifact_RejectsCrossOriginAuthenticatedContainerURL(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	foreign := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	t.Cleanup(foreign.Close)
+
+	runtime := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, jsonObj{"value": []jsonObj{{"name": "dist", "fileContainerResourceUrl": foreign.URL + "/container"}}})
+	}))
+	t.Cleanup(runtime.Close)
+
+	_, err := runtimeProvider(listenerRuntime(runtime)).DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Name: "dist", Dir: t.TempDir()})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("cross-origin container URL error = %v, want ErrValidation", err)
+	}
+
+	if called {
+		t.Fatal("cross-origin authenticated container URL was requested")
+	}
+}
+
+func TestDownloadRunArtifact_RejectsInsecureNonLoopbackRuntimeURL(t *testing.T) {
+	t.Parallel()
+
+	p := &forgejo.Provider{Env: envMap(map[string]string{
+		"ACTIONS_RUNTIME_URL":   "http://example.com",
+		"ACTIONS_RUNTIME_TOKEN": runtimeToken,
+		"FORGEJO_RUN_ID":        "7",
+	})}
+
+	_, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Name: "dist", Dir: t.TempDir()})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("insecure runtime URL error = %v, want ErrValidation", err)
+	}
+}
+
 func TestDownloadRunArtifact_CrossRunUnsupported(t *testing.T) {
+	t.Parallel()
+
 	srv := runtimeServer(t, map[string]string{"dist/a.txt": "x"}, 1)
 
 	_, err := runtimeProvider(srv).DownloadRunArtifact(context.Background(),
@@ -147,7 +498,11 @@ func TestDownloadRunArtifact_CrossRunUnsupported(t *testing.T) {
 }
 
 func TestDownloadRunArtifact_MatchCount(t *testing.T) {
+	t.Parallel()
+
 	t.Run("zero", func(t *testing.T) {
+		t.Parallel()
+
 		srv := runtimeServer(t, map[string]string{"dist/a.txt": "x"}, 0)
 
 		_, err := runtimeProvider(srv).DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Name: "dist", Dir: t.TempDir()})
@@ -157,6 +512,8 @@ func TestDownloadRunArtifact_MatchCount(t *testing.T) {
 	})
 
 	t.Run("multiple", func(t *testing.T) {
+		t.Parallel()
+
 		srv := runtimeServer(t, map[string]string{"dist/a.txt": "x"}, 2)
 
 		_, err := runtimeProvider(srv).DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Name: "dist", Dir: t.TempDir()})
@@ -169,6 +526,8 @@ func TestDownloadRunArtifact_MatchCount(t *testing.T) {
 // TestDownloadRunArtifact_RejectsTraversal proves the shared SafeJoin gate
 // stops a malicious container entry from escaping the destination.
 func TestDownloadRunArtifact_RejectsTraversal(t *testing.T) {
+	t.Parallel()
+
 	srv := runtimeServer(t, map[string]string{"dist/../escape.txt": "evil"}, 1)
 	dir := t.TempDir()
 
@@ -195,6 +554,8 @@ func TestDownloadRunArtifact_RejectsTraversal(t *testing.T) {
 // provider has the equivalent test
 // (TestProvider_DownloadRunArtifact_RejectsHostileForgeName).
 func TestDownloadRunArtifact_RejectsHostileArtifactName(t *testing.T) {
+	t.Parallel()
+
 	// path.Match selects the artifacts, and "*" does not cross a slash --
 	// so only slash-free names reach the join at all. A name containing a
 	// slash is filtered out before the guard, which is a second layer
@@ -219,6 +580,8 @@ func TestDownloadRunArtifact_RejectsHostileArtifactName(t *testing.T) {
 		"dist\x00evil", "evil\x1b[31mRED",
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
 			srv := runtimeServerNamed(t, name, map[string]string{"file.txt": "data"})
 			dir := t.TempDir()
 
@@ -241,6 +604,8 @@ func TestDownloadRunArtifact_RejectsHostileArtifactName(t *testing.T) {
 }
 
 func TestDownloadRunArtifact_RuntimeCredsRequired(t *testing.T) {
+	t.Parallel()
+
 	p := &forgejo.Provider{Env: envMap(map[string]string{"FORGEJO_RUN_ID": "7"})} // no ACTIONS_RUNTIME_*
 
 	_, err := p.DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Name: "dist", Dir: t.TempDir()})
@@ -334,6 +699,8 @@ func uploadProvider(srv *httptest.Server) *forgejo.Provider {
 }
 
 func TestUploadRunArtifact_DirPreservesTree(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "a.txt"), "alpha")
 	mustWrite(t, filepath.Join(dir, "sub", "b.txt"), "bravo")
@@ -360,25 +727,32 @@ func TestUploadRunArtifact_DirPreservesTree(t *testing.T) {
 	}
 }
 
-func TestUploadRunArtifact_FilesFlattenToBasename(t *testing.T) {
+func TestUploadRunArtifact_FilesPreserveCommonRootRelativePaths(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
-	f := filepath.Join(dir, "nested", "deep", "c.txt")
-	mustWrite(t, f, "charlie")
+	first := filepath.Join(dir, "nested", "deep", "c.txt")
+	second := filepath.Join(dir, "nested", "other", "d.txt")
+
+	mustWrite(t, first, "charlie")
+	mustWrite(t, second, "delta")
 
 	var rec uploadRecorder
 
 	srv := uploadServer(t, &rec)
 
-	if _, err := uploadProvider(srv).UploadRunArtifact(context.Background(), provider.RunArtifactUpload{Name: "dist", Files: []string{f}}); err != nil {
+	if _, err := uploadProvider(srv).UploadRunArtifact(context.Background(), provider.RunArtifactUpload{Name: "dist", Files: []string{second, first}}); err != nil {
 		t.Fatal(err)
 	}
 
-	if rec.puts["dist/c.txt"] != "charlie" {
-		t.Errorf("Files mode should flatten to basename; puts = %v", rec.puts)
+	if rec.puts["dist/deep/c.txt"] != "charlie" || rec.puts["dist/other/d.txt"] != "delta" {
+		t.Errorf("Files mode should preserve common-root paths; puts = %v", rec.puts)
 	}
 }
 
 func TestUploadRunArtifact_IfNoFiles(t *testing.T) {
+	t.Parallel()
+
 	var rec uploadRecorder
 
 	srv := uploadServer(t, &rec)
@@ -400,7 +774,30 @@ func TestUploadRunArtifact_IfNoFiles(t *testing.T) {
 	}
 }
 
+func TestUploadRunArtifact_RejectsAggregateBeforeRuntimeAPI(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	for _, name := range []string{"a", "b", "c"} {
+		path := filepath.Join(dir, name)
+		mustWrite(t, path, "")
+
+		if err := os.Truncate(path, 4<<30); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p := &forgejo.Provider{Env: envMap(map[string]string{})}
+
+	_, err := p.UploadRunArtifact(context.Background(), provider.RunArtifactUpload{Name: "dist", Dir: dir})
+	if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "extracted bytes") {
+		t.Fatalf("oversized upload error = %v, want aggregate validation before runtime credentials/API", err)
+	}
+}
+
 func TestUploadRunArtifact_SkipsSymlinks(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "real.txt"), "data")
 
@@ -417,7 +814,7 @@ func TestUploadRunArtifact_SkipsSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if info.FileCount != 1 || rec.puts["dist/link.txt"] != "" {
+	if _, uploaded := rec.puts["dist/link.txt"]; info.FileCount != 1 || uploaded {
 		t.Errorf("symlink should be skipped; files=%d puts=%v", info.FileCount, rec.puts)
 	}
 }
@@ -441,6 +838,8 @@ func mustWrite(t *testing.T, path, body string) {
 // ?retentionDays=N); each PUT sends x-actions-results-md5 = base64(md5(body));
 // and a zero-byte file gets Content-Range "bytes 0--1/0".
 func TestUploadRunArtifact_BackendProtocolContract(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "data.bin"), "payload")
 	mustWrite(t, filepath.Join(dir, "empty"), "")
@@ -463,7 +862,9 @@ func TestUploadRunArtifact_BackendProtocolContract(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 
 			mu.Lock()
+
 			createDays = body.RetentionDays
+
 			mu.Unlock()
 
 			// Mirror Codeberg: the container URL already carries a query.
@@ -473,11 +874,13 @@ func TestUploadRunArtifact_BackendProtocolContract(t *testing.T) {
 			_, _ = io.Copy(io.Discard, r.Body)
 
 			mu.Lock()
+
 			puts[r.URL.Query().Get("itemPath")] = putRec{
 				rawQuery:     r.URL.RawQuery,
 				md5:          r.Header.Get("x-actions-results-md5"),
 				contentRange: r.Header.Get("Content-Range"),
 			}
+
 			mu.Unlock()
 
 			w.WriteHeader(http.StatusCreated)
@@ -506,6 +909,15 @@ func TestUploadRunArtifact_BackendProtocolContract(t *testing.T) {
 
 	if createDays != 5 {
 		t.Errorf("CreateArtifact RetentionDays = %d, want 5", createDays)
+	}
+
+	// Zero asks for the forge default, which Forgejo cannot take as absent.
+	if _, err := p.UploadRunArtifact(context.Background(), provider.RunArtifactUpload{Name: "dist", Dir: dir}); err != nil {
+		t.Fatal(err)
+	}
+
+	if createDays != 1 {
+		t.Errorf("CreateArtifact RetentionDays for zero = %d, want the backend minimum 1", createDays)
 	}
 
 	md5b64 := func(content string) string {
@@ -544,6 +956,8 @@ func TestUploadRunArtifact_BackendProtocolContract(t *testing.T) {
 // ContentLength is 0 on a non-nil body and which Forgejo's chunk saver
 // rejects with HTTP 500.
 func TestUploadRunArtifact_EmptyFileWireShape(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	mustWrite(t, filepath.Join(dir, "empty-marker"), "")
 	mustWrite(t, filepath.Join(dir, "sized.txt"), "payload")
@@ -584,17 +998,17 @@ func TestUploadRunArtifact_EmptyFileWireShape(t *testing.T) {
 // name repeated, which cannot exercise pattern matching across names.
 //
 // artifacts maps artifact name → (item path → body).
-func multiArtifactServer(t *testing.T, artifacts map[string]map[string]string) *httptest.Server {
+func multiArtifactServer(t *testing.T, artifacts map[string]map[string]string) runtimeService {
 	t.Helper()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return serveRuntime(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+runtimeToken {
 			w.WriteHeader(http.StatusUnauthorized)
 
 			return
 		}
 
-		base := "http://" + r.Host
+		base := runtimeFakeURL
 
 		switch {
 		case r.URL.Path == "/_apis/pipelines/workflows/7/artifacts":
@@ -633,9 +1047,6 @@ func multiArtifactServer(t *testing.T, artifacts map[string]map[string]string) *
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
-	t.Cleanup(srv.Close)
-
-	return srv
 }
 
 // TestDownloadRunArtifact_Pattern covers the pattern / merge-multiple path,
@@ -643,6 +1054,8 @@ func multiArtifactServer(t *testing.T, artifacts map[string]map[string]string) *
 // resolveMatchingContainers were both at 0% coverage, so the glob, the
 // per-artifact destination, and the flattening were unverified.
 func TestDownloadRunArtifact_Pattern(t *testing.T) {
+	t.Parallel()
+
 	fixture := map[string]map[string]string{
 		"dist-linux": {"bin/app": "linux-body"},
 		"dist-mac":   {"bin/app": "mac-body"},
@@ -650,6 +1063,8 @@ func TestDownloadRunArtifact_Pattern(t *testing.T) {
 	}
 
 	t.Run("each match lands under its own artifact dir", func(t *testing.T) {
+		t.Parallel()
+
 		dir := t.TempDir()
 
 		info, err := runtimeProvider(multiArtifactServer(t, fixture)).
@@ -680,6 +1095,8 @@ func TestDownloadRunArtifact_Pattern(t *testing.T) {
 	})
 
 	t.Run("merge-multiple flattens into Dir", func(t *testing.T) {
+		t.Parallel()
+
 		dir := t.TempDir()
 
 		if _, err := runtimeProvider(multiArtifactServer(t, fixture)).
@@ -700,7 +1117,29 @@ func TestDownloadRunArtifact_Pattern(t *testing.T) {
 		}
 	})
 
+	t.Run("zero matches are a no-op", func(t *testing.T) {
+		t.Parallel()
+
+		dir := filepath.Join(t.TempDir(), "downloads")
+
+		info, err := runtimeProvider(multiArtifactServer(t, fixture)).
+			DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Pattern: "missing-*", Dir: dir})
+		if err != nil {
+			t.Fatalf("download: %v", err)
+		}
+
+		if info.Name != "missing-*" || info.FileCount != 0 || info.Bytes != 0 {
+			t.Errorf("zero-match info = %+v, want pattern name and zero totals", info)
+		}
+
+		if _, statErr := os.Stat(dir); !os.IsNotExist(statErr) {
+			t.Errorf("zero-match download created destination or returned unexpected stat error: %v", statErr)
+		}
+	})
+
 	t.Run("a bad glob is a usage error", func(t *testing.T) {
+		t.Parallel()
+
 		_, err := runtimeProvider(multiArtifactServer(t, fixture)).
 			DownloadRunArtifact(context.Background(), provider.RunArtifactDownload{Pattern: "[", Dir: t.TempDir()})
 		if !errors.Is(err, errs.ErrUsage) {

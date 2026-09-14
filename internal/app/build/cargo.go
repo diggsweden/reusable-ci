@@ -18,6 +18,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainversion "github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/listval"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // CargoTool runs `cargo` commands. The shape mirrors GoTool: a single
@@ -50,11 +51,18 @@ type CargoTestInput struct {
 
 // CargoBuildBinariesInput drives CargoBuildBinaries.
 type CargoBuildBinariesInput struct {
-	Dir        string
+	Dir string
+	// BinaryName is the basename the binary is renamed to under dist/.
+	// Empty → CrateBinaryName.
 	BinaryName string
-	Platforms  string
-	Version    string
-	RefName    string
+	// CrateBinaryName is the name cargo itself gives the binary (the [[bin]]
+	// target, else the package name) and so the file it writes under
+	// target/<triple>/release/. Empty → read from `cargo metadata`.
+	CrateBinaryName string
+	Platforms       string
+	Version         string
+	RefName         string
+	Commit          string
 }
 
 // CargoFetch runs `cargo fetch --locked`. --locked enforces Cargo.lock,
@@ -90,23 +98,37 @@ func CargoTest(ctx context.Context, tool CargoTool, w, stderr io.Writer, in Carg
 // `rustup target add <triple>` and the matching cross-linker. We don't
 // model that here — `cargo build` produces a precise error when a target
 // is missing, which surfaces in the workflow log.
-func CargoBuildBinaries(ctx context.Context, tool CargoTool, w, stderr io.Writer, in CargoBuildBinariesInput) error { //nolint:cyclop,varnamelen // matrix loop mirrors GoBuildBinaries.
+func CargoBuildBinaries(ctx context.Context, tool CargoTool, w, stderr io.Writer, in CargoBuildBinariesInput) error { //nolint:cyclop,gocognit,varnamelen // matrix loop keeps each target's source cleanup, build and checked copy together.
 	dir := defaultCargoDir(in.Dir)
 
 	binaryName := strings.TrimSpace(in.BinaryName)
-	if binaryName == "" {
+	crateBinary := strings.TrimSpace(in.CrateBinaryName)
+
+	if binaryName == "" || crateBinary == "" {
 		meta, err := readCargoMetadata(ctx, tool, dir)
 		if err != nil {
 			return err
 		}
 
-		binaryName = meta.binaryName
+		if crateBinary == "" {
+			crateBinary = meta.crateBinaryName
+		}
+
+		if binaryName == "" {
+			binaryName = crateBinary
+		}
 	}
 
 	// Reject scalar shapes that would break the GHA output contract or
 	// allow injection of fake ldflags-style lines (mirrors Go path).
 	if err := validateScalarValue(binaryName); err != nil {
 		return fmt.Errorf("binary-name: %w", err)
+	}
+
+	for _, name := range []string{binaryName, crateBinary} {
+		if !pathsafe.Relative(name) || name == "." || filepath.Base(name) != name {
+			return fmt.Errorf("cargo binary names must be plain basenames: %w", errs.ErrUsage)
+		}
 	}
 
 	version := domainversion.StripVPrefix(strings.TrimSpace(in.Version))
@@ -127,12 +149,21 @@ func CargoBuildBinaries(ctx context.Context, tool CargoTool, w, stderr io.Writer
 		return err
 	}
 
+	root, err := pathsafe.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = root.Close() }()
+
+	dir = root.Name()
+
 	// Targeted dist/<goos>-<goarch> wipe — never blanket-RemoveAll(dist)
 	// since callers may stage sibling assets there. Same rationale as
 	// GoBuildBinaries.
 	for _, platform := range platforms {
 		goos, goarch, _ := parseCargoPlatform(platform)
-		if rmErr := os.RemoveAll(filepath.Join(dir, "dist", goos+"-"+goarch)); rmErr != nil {
+		if rmErr := root.RemoveAll(filepath.Join("dist", goos+"-"+goarch)); rmErr != nil {
 			return fmt.Errorf("remove dist/%s-%s: %w", goos, goarch, rmErr)
 		}
 	}
@@ -142,7 +173,7 @@ func CargoBuildBinaries(ctx context.Context, tool CargoTool, w, stderr io.Writer
 		triple := domainbuild.CargoTargetTriple(platform)
 
 		outDir := filepath.Join(dir, "dist", goos+"-"+goarch)
-		if err := os.MkdirAll(outDir, 0o755); err != nil { //nolint:gosec // release binary dir read by upload-artifact step.
+		if err := root.MkdirAll(filepath.Join("dist", goos+"-"+goarch), 0o755); err != nil {
 			return fmt.Errorf("mkdir %s: %w", outDir, err)
 		}
 
@@ -153,16 +184,36 @@ func CargoBuildBinaries(ctx context.Context, tool CargoTool, w, stderr io.Writer
 
 		_, _ = fmt.Fprintf(w, "Building %s -> %s\n", triple, filepath.Join(outDir, outName))
 
+		sourceName := crateBinary
+		if goos == archGOOSWindows {
+			sourceName += extExe
+		}
+
+		source := filepath.Join(dir, "target", triple, "release", sourceName)
+
+		parent, parentErr := pathsafe.OpenRoot(filepath.Dir(source))
+		if parentErr != nil && !errors.Is(parentErr, os.ErrNotExist) {
+			return parentErr
+		}
+
+		if parent != nil {
+			removeErr := parent.Remove(sourceName)
+			_ = parent.Close()
+
+			if removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				return fmt.Errorf("remove previous Cargo binary: %w", removeErr)
+			}
+		}
+
 		args := []string{
 			subCmdBuild, "--release", flagCargoLocked,
 			"--target", triple,
-			// `--bin` defaults to the package's main binary; explicit
-			// flag lets workspaces with multiple bins disambiguate, but
-			// we omit it so cargo picks the package's default bin.
+			"--bin", crateBinary,
 			"--target-dir", filepath.Join(dir, "target"),
 		}
 		if err := tool.Run(ctx, CargoRunInput{
 			Dir:    dir,
+			Env:    []string{"REUSABLE_CI_VERSION=" + version, "REUSABLE_CI_COMMIT=" + strings.TrimSpace(in.Commit)},
 			Args:   args,
 			Stdout: w,
 			Stderr: stderr,
@@ -171,10 +222,10 @@ func CargoBuildBinaries(ctx context.Context, tool CargoTool, w, stderr io.Writer
 		}
 
 		// Cargo writes target/<triple>/release/<crate_name>(.exe). Locate
-		// it and copy to the dist/ layout. We use the crate name (which
-		// may differ from --binary-name override) for the source; the
+		// it and copy to the dist/ layout. The crate name (which may differ
+		// from the --binary-name override) names the source; the
 		// destination uses binaryName per the GHA output contract.
-		built, err := locateCargoBinary(dir, triple, binaryName, goos)
+		built, err := locateCargoBinary(dir, triple, goos, crateBinary)
 		if err != nil {
 			return err
 		}
@@ -234,6 +285,8 @@ func resolveCargoMetadata(ctx context.Context, tool CargoTool, in CargoMetadataI
 		return cargoMetadata{}, fmt.Errorf("binary-name: %w", err)
 	}
 
+	meta.binaryName = binaryName
+
 	version := domainversion.StripVPrefix(strings.TrimSpace(in.Version))
 	if version == "" {
 		version = domainversion.StripVPrefix(strings.TrimSpace(in.RefName))
@@ -253,15 +306,31 @@ func resolveCargoMetadata(ctx context.Context, tool CargoTool, in CargoMetadataI
 		version = "dev"
 	}
 
-	return cargoMetadata{binaryName: binaryName, version: version, packageName: meta.packageName}, nil
+	meta.version = version
+
+	return meta, nil
 }
 
 // cargoMetadata is the subset of `cargo metadata --format-version 1`
 // output we parse — enough to derive binary-name, version, package.
 type cargoMetadata struct {
-	binaryName  string
-	version     string
-	packageName string
+	// binaryName is the resolved output name (override → artifact name →
+	// crate binary); crateBinaryName is always what cargo itself writes.
+	binaryName      string
+	crateBinaryName string
+	version         string
+	packageName     string
+}
+
+// cargoPackage is one entry of `cargo metadata`'s packages array.
+type cargoPackage struct {
+	Name         string `json:"name"`
+	Version      string `json:"version"`
+	ManifestPath string `json:"manifest_path"` //nolint:tagliatelle // schema field is exactly this.
+	Targets      []struct {
+		Name string   `json:"name"`
+		Kind []string `json:"kind"`
+	} `json:"targets"`
 }
 
 // readCargoMetadata shells out to `cargo metadata --no-deps
@@ -280,20 +349,11 @@ func readCargoMetadata(ctx context.Context, tool CargoTool, dir string) (cargoMe
 		return cargoMetadata{}, fmt.Errorf("cargo metadata: %w", err)
 	}
 
-	type pkg struct {
-		Name    string `json:"name"`
-		Version string `json:"version"`
-		Targets []struct {
-			Name string   `json:"name"`
-			Kind []string `json:"kind"`
-		} `json:"targets"`
-	}
-
 	var doc struct {
-		Packages      []pkg    `json:"packages"`
-		WorkspaceRoot string   `json:"workspace_root"`
-		WorkspaceMems []string `json:"workspace_members"` //nolint:tagliatelle // schema field is exactly this.
-		Resolve       any      `json:"resolve"`
+		Packages      []cargoPackage `json:"packages"`
+		WorkspaceRoot string         `json:"workspace_root"`    //nolint:tagliatelle // schema field is exactly this.
+		WorkspaceMems []string       `json:"workspace_members"` //nolint:tagliatelle // schema field is exactly this.
+		Resolve       any            `json:"resolve"`
 	}
 
 	if err := json.NewDecoder(strings.NewReader(buf.String())).Decode(&doc); err != nil {
@@ -304,67 +364,113 @@ func readCargoMetadata(ctx context.Context, tool CargoTool, dir string) (cargoMe
 		return cargoMetadata{}, fmt.Errorf("cargo metadata returned no packages: %w", errs.ErrInvalidConfig)
 	}
 
-	// Pick the root package — cargo metadata --no-deps lists workspace
-	// members only, with the root first when there is a [package] at
-	// workspace_root. Single-crate projects have exactly one entry.
+	// Pick the root package. cargo sorts `packages` by package id, so the
+	// [package] at workspace_root is not necessarily first (cargo 1.98 lists
+	// a member "alpha" before the root "zeta"); it is the one whose manifest
+	// is <workspace_root>/Cargo.toml. A virtual workspace has no such
+	// package and keeps the first member — the cargo-cyclonedx / `cargo run`
+	// heuristic. Single-crate projects have exactly one entry.
 	root := doc.Packages[0]
+	if rootPkg, ok := workspaceRootPackage(doc.Packages, doc.WorkspaceRoot); ok {
+		root = rootPkg
+	}
 
-	// Find the package's [[bin]] target, if any. cargo's default rule:
-	// the [[bin]] with name matching the package is the canonical binary.
-	// Fall back to the package name when no [[bin]] is declared (cargo
-	// still produces a binary at target/<triple>/release/<pkg>).
+	// Output renaming is not source selection. Refuse ambiguous metadata
+	// rather than silently labeling the last binary as the release.
 	binaryName := root.Name
+	binCount := 0
+
 	for _, t := range root.Targets {
 		for _, k := range t.Kind {
 			if k == "bin" && t.Name != "" {
 				binaryName = t.Name
+				binCount++
 
 				break
 			}
 		}
 	}
 
+	if binCount > 1 {
+		return cargoMetadata{}, fmt.Errorf("multiple Cargo binaries require an explicit crate binary selection: %w", errs.ErrUsage)
+	}
+
 	return cargoMetadata{
-		binaryName:  binaryName,
-		version:     root.Version,
-		packageName: root.Name,
+		binaryName:      binaryName,
+		crateBinaryName: binaryName,
+		version:         root.Version,
+		packageName:     root.Name,
 	}, nil
+}
+
+// workspaceRootPackage returns the package whose manifest is the workspace
+// root's Cargo.toml, if any.
+func workspaceRootPackage(packages []cargoPackage, workspaceRoot string) (cargoPackage, bool) {
+	if strings.TrimSpace(workspaceRoot) == "" {
+		return cargoPackage{}, false
+	}
+
+	want := filepath.Join(filepath.Clean(workspaceRoot), "Cargo.toml")
+
+	for _, candidate := range packages {
+		if candidate.ManifestPath != "" && filepath.Clean(candidate.ManifestPath) == want {
+			return candidate, true
+		}
+	}
+
+	return cargoPackage{}, false
 }
 
 // locateCargoBinary returns the path to the produced binary inside
 // target/<triple>/release/. cargo names the binary after the [[bin]]
 // target (or, by default, the package name). The override flow uses
 // --binary-name to rename in dist/ but cargo still writes the source
-// under its own naming; we search both candidates and the first match
-// wins.
-func locateCargoBinary(dir, triple, binaryName, goos string) (string, error) {
+// under its own naming. An unrelated basename is never accepted as a fallback.
+func locateCargoBinary(dir, triple, goos, name string) (string, error) {
 	suffix := ""
 	if goos == archGOOSWindows {
 		suffix = extExe
 	}
 
-	candidates := []string{
-		filepath.Join(dir, "target", triple, "release", binaryName+suffix),
+	candidate := filepath.Join(dir, "target", triple, "release", name+suffix)
+	if info, err := os.Lstat(candidate); err == nil && info.Mode().IsRegular() && info.Size() > 0 && (goos == archGOOSWindows || info.Mode().Perm()&0o111 != 0) {
+		return candidate, nil
 	}
 
-	for _, p := range candidates {
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-	}
-
-	return "", fmt.Errorf("compiled binary not found under target/%s/release/ (looked for %q): %w", triple, binaryName+suffix, errs.ErrInvalidConfig)
+	return "", fmt.Errorf("compiled binary not found under target/%s/release/ (looked for %q): %w", triple, name+suffix, errs.ErrInvalidConfig)
 }
 
 func copyFile(src, dst string) error {
-	in, err := os.Open(src) //nolint:gosec // caller-supplied path resolved within working-dir.
+	root, err := pathsafe.OpenRoot(filepath.Dir(src))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
+	in, err := root.Open(filepath.Base(src))
 	if err != nil {
 		return fmt.Errorf("open %s: %w", src, err)
 	}
 
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755) //nolint:gosec // release binary executable bit required.
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return fmt.Errorf("cargo output must be a nonempty regular file: %w", errs.ErrValidation)
+	}
+
+	stage, err := pathsafe.NewArtifactStaging(filepath.Dir(dst))
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = stage.Close() }()
+
+	out, err := stage.Root().OpenFile(filepath.Base(dst), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", dst, err)
 	}
@@ -375,7 +481,11 @@ func copyFile(src, dst string) error {
 		return fmt.Errorf("copy %s -> %s: %w", src, dst, err)
 	}
 
-	return nil
+	if err := out.Close(); err != nil {
+		return err
+	}
+
+	return stage.Install()
 }
 
 func defaultCargoDir(dir string) string {

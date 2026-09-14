@@ -6,40 +6,52 @@ package release
 import (
 	"context"
 	"errors"
-	"slices"
 	"testing"
 
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/signflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-func TestProvenanceSignAllow(t *testing.T) {
+// TestProvenanceSignBlobInput_CarriesSigstoreEndpoints pins that the
+// --fulcio-url / --rekor-url / --trusted-root flags `release provenance`
+// declares reach cosign sign-blob. They were declared through
+// signflags.Cosign and read nowhere, so a self-hosted Sigstore operator's
+// provenance was silently signed against the public CA and log; for kms the
+// CA and log overrides are refused, as the `release sign` signer already does.
+func TestProvenanceSignBlobInput_CarriesSigstoreEndpoints(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name   string
-		keyRef string
-		want   []string
-	}{
-		{"env_key_isolated", "env://COSIGN_KEY", []string{"COSIGN_KEY", "COSIGN_PASSWORD"}},
-		{"env_key_custom_var", "env://MY_SIGNING_KEY", []string{"MY_SIGNING_KEY", "COSIGN_PASSWORD"}},
-		{"kms_not_isolated", "hashivault://transit/keys/release", nil},
-		{"file_not_isolated", "/keys/cosign.key", nil},
-		{"empty_env_prefix_not_isolated", "env://", nil},
-		{"empty", "", nil},
+	endpoints := signflags.Endpoints{
+		FulcioURL:       "https://fulcio.internal",
+		RekorURL:        "https://rekor.internal",
+		TrustedRootPath: "trusted_root.json",
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
 
-			if got := provenanceSignAllow(tc.keyRef); !slices.Equal(got, tc.want) {
-				t.Errorf("provenanceSignAllow(%q) = %v, want %v", tc.keyRef, got, tc.want)
-			}
-		})
+	got, err := provenanceSignBlobInput(signProvenanceInput{output: "p.json", method: "sigstore", endpoints: endpoints}, "p.json.bundle")
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+
+	if got.FulcioURL != endpoints.FulcioURL || got.RekorURL != endpoints.RekorURL || got.TrustedRootPath != endpoints.TrustedRootPath {
+		t.Errorf("sigstore endpoints not carried to sign-blob: %+v", got)
+	}
+
+	if _, kmsErr := provenanceSignBlobInput(signProvenanceInput{output: "p.json", method: "kms", keyRef: "hashivault://k", endpoints: endpoints}, "b"); !errors.Is(kmsErr, errs.ErrUsage) {
+		t.Fatalf("kms with --fulcio-url: err = %v, want ErrUsage (documented as forbidden for --method=kms)", kmsErr)
+	}
+
+	kms, err := provenanceSignBlobInput(signProvenanceInput{output: "p.json", method: "kms", keyRef: "hashivault://k", endpoints: signflags.Endpoints{TrustedRootPath: "trusted_root.json"}}, "b")
+	if err != nil {
+		t.Fatalf("kms with only --trusted-root: %v", err)
+	}
+
+	if kms.TrustedRootPath != "trusted_root.json" {
+		t.Errorf("kms TrustedRootPath = %q, want the flag value", kms.TrustedRootPath)
 	}
 }
 
-func TestProvenanceSignBlobInput(t *testing.T) {
+func TestProvenanceSignBlobInput_MapsSigstoreToKeylessAndKMSToKey(t *testing.T) {
 	t.Parallel()
 
 	t.Run("sigstore_is_keyless", func(t *testing.T) {
@@ -98,7 +110,7 @@ func TestProvenanceSignBlobInput(t *testing.T) {
 	})
 }
 
-func TestParseProvenanceProfile(t *testing.T) {
+func TestParseProvenanceProfile_DefaultsToGenericAndRejectsUnknown(t *testing.T) {
 	t.Parallel()
 
 	for _, raw := range []string{"", "generic"} {
@@ -126,7 +138,7 @@ func TestParseProvenanceProfile(t *testing.T) {
 	}
 }
 
-func TestForgejoActionsBuilderID(t *testing.T) {
+func TestForgejoActionsBuilderID_BuildsTheWorkflowURIAtTheTag(t *testing.T) {
 	t.Parallel()
 
 	got := forgejoActionsBuilderID("https://codeberg.org/o/r/", "v1.2.3", "release.yml")
@@ -137,7 +149,7 @@ func TestForgejoActionsBuilderID(t *testing.T) {
 	}
 }
 
-func TestResolveStartedOn(t *testing.T) {
+func TestResolveStartedOn_PrefersExplicitOverTheCommitTimestamp(t *testing.T) {
 	t.Run("explicit_rfc3339_wins", func(t *testing.T) {
 		fake := &fakeCommitUnixTimer{epoch: "0"}
 
@@ -216,10 +228,10 @@ func (f *fakeCommitUnixTimer) CommitUnixTime(_ context.Context, ref string) (str
 	return f.epoch, f.err
 }
 
-// TestProvenanceCommandExposesExternalParametersFlag pins the generic
+// TestProvenanceCommand_ExposesExternalParametersFlag pins the generic
 // externalParameters-extras flag on `release provenance`, the successor
 // to the per-field lineage flags slated for the coordinated flip.
-func TestProvenanceCommandExposesExternalParametersFlag(t *testing.T) {
+func TestProvenanceCommand_ExposesExternalParametersFlag(t *testing.T) {
 	t.Parallel()
 
 	for _, flag := range provenanceCmd().Flags {

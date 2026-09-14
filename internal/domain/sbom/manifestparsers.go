@@ -5,9 +5,15 @@ package sbom
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/pelletier/go-toml/v2"
+	"golang.org/x/mod/modfile"
+	"golang.org/x/mod/module"
 )
 
 // PackageJSONName returns the trimmed name from a package.json body.
@@ -44,17 +50,16 @@ func PackageJSONVersion(body []byte) string {
 	return p.Version
 }
 
+// The Gradle version is the project's own assignment at the start of a line;
+// a longer identifier such as ext.kotlin_version is not it, and a computed
+// value such as project.findProperty(...) is not a version. The setup.py
+// readers anchor on a word boundary so package_name and python_version do
+// not answer for name and version.
 var (
-	gradleVersionLine      = regexp.MustCompile(`(?m)version\s*=\s*['"]?([^'"\s]+)`)
-	gradleRootProjectLine  = regexp.MustCompile(`(?m)rootProject\.name\s*=\s*['"]?([^'"\s]+)`)
-	goModModule            = regexp.MustCompile(`(?m)^module\s+(\S+)`)
-	goModMajorVersionPath  = regexp.MustCompile(`(?m)^module\s+\S+/v(\d+)`)
-	cargoNameLine          = regexp.MustCompile(`(?m)^name\s*=\s*"([^"]+)"`)
-	cargoVersionLineDomain = regexp.MustCompile(`(?m)^version\s*=\s*"([^"]+)"`)
-	pythonNameLine         = regexp.MustCompile(`(?m)^name\s*=\s*"([^"]+)"`)
-	pythonVersionLine      = regexp.MustCompile(`(?m)^version\s*=\s*"([^"]+)"`)
-	pythonSetupName        = regexp.MustCompile(`name\s*=\s*['"]([^'"]+)['"]`)
-	pythonSetupVersion     = regexp.MustCompile(`version\s*=\s*['"]([^'"]+)['"]`)
+	gradleVersionLine     = regexp.MustCompile(`(?m)^[ \t]*version\s*=\s*['"]([^'"\s]+)['"]`)
+	gradleRootProjectLine = regexp.MustCompile(`(?m)rootProject\.name\s*=\s*['"]?([^'"\s]+)`)
+	pythonSetupName       = regexp.MustCompile(`\bname\s*=\s*['"]([^'"]+)['"]`)
+	pythonSetupVersion    = regexp.MustCompile(`\bversion\s*=\s*['"]([^'"]+)['"]`)
 )
 
 // GradleVersion extracts the first `version = '…'` value from a
@@ -82,66 +87,136 @@ func GradleRootProjectName(body []byte) string {
 // GoModuleName returns the basename of the `module` declaration in a
 // go.mod body. Mirrors `grep '^module' | xargs basename`.
 func GoModuleName(body []byte) string {
-	m := goModModule.FindSubmatch(body)
-	if m == nil {
+	path := goModulePath(body)
+	if path == "" {
 		return ""
 	}
 
-	return filepath.Base(string(m[1]))
+	return filepath.Base(path)
 }
 
 // GoModuleMajorVersion returns the synthetic major-version string
 // (e.g. "2.0.0" when the module path ends in `/v2`). Mirrors the
 // `s/v\K[0-9]+/$&.0.0/` bash logic.
 func GoModuleMajorVersion(body []byte) string {
-	m := goModMajorVersionPath.FindSubmatch(body)
-	if m == nil {
+	path := goModulePath(body)
+	if path == "" {
 		return ""
 	}
 
-	return string(m[1]) + ".0.0"
+	_, pathMajor, ok := module.SplitPathVersion(path)
+	if !ok || pathMajor == "" {
+		return ""
+	}
+
+	major := strings.TrimPrefix(pathMajor, "/v")
+
+	major = strings.TrimPrefix(major, ".v")
+	if major == pathMajor {
+		return ""
+	}
+
+	return major + ".0.0"
 }
 
-// CargoTOMLName returns the first `^name = "..."` in a Cargo.toml body.
+func goModulePath(body []byte) string {
+	parsed, err := modfile.Parse("go.mod", body, nil)
+	if err != nil || parsed.Module == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(parsed.Module.Mod.Path)
+}
+
+type tomlIdentity struct {
+	Name    string
+	Version string
+}
+
+type tomlIdentityTable struct {
+	Name    any `toml:"name"`
+	Version any `toml:"version"`
+}
+
+type cargoTOMLDocument struct {
+	Package   tomlIdentityTable `toml:"package"`
+	Workspace struct {
+		Package tomlIdentityTable `toml:"package"`
+	} `toml:"workspace"`
+}
+
+// ErrCargoWorkspaceVersionUnavailable means package.version is inherited but
+// the workspace root did not provide a usable workspace.package.version.
+var ErrCargoWorkspaceVersionUnavailable = errors.New("cargo workspace package version unavailable")
+
+func decodeTOMLIdentity(body []byte, table string) tomlIdentity {
+	var document struct {
+		Package tomlIdentityTable `toml:"package"`
+		Project tomlIdentityTable `toml:"project"`
+	}
+	if err := toml.Unmarshal(body, &document); err != nil {
+		return tomlIdentity{}
+	}
+
+	selected := document.Project
+	if table == "package" {
+		selected = document.Package
+	}
+
+	name, _ := selected.Name.(string)
+	version, _ := selected.Version.(string)
+
+	return tomlIdentity{Name: name, Version: version}
+}
+
+// CargoTOMLName returns package.name from a Cargo.toml body.
 func CargoTOMLName(body []byte) string {
-	m := cargoNameLine.FindSubmatch(body)
-	if m == nil {
-		return ""
-	}
-
-	return string(m[1])
+	return decodeTOMLIdentity(body, "package").Name
 }
 
-// CargoTOMLVersion returns the first `^version = "..."` in a Cargo.toml
-// body.
-func CargoTOMLVersion(body []byte) string {
-	m := cargoVersionLineDomain.FindSubmatch(body)
-	if m == nil {
-		return ""
+// CargoTOMLVersion returns package.version from a Cargo.toml body, resolving
+// version.workspace through the workspace root Cargo.toml when supplied.
+func CargoTOMLVersion(body, workspaceBody []byte) (string, error) {
+	var document cargoTOMLDocument
+	if err := toml.Unmarshal(body, &document); err != nil {
+		return "", nil //nolint:nilerr // Non-inheritance parser failures retain the existing unknown-version fallback.
 	}
 
-	return string(m[1])
+	if version, ok := document.Package.Version.(string); ok {
+		return version, nil
+	}
+
+	inheritance, ok := document.Package.Version.(map[string]any)
+
+	workspace, inherited := inheritance["workspace"].(bool)
+	if !ok || !inherited || !workspace {
+		return "", nil
+	}
+
+	if len(workspaceBody) == 0 {
+		return "", fmt.Errorf("%w: package.version uses workspace = true; provide the workspace root Cargo.toml or set package.version explicitly", ErrCargoWorkspaceVersionUnavailable)
+	}
+
+	var workspaceDocument cargoTOMLDocument
+	if err := toml.Unmarshal(workspaceBody, &workspaceDocument); err != nil {
+		return "", fmt.Errorf("%w: parse workspace root Cargo.toml: %w", ErrCargoWorkspaceVersionUnavailable, err)
+	}
+
+	if version, ok := workspaceDocument.Workspace.Package.Version.(string); ok && version != "" {
+		return version, nil
+	}
+
+	return "", fmt.Errorf("%w: package.version uses workspace = true but [workspace.package].version is missing or not a string; define it in the workspace root Cargo.toml or set package.version explicitly", ErrCargoWorkspaceVersionUnavailable)
 }
 
-// PyProjectName returns `^name = "..."` from a pyproject.toml body.
+// PyProjectName returns project.name from a pyproject.toml body.
 func PyProjectName(body []byte) string {
-	m := pythonNameLine.FindSubmatch(body)
-	if m == nil {
-		return ""
-	}
-
-	return string(m[1])
+	return decodeTOMLIdentity(body, "project").Name
 }
 
-// PyProjectVersion returns `^version = "..."` from a pyproject.toml
-// body.
+// PyProjectVersion returns project.version from a pyproject.toml body.
 func PyProjectVersion(body []byte) string {
-	m := pythonVersionLine.FindSubmatch(body)
-	if m == nil {
-		return ""
-	}
-
-	return string(m[1])
+	return decodeTOMLIdentity(body, "project").Version
 }
 
 // SetupPyName / SetupPyVersion read the equivalent fields from a

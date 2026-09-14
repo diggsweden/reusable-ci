@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,6 +23,7 @@ import (
 	domainartifact "github.com/diggsweden/reusable-ci/v3/internal/domain/artifact"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
@@ -36,6 +38,8 @@ const runArtifactAPIVersion = "6.0-preview"
 // therefore maps to this backend minimum. Callers wanting longer pass
 // --retention-days.
 const defaultForgejoRetentionDays = 1
+
+const maxRuntimeJSONBytes int64 = 16 << 20
 
 // appendItemPath joins the itemPath query onto a container URL. Forgejo's
 // CreateArtifact returns a fileContainerResourceUrl that already carries
@@ -73,7 +77,13 @@ func fileMD5Base64(r io.Reader) (string, error) {
 // Credentials live only in per-request Bearer headers (never argv, never
 // disk); every entry path is gated by domain/artifact.SafeJoin and each
 // file is size-capped.
+//
+//nolint:cyclop // input, repository/run authority, credentials and download modes are independent guards.
 func (p *Provider) DownloadRunArtifact(ctx context.Context, in provider.RunArtifactDownload) (provider.RunArtifactInfo, error) {
+	if _, err := path.Match(in.Pattern, ""); err != nil {
+		return provider.RunArtifactInfo{}, fmt.Errorf("invalid artifact pattern: %w", errs.ErrUsage)
+	}
+
 	if in.Pattern == "" {
 		if err := domainartifact.ValidateName(in.Name); err != nil {
 			return provider.RunArtifactInfo{}, err
@@ -82,6 +92,10 @@ func (p *Provider) DownloadRunArtifact(ctx context.Context, in provider.RunArtif
 
 	if in.Dir == "" {
 		return provider.RunArtifactInfo{}, fmt.Errorf("destination dir is required: %w", errs.ErrUsage)
+	}
+
+	if in.Repository != "" && in.Repository != runcontext.Repository().Resolve(p.envFunc()) {
+		return provider.RunArtifactInfo{}, fmt.Errorf("forgejo artifact token cannot read another repository: %w", errs.ErrUnsupported)
 	}
 
 	// The run-id scoping check reads the run id directly rather than via
@@ -109,7 +123,7 @@ func (p *Provider) DownloadRunArtifact(ctx context.Context, in provider.RunArtif
 		return provider.RunArtifactInfo{}, err
 	}
 
-	return p.downloadContainer(ctx, creds, containerURL, in.Name, in.Dir)
+	return p.downloadContainer(ctx, creds, containerURL, in.Name, in.Dir, 0, 0)
 }
 
 // downloadMatchingContainers implements pattern/merge-multiple for Forgejo:
@@ -144,9 +158,13 @@ func (p *Provider) downloadMatchingContainers(ctx context.Context, creds runtime
 			dest = safeDest
 		}
 
-		info, derr := p.downloadContainer(ctx, creds, match.url, match.name, dest)
+		info, derr := p.downloadContainer(ctx, creds, match.url, match.name, dest, totalBytes, totalFiles)
 		if derr != nil {
 			return provider.RunArtifactInfo{}, derr
+		}
+
+		if totalErr := domainartifact.ValidateAggregate(totalBytes, totalFiles, info.Bytes, info.FileCount); totalErr != nil {
+			return provider.RunArtifactInfo{}, totalErr
 		}
 
 		totalBytes += info.Bytes
@@ -157,14 +175,20 @@ func (p *Provider) downloadMatchingContainers(ctx context.Context, creds runtime
 }
 
 func (c runtimeUploadCreds) validate() error {
-	return provider.ValidateRunArtifactCreds(provider.RunArtifactCreds{
+	if err := provider.ValidateRunArtifactCreds(provider.RunArtifactCreds{
 		Forge:    "forgejo",
 		URLVar:   "ACTIONS_RUNTIME_URL",
 		URLWhat:  "the runner's artifact service endpoint",
 		TokenVar: "ACTIONS_RUNTIME_TOKEN",
 		URL:      c.url,
 		Token:    c.token,
-	})
+	}); err != nil {
+		return err
+	}
+
+	_, err := authorizeRuntimeResource(c.url, c.url, c.token, false)
+
+	return err
 }
 
 // artifactsURL is the run's artifact-list endpoint, which every call below
@@ -200,8 +224,8 @@ func (p *Provider) resolveContainerURL(ctx context.Context, creds runtimeUploadC
 
 	switch len(matches) {
 	case 1:
-		if !strings.HasPrefix(matches[0], "http://") && !strings.HasPrefix(matches[0], "https://") {
-			return "", fmt.Errorf("artifact %q has no usable file container URL: %w", name, errs.ErrValidation)
+		if _, authErr := authorizeRuntimeResource(creds.url, matches[0], creds.token, false); authErr != nil {
+			return "", fmt.Errorf("artifact %q has unsafe file container URL: %w", name, authErr)
 		}
 
 		return matches[0], nil
@@ -247,8 +271,8 @@ func (p *Provider) resolveMatchingContainers(ctx context.Context, creds runtimeU
 			continue
 		}
 
-		if !strings.HasPrefix(art.FileContainerResourceURL, "http://") && !strings.HasPrefix(art.FileContainerResourceURL, "https://") {
-			return nil, fmt.Errorf("artifact %q has no usable file container URL: %w", art.Name, errs.ErrValidation)
+		if _, authErr := authorizeRuntimeResource(creds.url, art.FileContainerResourceURL, creds.token, false); authErr != nil {
+			return nil, fmt.Errorf("artifact %q has unsafe file container URL: %w", art.Name, authErr)
 		}
 
 		matches = append(matches, containerMatch{name: art.Name, url: art.FileContainerResourceURL})
@@ -259,7 +283,15 @@ func (p *Provider) resolveMatchingContainers(ctx context.Context, creds runtimeU
 
 // downloadContainer lists the container's file entries and writes each one
 // safely under dir, returning the byte/file totals.
-func (p *Provider) downloadContainer(ctx context.Context, creds runtimeUploadCreds, containerURL, name, dir string) (provider.RunArtifactInfo, error) {
+//
+//nolint:cyclop // linear per-entry authorization, path, aggregate, and write checks.
+func (p *Provider) downloadContainer(
+	ctx context.Context,
+	creds runtimeUploadCreds,
+	containerURL, name, dir string,
+	priorBytes int64,
+	priorFiles int,
+) (provider.RunArtifactInfo, error) {
 	itemURL := appendItemPath(containerURL, name)
 
 	var container struct {
@@ -275,25 +307,65 @@ func (p *Provider) downloadContainer(ctx context.Context, creds runtimeUploadCre
 		return provider.RunArtifactInfo{}, fmt.Errorf("list artifact %q files: %w", name, err)
 	}
 
+	stage, err := pathsafe.NewArtifactStaging(dir)
+	if err != nil {
+		return provider.RunArtifactInfo{}, err
+	}
+
+	defer func() { _ = stage.Close() }()
+
+	root := stage.Root()
+
 	info := provider.RunArtifactInfo{Name: name}
+
+	if totalErr := domainartifact.ValidateAggregate(priorBytes, priorFiles, 0, 0); totalErr != nil {
+		return provider.RunArtifactInfo{}, totalErr
+	}
 
 	for _, entry := range container.Value {
 		if entry.ItemType != "file" {
 			continue
 		}
 
+		nextBytes := int64(0)
+		if entry.FileLength != nil {
+			nextBytes = *entry.FileLength
+		}
+
+		if totalErr := domainartifact.ValidateAggregate(priorBytes, priorFiles, info.Bytes, info.FileCount); totalErr != nil {
+			return provider.RunArtifactInfo{}, totalErr
+		}
+
+		if totalErr := domainartifact.ValidateTotals(priorBytes+info.Bytes, priorFiles+info.FileCount, nextBytes); totalErr != nil {
+			return provider.RunArtifactInfo{}, fmt.Errorf("artifact entry %q: %w", entry.Path, totalErr)
+		}
+
 		rel := strings.TrimPrefix(entry.Path, name+"/")
 
-		dest, err := domainartifact.SafeJoin(dir, rel)
+		_, err := domainartifact.SafeJoin(".", rel)
 		if err != nil {
 			return provider.RunArtifactInfo{}, err
 		}
 
-		if mkErr := os.MkdirAll(filepath.Dir(dest), 0o755); mkErr != nil { //nolint:gosec,mnd // artifact dirs read by downstream build steps.
+		dest := filepath.FromSlash(rel)
+
+		if mkErr := root.MkdirAll(filepath.Dir(dest), 0o755); mkErr != nil { //nolint:gosec,mnd // os.Root contains artifact dirs.
 			return provider.RunArtifactInfo{}, fmt.Errorf("mkdir %q: %w", filepath.Dir(dest), mkErr)
 		}
 
-		n, err := p.writeEntry(ctx, entry.ContentLocation, creds.token, dest, entry.FileLength)
+		entryToken, authErr := authorizeRuntimeResource(creds.url, entry.ContentLocation, creds.token, true)
+		if entry.ContentLocation == "" {
+			entryToken = ""
+			authErr = nil
+		}
+
+		if authErr != nil {
+			return provider.RunArtifactInfo{}, fmt.Errorf("artifact entry %q has unsafe content URL: %w", entry.Path, authErr)
+		}
+
+		limit := min(domainartifact.MaxFileBytes, domainartifact.MaxTotalBytes-priorBytes-info.Bytes)
+
+		n, err := p.writeEntry(ctx, entry.ContentLocation, entryToken, root, dest, entry.FileLength, limit)
 		if err != nil {
 			return provider.RunArtifactInfo{}, err
 		}
@@ -306,17 +378,32 @@ func (p *Provider) downloadContainer(ctx context.Context, creds runtimeUploadCre
 		return provider.RunArtifactInfo{}, fmt.Errorf("artifact %q contains no files: %w", name, errs.ErrValidation)
 	}
 
+	if err := stage.Install(); err != nil {
+		return provider.RunArtifactInfo{}, err
+	}
+
 	return info, nil
 }
 
 // writeEntry materializes one container entry at dest, size-capped, and
 // returns the bytes written. An empty contentLocation is only valid for a
 // declared zero-length file; otherwise the entry is malformed.
-func (p *Provider) writeEntry(ctx context.Context, contentLocation, token, dest string, fileLength *int64) (int64, error) {
+//
+//nolint:nestif // the empty-file protocol exception is one cohesive validation branch.
+func (p *Provider) writeEntry(ctx context.Context, contentLocation, token string, root *os.Root, dest string, fileLength *int64, maxBytes int64) (int64, error) {
 	if contentLocation == "" {
 		if fileLength != nil && *fileLength == 0 {
-			if err := os.WriteFile(dest, nil, 0o600); err != nil {
+			if err := root.Remove(dest); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return 0, fmt.Errorf("replace empty %q: %w", dest, err)
+			}
+
+			file, err := root.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+			if err != nil {
 				return 0, fmt.Errorf("write empty %q: %w", dest, err)
+			}
+
+			if err := file.Close(); err != nil {
+				return 0, fmt.Errorf("close empty %q: %w", dest, err)
 			}
 
 			return 0, nil
@@ -325,18 +412,22 @@ func (p *Provider) writeEntry(ctx context.Context, contentLocation, token, dest 
 		return 0, fmt.Errorf("artifact entry %q has no content URL: %w", dest, errs.ErrValidation)
 	}
 
-	return p.downloadFile(ctx, contentLocation, token, dest)
+	if fileLength != nil && *fileLength > domainartifact.MaxFileBytes {
+		return 0, fmt.Errorf("artifact entry %q exceeds %d bytes: %w", dest, domainartifact.MaxFileBytes, errs.ErrValidation)
+	}
+
+	return p.downloadFile(ctx, contentLocation, token, root, dest, maxBytes)
 }
 
 // downloadFile GETs contentLocation with the runtime Bearer token and
 // streams it to dest, bounded by MaxFileBytes.
-func (p *Provider) downloadFile(ctx context.Context, contentLocation, token, dest string) (int64, error) {
+func (p *Provider) downloadFile(ctx context.Context, contentLocation, token string, root *os.Root, dest string, maxBytes int64) (int64, error) {
 	req, err := newRuntimeRequest(ctx, contentLocation, token, "application/octet-stream;api-version="+runArtifactAPIVersion)
 	if err != nil {
 		return 0, err
 	}
 
-	resp, err := p.httpClient().Do(req)
+	resp, err := p.doRuntimeRequest(req, token)
 	if err != nil {
 		return 0, fmt.Errorf("download artifact entry: %w", err)
 	}
@@ -347,21 +438,34 @@ func (p *Provider) downloadFile(ctx context.Context, contentLocation, token, des
 		return 0, fmt.Errorf("download artifact entry: HTTP %d: %w", resp.StatusCode, classifyStatus(resp.StatusCode))
 	}
 
-	// dest is validated by domain/artifact.SafeJoin in the caller.
-	out, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // dest is SafeJoin-checked.
+	if removeErr := root.Remove(dest); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+		return 0, fmt.Errorf("replace %q: %w", dest, removeErr)
+	}
+
+	out, err := root.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // os.Root contains dest.
 	if err != nil {
 		return 0, fmt.Errorf("create %q: %w", dest, err)
 	}
 
-	written, copyErr := io.CopyN(out, resp.Body, domainartifact.MaxFileBytes)
+	complete := false
+	defer func() {
+		if !complete {
+			_ = out.Close()
+			_ = root.Remove(dest)
+		}
+	}()
+
+	written, copyErr := domainartifact.CopyAtMost(out, resp.Body, maxBytes)
 	closeErr := out.Close()
 
 	switch {
-	case copyErr != nil && !errors.Is(copyErr, io.EOF):
+	case copyErr != nil:
 		return 0, fmt.Errorf("write %q: %w", dest, copyErr)
 	case closeErr != nil:
 		return 0, fmt.Errorf("close %q: %w", dest, closeErr)
 	}
+
+	complete = true
 
 	return written, nil
 }
@@ -373,7 +477,7 @@ func (p *Provider) getRuntimeJSON(ctx context.Context, url, token string, out an
 		return err
 	}
 
-	resp, err := p.httpClient().Do(req)
+	resp, err := p.doRuntimeRequest(req, token)
 	if err != nil {
 		return fmt.Errorf("runtime request: %w", err)
 	}
@@ -384,8 +488,13 @@ func (p *Provider) getRuntimeJSON(ctx context.Context, url, token string, out an
 		return fmt.Errorf("runtime request: HTTP %d: %w", resp.StatusCode, classifyStatus(resp.StatusCode))
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decode runtime response: %w", err)
+	var body bytes.Buffer
+	if _, err := domainartifact.CopyAtMost(&body, resp.Body, maxRuntimeJSONBytes); err != nil {
+		return fmt.Errorf("read runtime response: %w", err)
+	}
+
+	if err := json.Unmarshal(body.Bytes(), out); err != nil {
+		return fmt.Errorf("decode runtime response: %w", errs.ErrMalformedInput)
 	}
 
 	return nil
@@ -399,10 +508,108 @@ func newRuntimeRequest(ctx context.Context, rawURL, token, accept string) (*http
 		return nil, fmt.Errorf("build request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
 	req.Header.Set("Accept", accept)
 
 	return req, nil
+}
+
+// authorizeRuntimeResource returns the token a returned runtime URL may
+// receive. Authenticated URLs must remain on the secure runtime origin;
+// cross-origin content URLs are accepted only as HTTPS tokenless resources.
+//
+//nolint:cyclop // URL parsing and origin policy stay together at this trust boundary.
+func authorizeRuntimeResource(runtimeURL, rawURL, token string, allowTokenlessCrossOrigin bool) (string, error) {
+	base, err := url.Parse(runtimeURL)
+	if err != nil {
+		return "", fmt.Errorf("parse runtime URL: %w", err)
+	}
+
+	resource, err := url.Parse(rawURL)
+	if err != nil || !resource.IsAbs() || resource.Hostname() == "" || resource.User != nil || resource.Fragment != "" {
+		return "", fmt.Errorf("runtime resource URL is not an absolute credential-free URL: %w", errs.ErrValidation)
+	}
+
+	secure := strings.EqualFold(resource.Scheme, "https")
+	if strings.EqualFold(resource.Scheme, "http") && isLoopbackHost(resource.Hostname()) {
+		secure = true
+	}
+
+	if !secure {
+		return "", fmt.Errorf("runtime resource URL must use HTTPS: %w", errs.ErrValidation)
+	}
+
+	if sameURLOrigin(base, resource) {
+		return token, nil
+	}
+
+	if allowTokenlessCrossOrigin && strings.EqualFold(resource.Scheme, "https") {
+		return "", nil
+	}
+
+	return "", fmt.Errorf("runtime resource URL must use the runtime origin: %w", errs.ErrValidation)
+}
+
+func sameURLOrigin(left, right *url.URL) bool {
+	return strings.EqualFold(left.Scheme, right.Scheme) &&
+		strings.EqualFold(strings.TrimSuffix(left.Hostname(), "."), strings.TrimSuffix(right.Hostname(), ".")) &&
+		effectivePort(left) == effectivePort(right)
+}
+
+func effectivePort(parsed *url.URL) string {
+	if port := parsed.Port(); port != "" {
+		return port
+	}
+
+	if strings.EqualFold(parsed.Scheme, "https") {
+		return "443"
+	}
+
+	return "80"
+}
+
+func isLoopbackHost(host string) bool {
+	ip := net.ParseIP(host)
+
+	return strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback())
+}
+
+func (p *Provider) doRuntimeRequest(req *http.Request, token string) (*http.Response, error) {
+	client := *p.httpClient()
+	if token == "" {
+		client.Jar = nil
+	}
+
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("too many runtime redirects: %w", errs.ErrDependencyUnavailable)
+		}
+
+		if token == "" {
+			if !strings.EqualFold(next.URL.Scheme, "https") || next.URL.Hostname() == "" || next.URL.User != nil {
+				return fmt.Errorf("tokenless runtime redirect must use a credential-free HTTPS URL: %w", errs.ErrValidation)
+			}
+
+			next.Header.Del("Authorization")
+			next.Header.Del("Proxy-Authorization")
+			next.Header.Del("Cookie")
+
+			return nil
+		}
+
+		if _, err := authorizeRuntimeResource(via[0].URL.String(), next.URL.String(), token, false); err != nil {
+			return err
+		}
+
+		next.Header.Set("Authorization", "Bearer "+token) //nolint:gosec // authorizeRuntimeResource proved this redirect remains on the authenticated origin.
+
+		return nil
+	}
+
+	return client.Do(req)
 }
 
 func classifyStatus(code int) error {
@@ -418,9 +625,8 @@ func is2xx(code int) bool { return code >= http.StatusOK && code < http.StatusMu
 // uploadFile is one resolved upload entry: where it is on disk, the
 // artifact-relative item path the runtime stores it under, and its size.
 type uploadFile struct {
-	abs      string
+	entry    domainartifact.UploadEntry
 	itemPath string
-	size     int64
 }
 
 // UploadRunArtifact uploads files as a named artifact into the current run
@@ -464,7 +670,7 @@ func (p *Provider) UploadRunArtifact(ctx context.Context, in provider.RunArtifac
 			return provider.RunArtifactInfo{}, err
 		}
 
-		total += item.size
+		total += item.entry.Size
 	}
 
 	if err := p.finalizeArtifact(ctx, creds, in.Name, total); err != nil {
@@ -528,9 +734,8 @@ func collectUploadFiles(in provider.RunArtifactUpload) ([]uploadFile, error) {
 	out := make([]uploadFile, 0, len(entries))
 	for _, entry := range entries {
 		out = append(out, uploadFile{
-			abs:      entry.Abs,
+			entry:    entry,
 			itemPath: in.Name + "/" + entry.RelPath,
-			size:     entry.Size,
 		})
 	}
 
@@ -563,11 +768,11 @@ func (p *Provider) createContainer(ctx context.Context, creds runtimeUploadCreds
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		return "", fmt.Errorf("decode create response: %w", err)
+		return "", fmt.Errorf("decode create response: %w", errs.ErrMalformedInput)
 	}
 
-	if !strings.HasPrefix(created.FileContainerResourceURL, "http://") && !strings.HasPrefix(created.FileContainerResourceURL, "https://") {
-		return "", fmt.Errorf("artifact container has no usable URL: %w", errs.ErrValidation)
+	if _, authErr := authorizeRuntimeResource(creds.url, created.FileContainerResourceURL, creds.token, false); authErr != nil {
+		return "", fmt.Errorf("artifact container has unsafe URL: %w", authErr)
 	}
 
 	return created.FileContainerResourceURL, nil
@@ -578,25 +783,25 @@ func (p *Provider) createContainer(ctx context.Context, creds runtimeUploadCreds
 // files, which Forgejo's range parser requires) plus the x-actions-results-md5
 // digest of the body, which Forgejo verifies against the bytes it receives.
 func (p *Provider) putFile(ctx context.Context, creds runtimeUploadCreds, containerURL string, item uploadFile) error {
-	file, err := os.Open(item.abs) //nolint:gosec // item.abs comes from a caller-provided dir/file list.
+	file, err := domainartifact.OpenUploadEntry(item.entry)
 	if err != nil {
-		return fmt.Errorf("open %q: %w", item.abs, err)
+		return err
 	}
 
 	defer func() { _ = file.Close() }()
 
 	md5b64, err := fileMD5Base64(file)
 	if err != nil {
-		return fmt.Errorf("md5 %q: %w", item.abs, err)
+		return fmt.Errorf("md5 %q: %w", item.entry.Abs, err)
 	}
 
 	if _, seekErr := file.Seek(0, io.SeekStart); seekErr != nil {
-		return fmt.Errorf("rewind %q: %w", item.abs, seekErr)
+		return fmt.Errorf("rewind %q: %w", item.entry.Abs, seekErr)
 	}
 
 	headers := map[string]string{"x-actions-results-md5": md5b64}
-	if item.size > 0 {
-		headers["Content-Range"] = fmt.Sprintf("bytes 0-%d/%d", item.size-1, item.size)
+	if item.entry.Size > 0 {
+		headers["Content-Range"] = fmt.Sprintf("bytes 0-%d/%d", item.entry.Size-1, item.entry.Size)
 	} else {
 		// Forgejo's saveUploadChunk Sscanf's Content-Range and 500s ("Error save
 		// upload chunk") on a missing one; the canonical client sends start 0,
@@ -606,7 +811,7 @@ func (p *Provider) putFile(ctx context.Context, creds runtimeUploadCreds, contai
 
 	putURL := appendItemPath(containerURL, item.itemPath)
 
-	resp, err := p.runtimeSend(ctx, http.MethodPut, putURL, creds.token, "application/octet-stream", file, item.size, headers)
+	resp, err := p.runtimeSend(ctx, http.MethodPut, putURL, creds.token, "application/octet-stream", file, item.entry.Size, headers)
 	if err != nil {
 		return fmt.Errorf("upload %q: %w", item.itemPath, err)
 	}
@@ -670,5 +875,5 @@ func (p *Provider) runtimeSend(ctx context.Context, method, rawURL, token, conte
 		req.Header.Set(k, v)
 	}
 
-	return p.httpClient().Do(req) //nolint:wrapcheck // callers wrap with operation context.
+	return p.doRuntimeRequest(req, token) //nolint:wrapcheck // callers wrap with operation context.
 }

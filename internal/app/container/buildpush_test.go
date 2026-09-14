@@ -9,9 +9,7 @@ import (
 	"errors"
 	"io"
 	"os"
-	"reflect"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -23,20 +21,26 @@ import (
 )
 
 type fakeBuildPushTool struct {
-	builds    []domaincontainer.BuildPushManifestBuildRequest
-	pushes    []string
+	builds []domaincontainer.BuildPushManifestBuildRequest
+	pushes []string
+	// events interleaves builds and pushes in call order, which the two
+	// per-kind slices cannot show.
+	events    []string
 	pushFails int
 	digest    string
 }
 
 func (f *fakeBuildPushTool) BuildManifest(_ context.Context, req domaincontainer.BuildPushManifestBuildRequest, _ io.Writer) error {
 	f.builds = append(f.builds, req)
+	f.events = append(f.events, "build:"+req.Platform)
 
 	return nil
 }
 
 func (f *fakeBuildPushTool) PushManifestWithDigest(_ context.Context, authFile string, tlsVerify bool, manifest string, _ io.Writer) (string, error) {
 	f.pushes = append(f.pushes, authFile+"|"+manifest+"|"+boolString(tlsVerify))
+	f.events = append(f.events, "push")
+
 	if f.pushFails > 0 {
 		f.pushFails--
 
@@ -78,7 +82,7 @@ func TestBuildPushOCIImage_BuildsEachPlatformThenPushesTheManifest(t *testing.T)
 		revision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	)
 
-	tool := &fakeBuildPushTool{pushFails: 1, digest: "sha256:deadbeef"}
+	tool := &fakeBuildPushTool{pushFails: 1, digest: oneDigest}
 	sink := fakeoutputsink.New(t)
 
 	var log bytes.Buffer
@@ -110,8 +114,8 @@ func TestBuildPushOCIImage_BuildsEachPlatformThenPushesTheManifest(t *testing.T)
 
 	t.Run("reports the image and digest, and publishes them as outputs", func(t *testing.T) {
 		// The forge coordinates are mixed case; an image reference is not.
-		if got.Image != image || got.Digest != "sha256:deadbeef" {
-			t.Errorf("result = %+v, want image %s at sha256:deadbeef", got, image)
+		if got.Image != image || got.Digest != oneDigest {
+			t.Errorf("result = %+v, want image %s at %s", got, image, oneDigest)
 		}
 
 		if sink.Single("image") != got.Image || sink.Single("digest") != got.Digest {
@@ -125,6 +129,15 @@ func TestBuildPushOCIImage_BuildsEachPlatformThenPushesTheManifest(t *testing.T)
 		}
 
 		assertPlatformBuilds(t, tool.builds, manifest)
+	})
+
+	t.Run("finishes every platform build before the first push", func(t *testing.T) {
+		// A manifest pushed before its last platform is built publishes an
+		// image that is missing that platform.
+		want := []string{"build:linux/amd64", "build:linux/arm64", "push", "push"}
+		if !slices.Equal(tool.events, want) {
+			t.Errorf("events = %v, want %v", tool.events, want)
+		}
 	})
 
 	t.Run("labels every build with the same OCI metadata", func(t *testing.T) {
@@ -147,7 +160,7 @@ func TestBuildPushOCIImage_BuildsEachPlatformThenPushesTheManifest(t *testing.T)
 			t.Errorf("log does not name the attempt: %q", log.String())
 		}
 
-		if !strings.Contains(log.String(), "Pushed "+manifest+"@sha256:deadbeef") {
+		if !strings.Contains(log.String(), "Pushed "+manifest+"@"+oneDigest) {
 			t.Errorf("log does not report the push: %q", log.String())
 		}
 	})
@@ -173,7 +186,7 @@ func assertPlatformBuilds(t *testing.T, builds []domaincontainer.BuildPushManife
 			t.Errorf("build[%d] platform = %q, want %q", i, build.Platform, w.platform)
 		}
 
-		if !reflect.DeepEqual(build.BuildArgs, w.args) {
+		if !slices.Equal(build.BuildArgs, w.args) {
 			t.Errorf("build[%d] args = %v, want %v", i, build.BuildArgs, w.args)
 		}
 
@@ -219,9 +232,9 @@ func assertOCILabels(t *testing.T, builds []domaincontainer.BuildPushManifestBui
 
 	for i, build := range builds {
 		labels := slices.Clone(build.Labels)
-		sort.Strings(labels)
+		slices.Sort(labels)
 
-		if !reflect.DeepEqual(labels, wantLabels) {
+		if !slices.Equal(labels, wantLabels) {
 			t.Errorf("build[%d] labels =\n%v\nwant\n%v", i, labels, wantLabels)
 		}
 	}
@@ -296,15 +309,17 @@ func TestBuildPushOCIImage_RejectsInvalidInputBeforeBuild(t *testing.T) {
 			in := validBuildPushInput()
 			testCase.mutate(&in)
 
-			_, err := appcontainer.BuildPushOCIImage(context.Background(), tool, fakeBuildPushGit{revision: "abc", epoch: "1700000000"}, fakeoutputsink.New(t), io.Discard, in)
+			sink := fakeoutputsink.New(t)
+
+			_, err := appcontainer.BuildPushOCIImage(context.Background(), tool, fakeBuildPushGit{revision: "abc", epoch: "1700000000"}, sink, io.Discard, in)
 			if !errors.Is(err, testCase.want) {
-				t.Fatalf("err = %v, want %v", err, testCase.want)
+				t.Errorf("err = %v, want %v", err, testCase.want)
 			}
 
 			// Refusing after a build would mean a layer had already been
 			// produced, and after a push that an image was already published.
-			if len(tool.builds) != 0 || len(tool.pushes) != 0 {
-				t.Errorf("tool invoked despite invalid input: builds=%v pushes=%v", tool.builds, tool.pushes)
+			if len(tool.events) != 0 || len(sink.Keys()) != 0 {
+				t.Errorf("state touched despite invalid input: tool events=%v outputs=%v", tool.events, sink.Keys())
 			}
 		})
 	}
@@ -338,4 +353,74 @@ func boolString(value bool) string {
 	}
 
 	return "false"
+}
+
+// TestBuildPushOCIImage_PreservesBuildArgumentOrderPerPlatform pins the order
+// of the arguments each platform is built with.
+//
+// The suite's fixture gives each platform a single build-arg, so the existing
+// slices.Equal comparison cannot observe order at all: reversing, sorting or
+// deduplicating the list would satisfy it. Order is not cosmetic for build
+// arguments — a repeated key is resolved last-one-wins by the builder, so
+// reordering changes the value the image is built with, and deduplicating
+// changes which of the two survives.
+//
+// The fixture below gives each platform four arguments, including a repeated
+// key whose two values differ, and asserts the exact per-platform sequence.
+func TestBuildPushOCIImage_PreservesBuildArgumentOrderPerPlatform(t *testing.T) {
+	// Chdir first: writeBuildPushFile writes relative paths, and without an
+	// owned working directory the fixtures land in the package source tree.
+	t.Chdir(t.TempDir())
+	writeBuildPushFile(t, "Containerfile", "FROM scratch\n")
+	writeBuildPushFile(t, "auth.json", `{"auths":{}}`)
+
+	tool := &fakeBuildPushTool{digest: oneDigest}
+
+	amd64Args := []string{"BASE=alpine:3.20", "ARCH=amd64", "FEATURE=off", "FEATURE=on"}
+	arm64Args := []string{"BASE=alpine:3.20", "ARCH=arm64", "FEATURE=on", "FEATURE=off"}
+
+	buildsJSON := `[` +
+		`{"platform":"linux/amd64","build-args":["BASE=alpine:3.20","ARCH=amd64","FEATURE=off","FEATURE=on"]},` +
+		`{"platform":"linux/arm64","build-args":["BASE=alpine:3.20","ARCH=arm64","FEATURE=on","FEATURE=off"]}` +
+		`]`
+
+	_, err := appcontainer.BuildPushOCIImage(context.Background(), tool, fakeBuildPushGit{
+		revision: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		epoch:    "1700000000",
+	}, fakeoutputsink.New(t), io.Discard, appcontainer.BuildPushOCIImageInput{
+		Tag:           "v1.2.3-alpine",
+		Containerfile: "Containerfile",
+		BuildsJSON:    buildsJSON,
+		OCILabels: domaincontainer.OCILabels{
+			Title: "Forgejo CI", Description: "Reusable workflows",
+			Licenses: "CC0-1.0", Vendor: "Itiquette", Authors: "The Itiquette Authors",
+		},
+		AuthFile:      "auth.json",
+		TLSVerify:     "true",
+		ServerURL:     "https://codeberg.org",
+		Repository:    "Itiquette/Forgejo-CI",
+		RetryAttempts: 1,
+		RetryDelay:    time.Nanosecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(tool.builds) != 2 {
+		t.Fatalf("builds = %d, want one per platform", len(tool.builds))
+	}
+
+	for i, want := range [][]string{amd64Args, arm64Args} {
+		if !slices.Equal(tool.builds[i].BuildArgs, want) {
+			t.Errorf("build[%d] (%s) args =\n  %v\nwant\n  %v",
+				i, tool.builds[i].Platform, tool.builds[i].BuildArgs, want)
+		}
+	}
+
+	// The two platforms differ only in the order of the repeated key, so a
+	// builder that sorted or deduplicated would make them identical — which
+	// is exactly the collapse this guards against.
+	if slices.Equal(tool.builds[0].BuildArgs, tool.builds[1].BuildArgs) {
+		t.Error("both platforms were built with the same argument list; per-platform order was lost")
+	}
 }

@@ -89,13 +89,25 @@ func normaliseFingerprint(fp string) string {
 	return buf.String()
 }
 
-// isValidFingerprint reports whether s is exactly 40 hex digits
-// (uppercase — caller normalises). 40 chars is the OpenPGP primary-key
-// fingerprint length (RFC 4880bis §5.5.2, SHA-1 of the public key
-// packet). Short key IDs (8 or 16 hex) are NOT accepted — they collide
-// trivially and have no place in an allowlist.
+// fingerprintLenV4 is the v4 OpenPGP primary-key fingerprint length in
+// hex characters: SHA-1 of the public key packet (RFC 4880 §12.2).
+const fingerprintLenV4 = 40
+
+// fingerprintLenV6 is the v6 length: SHA-256, so 32 bytes (RFC 9580
+// §5.5.4). gnupg generates v4 by default today and v6 from 2.5.x, so a
+// project that rotates onto a v6 key would otherwise commit a key file
+// this allowlist silently derives nothing from.
+const fingerprintLenV6 = 64
+
+// isValidFingerprint reports whether s is a full primary-key
+// fingerprint in hex (uppercase — caller normalises): 40 chars for v4,
+// 64 for v6. Short key IDs (8 or 16 hex) are NOT accepted — they
+// collide trivially and have no place in an allowlist.
+//
+// Accepting both lengths widens nothing: the value still has to come
+// out of committed key material to reach this check at all.
 func isValidFingerprint(s string) bool {
-	if len(s) != 40 { //nolint:mnd // OpenPGP primary-key fingerprint length.
+	if len(s) != fingerprintLenV4 && len(s) != fingerprintLenV6 {
 		return false
 	}
 

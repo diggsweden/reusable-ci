@@ -6,7 +6,6 @@ package pipeline
 
 import (
 	"cmp"
-	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/build"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
@@ -75,7 +74,8 @@ type PlannedSign struct {
 // git-signing: block), so the orchestrator can read git_signing.method
 // unconditionally to choose `release ssh setup` vs `release gpg import`.
 type PlannedGitSigning struct {
-	Method config.GitSignMethod `json:"method"`
+	Method        config.GitSignMethod `json:"method"`
+	ImportsGPGKey bool                 `json:"imports_gpg_key"`
 }
 
 // ArtifactSets groups artifacts by project type, Go build mode, and supported
@@ -174,35 +174,8 @@ func NewConfigPlan(cfg *config.Config) ConfigPlan {
 	containers := planContainers(cfg.Artifacts, cfg.Containers)
 
 	plan := ConfigPlan{
-		Version: ConfigPlanVersion,
-		Artifacts: ArtifactSets{
-			All:           artifacts,
-			Maven:         filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.Maven }),
-			NPM:           filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.NPM }),
-			Gradle:        filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.Gradle }),
-			GradleAndroid: filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.GradleAndroid }),
-			XcodeIOS:      filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.XcodeIOS }),
-			Python:        filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.Python }),
-			Go:            filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.Go }),
-			Cargo:         filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.Cargo }),
-			Meta:          filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.Meta }),
-			GoArtifactFirst: filterArtifacts(artifacts, func(a PlannedArtifact) bool {
-				return a.ProjectType == projecttype.Go && a.GoBuildMode == config.GoBuildModeArtifactFirst
-			}),
-			GoContainerFirst: filterArtifacts(artifacts, func(a PlannedArtifact) bool {
-				return a.ProjectType == projecttype.Go && a.GoBuildMode == config.GoBuildModeContainerFirst
-			}),
-			CargoArtifactFirst: filterArtifacts(artifacts, func(a PlannedArtifact) bool {
-				return a.ProjectType == projecttype.Cargo && a.CargoBuildMode == config.CargoBuildModeArtifactFirst
-			}),
-			CargoContainerFirst: filterArtifacts(artifacts, func(a PlannedArtifact) bool {
-				return a.ProjectType == projecttype.Cargo && a.CargoBuildMode == config.CargoBuildModeContainerFirst
-			}),
-			ForgePackages: filterArtifactsByPublishTarget(artifacts, config.PublishForgePackages),
-			MavenCentral:  filterArtifactsByPublishTarget(artifacts, config.PublishMavenCentral),
-			GooglePlay:    filterArtifactsByPublishTarget(artifacts, config.PublishGooglePlay),
-			NPMJS:         filterArtifactsByPublishTarget(artifacts, config.PublishNPMJS),
-		},
+		Version:   ConfigPlanVersion,
+		Artifacts: newArtifactSets(artifacts),
 		Containers: ContainerSets{
 			All:           containers,
 			HasContainers: len(containers) > 0,
@@ -210,13 +183,55 @@ func NewConfigPlan(cfg *config.Config) ConfigPlan {
 		AnyRequireAuthorization: config.AnyRequireAuthorization(cfg.Artifacts),
 		PipelineSBOMs:           config.PipelineSBOMs(cfg.Artifacts),
 		Sign:                    planSign(cfg.Sign),
-		GitSigning:              PlannedGitSigning{Method: cfg.GitSigning.EffectiveMethod()},
+		GitSigning:              planGitSigning(cfg.GitSigning),
 	}
 	if len(artifacts) > 0 {
 		plan.FallbackProjectType = artifacts[0].ProjectType
 	}
 
 	return plan
+}
+
+// newArtifactSets preserves All order in every projection, including the
+// singleton snapshot inputs. Copies must agree; consumers cannot pick a winner.
+func newArtifactSets(artifacts []PlannedArtifact) ArtifactSets {
+	return ArtifactSets{
+		All:           artifacts,
+		Maven:         filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.Maven }),
+		NPM:           filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.NPM }),
+		Gradle:        filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.Gradle }),
+		GradleAndroid: filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.GradleAndroid }),
+		XcodeIOS:      filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.XcodeIOS }),
+		Python:        filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.Python }),
+		Go:            filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.Go }),
+		Cargo:         filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.Cargo }),
+		Meta:          filterArtifacts(artifacts, func(a PlannedArtifact) bool { return a.ProjectType == projecttype.Meta }),
+		GoArtifactFirst: filterArtifacts(artifacts, func(a PlannedArtifact) bool {
+			return a.ProjectType == projecttype.Go && a.GoBuildMode == config.GoBuildModeArtifactFirst
+		}),
+		GoContainerFirst: filterArtifacts(artifacts, func(a PlannedArtifact) bool {
+			return a.ProjectType == projecttype.Go && a.GoBuildMode == config.GoBuildModeContainerFirst
+		}),
+		CargoArtifactFirst: filterArtifacts(artifacts, func(a PlannedArtifact) bool {
+			return a.ProjectType == projecttype.Cargo && a.CargoBuildMode == config.CargoBuildModeArtifactFirst
+		}),
+		CargoContainerFirst: filterArtifacts(artifacts, func(a PlannedArtifact) bool {
+			return a.ProjectType == projecttype.Cargo && a.CargoBuildMode == config.CargoBuildModeContainerFirst
+		}),
+		ForgePackages: filterArtifactsByPublishTarget(artifacts, config.PublishForgePackages),
+		MavenCentral:  filterArtifactsByPublishTarget(artifacts, config.PublishMavenCentral),
+		GooglePlay:    filterArtifactsByPublishTarget(artifacts, config.PublishGooglePlay),
+		NPMJS:         filterArtifactsByPublishTarget(artifacts, config.PublishNPMJS),
+	}
+}
+
+func planGitSigning(signing config.GitSigningConfig) PlannedGitSigning {
+	method := signing.EffectiveMethod()
+
+	return PlannedGitSigning{
+		Method:        method,
+		ImportsGPGKey: method == config.GitSignGPG,
+	}
 }
 
 // planSign resolves the signing block. The Method always carries a
@@ -405,7 +420,8 @@ func androidReleaseAABName(art config.Artifact) string {
 		return ""
 	}
 
-	if !strings.Contains(art.AndroidBuildTypes(), "release") {
+	buildTypes, err := build.ParseAndroidBuildTypes(art.AndroidBuildTypes())
+	if err != nil || !buildTypes.Release {
 		return ""
 	}
 

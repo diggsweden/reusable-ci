@@ -6,11 +6,13 @@ package release_test
 import (
 	"bytes"
 	"context"
-	"reflect"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeprovider"
 )
@@ -61,14 +63,14 @@ func TestCreateRelease_RequiresTagAndRepo(t *testing.T) {
 	fs := &fakeFS{Files: map[string]bool{}}
 	if err := apprelease.CreateRelease(context.Background(), prov, fs, &bytes.Buffer{}, apprelease.CreateReleaseInput{
 		Repository: "owner/repo", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-	}); err == nil || !strings.Contains(err.Error(), "tag is required") {
-		t.Errorf("missing tag err = %v", err)
+	}); !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "tag is required") {
+		t.Errorf("missing tag err = %v, want ErrUsage", err)
 	}
 
 	if err := apprelease.CreateRelease(context.Background(), prov, fs, &bytes.Buffer{}, apprelease.CreateReleaseInput{
 		Tag: "v1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-	}); err == nil || !strings.Contains(err.Error(), "REPOSITORY") {
-		t.Errorf("missing repo err = %v", err)
+	}); !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "REPOSITORY") {
+		t.Errorf("missing repo err = %v, want ErrUsage", err)
 	}
 }
 
@@ -136,7 +138,7 @@ func TestCreateRelease_AttachesEachArtifactWithItsSignature(t *testing.T) {
 		"checksums.sha256",
 		"checksums.sha256.asc",
 	}
-	if !reflect.DeepEqual(got.Spec.Assets, wantAssets) {
+	if !slices.Equal(got.Spec.Assets, wantAssets) {
 		t.Errorf("assets = %v\nwant %v", got.Spec.Assets, wantAssets)
 	}
 }
@@ -148,22 +150,27 @@ func TestCreateRelease_MarksOnlyPrereleaseTagsAsPrerelease(t *testing.T) {
 	t.Parallel()
 
 	for tag, want := range map[string]bool{
-		"v1.0.0":      false,
-		"v1.0.0-rc.1": true,
+		"v1.0.0":           false,
+		"v1.0.0-rc.1":      true,
+		"v1.0.0-preview.1": true,
 	} {
-		prov := fakeprovider.New(t)
+		t.Run(tag, func(t *testing.T) {
+			t.Parallel()
 
-		err := apprelease.CreateRelease(context.Background(), prov, &fakeFS{Files: map[string]bool{}}, &bytes.Buffer{}, apprelease.CreateReleaseInput{
-			Tag:        tag,
-			Repository: "owner/repo",
+			prov := fakeprovider.New(t)
+
+			err := apprelease.CreateRelease(context.Background(), prov, &fakeFS{Files: map[string]bool{}}, &bytes.Buffer{}, apprelease.CreateReleaseInput{
+				Tag:        tag,
+				Repository: "owner/repo",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if got := prov.CreateReleaseCalls()[0].Spec.Prerelease; got != want {
+				t.Errorf("prerelease = %v, want %v", got, want)
+			}
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if got := prov.CreateReleaseCalls()[0].Spec.Prerelease; got != want {
-			t.Errorf("tag %q: prerelease = %v, want %v", tag, got, want)
-		}
 	}
 }
 
@@ -197,7 +204,7 @@ func TestCreateRelease_AttachesGlobMatchesInSortedOrder(t *testing.T) {
 	}
 
 	wantAssets := []string{"build/bar.zip", "build/foo.zip"}
-	if assets := prov.CreateReleaseCalls()[0].Spec.Assets; !reflect.DeepEqual(assets, wantAssets) {
+	if assets := prov.CreateReleaseCalls()[0].Spec.Assets; !slices.Equal(assets, wantAssets) {
 		t.Errorf("assets = %v, want %v", assets, wantAssets)
 	}
 }
@@ -234,7 +241,7 @@ func TestCreateRelease_SplitsTheAttachListOnCommas(t *testing.T) {
 	}
 
 	wantAssets := []string{"file1.txt", "file2.md", "file1.txt.asc"}
-	if assets := prov.CreateReleaseCalls()[0].Spec.Assets; !reflect.DeepEqual(assets, wantAssets) {
+	if assets := prov.CreateReleaseCalls()[0].Spec.Assets; !slices.Equal(assets, wantAssets) {
 		t.Errorf("assets = %v, want %v", assets, wantAssets)
 	}
 }
@@ -406,18 +413,22 @@ func TestCreateRelease_SkipsMissingOrEmptyNotesFile(t *testing.T) {
 
 func TestCreateRelease_PropagatesProviderError(t *testing.T) {
 	t.Parallel()
-	prov := fakeprovider.New(t).WithCreateReleaseError(fakeError("boom"))
+	prov := fakeprovider.New(t).WithCreateReleaseError(errForgeRefused)
 	fs := &fakeFS{Files: map[string]bool{}}
 
 	err := apprelease.CreateRelease(context.Background(), prov, fs, &bytes.Buffer{}, apprelease.CreateReleaseInput{
 		Tag:        "v1.0.0",
 		Repository: "owner/repo",
 	})
-	if err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Errorf("err = %v", err)
+	if !errors.Is(err, errForgeRefused) {
+		t.Errorf("err = %v, want the forge's own error to survive wrapping", err)
 	}
 }
 
 type fakeError string
 
 func (e fakeError) Error() string { return string(e) }
+
+// Named so the propagation test asserts identity rather than a substring
+// of whatever message the fake happens to carry.
+const errForgeRefused = fakeError("forge refused the release")

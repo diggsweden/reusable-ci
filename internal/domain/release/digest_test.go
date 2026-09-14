@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io/fs"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -106,23 +107,32 @@ func TestDistDigest_RejectsEmptyTree(t *testing.T) {
 	}
 }
 
-func TestWalkSafe(t *testing.T) {
+// TestWalkSafe_RejectsNonRegularEntries requires each refusal to name its own
+// reason, not only to carry the sentinel.
+//
+// A symlink is also a non-directory, non-regular entry, so if the dedicated
+// symlink check were removed the entry would fall through to the generic
+// non-regular refusal and still return ErrValidation -- the sentinel alone
+// cannot tell the two apart. The reason is what an operator acts on: a symlink
+// in dist/ means something linked content into the release tree, which is a
+// different investigation from a device node appearing there.
+func TestWalkSafe_RejectsNonRegularEntries(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		fsys    fs.FS
-		wantErr bool
+		fsys       fs.FS
+		wantReason string
 	}{
 		"plain tree": {
 			fsys: fstest.MapFS{"a.txt": {Data: []byte("ok")}, "nested/b.txt": {Data: []byte("ok")}},
 		},
 		"symlink": {
-			fsys:    fstest.MapFS{"a.txt": {Data: []byte("ok")}, "evil": {Mode: fs.ModeSymlink}},
-			wantErr: true,
+			fsys:       fstest.MapFS{"a.txt": {Data: []byte("ok")}, "evil": {Mode: fs.ModeSymlink}},
+			wantReason: "contains a symlink: evil",
 		},
 		"non-regular entry": {
-			fsys:    fstest.MapFS{"a.txt": {Data: []byte("ok")}, "dev": {Mode: fs.ModeDevice}},
-			wantErr: true,
+			fsys:       fstest.MapFS{"a.txt": {Data: []byte("ok")}, "dev": {Mode: fs.ModeDevice}},
+			wantReason: "contains a non-regular entry: dev",
 		},
 	}
 
@@ -131,12 +141,20 @@ func TestWalkSafe(t *testing.T) {
 			t.Parallel()
 
 			err := release.WalkSafe(testCase.fsys)
-			if testCase.wantErr && !errors.Is(err, errs.ErrValidation) {
-				t.Errorf("err = %v, want ErrValidation", err)
+			if testCase.wantReason == "" {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+
+				return
 			}
 
-			if !testCase.wantErr && err != nil {
-				t.Errorf("unexpected error: %v", err)
+			if !errors.Is(err, errs.ErrValidation) {
+				t.Fatalf("err = %v, want ErrValidation", err)
+			}
+
+			if !strings.Contains(err.Error(), testCase.wantReason) {
+				t.Errorf("err = %v, want it to state %q", err, testCase.wantReason)
 			}
 		})
 	}

@@ -5,6 +5,9 @@ package imageledger
 
 import (
 	"fmt"
+	"strings"
+
+	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -90,6 +93,10 @@ func (s Stage) IsRelease() bool {
 // meaning on the release stage, so requesting it on a named stage is a
 // caller error, not a no-op.
 func (s Stage) Validate() error {
+	if err := validateTargetRepo(s.TargetRepo); err != nil {
+		return err
+	}
+
 	if s.IsRelease() {
 		return nil
 	}
@@ -100,6 +107,39 @@ func (s Stage) Validate() error {
 
 	if !validStageName(s.Name) {
 		return fmt.Errorf("imageledger: invalid stage name %q (must be a valid OCI tag component): %w", s.Name, errs.ErrUsage)
+	}
+
+	return nil
+}
+
+// validateTargetRepo accepts a registry[/namespace] prefix only: a registry
+// host, with a port when it has one, and optional repository path segments
+// under it. A tag, a digest, a scheme or an empty segment would be spliced
+// into every destination ref and either fail late in the registry or land the
+// image under a name nobody asked for.
+func validateTargetRepo(repo string) error {
+	if repo == "" {
+		return nil
+	}
+
+	if strings.HasSuffix(repo, "/") || strings.Contains(repo, "//") {
+		return fmt.Errorf("imageledger: stage repo %q must not have an empty path segment: %w", repo, errs.ErrUsage)
+	}
+
+	host, path, _ := strings.Cut(repo, "/")
+
+	registry, err := name.NewRegistry(host, name.StrictValidation)
+	if err != nil {
+		return fmt.Errorf("imageledger: stage repo %q must start with a registry host: %w: %w", repo, err, errs.ErrUsage)
+	}
+
+	if path == "" {
+		return nil
+	}
+
+	repository, err := name.NewRepository(host+"/"+path, name.StrictValidation)
+	if err != nil || repository.RegistryStr() != registry.RegistryStr() || repository.RepositoryStr() != path {
+		return fmt.Errorf("imageledger: stage repo %q must be a registry[/namespace] prefix without tag or digest: %w", repo, errs.ErrUsage)
 	}
 
 	return nil

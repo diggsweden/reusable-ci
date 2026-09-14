@@ -27,9 +27,10 @@ import (
 //
 //   - SignMethodKMS: cosign with an explicit key reference. Supports
 //     KMS provider URIs (awskms://, gcpkms://, hashivault://, etc.),
-//     PKCS#11 (TPM/HSM), and local key files. The private key never
-//     leaves the KMS / device. Verification is `cosign verify-blob
-//     --key <pubkey>`.
+//     PKCS#11 (TPM/HSM), and local key files. Remote KMS/PKCS#11 keys
+//     stay in their provider/device; a local key file is read by the
+//     cosign subprocess. Verification is `cosign verify-blob --key
+//     <pubkey>`.
 //
 // The GPG path is unchanged from the original implementation. The
 // cosign paths share an adapter (internal/adapters/cosign).

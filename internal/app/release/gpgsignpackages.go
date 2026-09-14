@@ -5,6 +5,7 @@ package release
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domaingpg "github.com/diggsweden/reusable-ci/v3/internal/domain/gpg"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 type gpgPackageSigner interface {
@@ -43,6 +45,11 @@ func GPGSignPackages(ctx context.Context, signer gpgPackageSigner, out io.Writer
 		dir = "dist"
 	}
 
+	packages, err := packageFiles(dir)
+	if err != nil {
+		return 0, err
+	}
+
 	keyData, err := domaingpg.DecodeKey(in.PrivateKey)
 	if err != nil {
 		return 0, fmt.Errorf("gpg sign-packages: %w", err)
@@ -61,13 +68,8 @@ func GPGSignPackages(ctx context.Context, signer gpgPackageSigner, out io.Writer
 		return 0, fmt.Errorf("gpg sign-packages: imported GPG key fingerprint does not match expected (got %q, want %q): %w", got, in.Fingerprint, errs.ErrValidation)
 	}
 
-	packages, err := packageFiles(dir)
-	if err != nil {
-		return 0, err
-	}
-
 	for _, pkg := range packages {
-		if err := signer.DetachedSign(ctx, in.Fingerprint, in.Passphrase, pkg, pkg+".sig"); err != nil {
+		if err := signFileWithSidecars(ctx, packageFileSigner{signer, in.Fingerprint, in.Passphrase}, pkg); err != nil {
 			return 0, err
 		}
 	}
@@ -75,6 +77,20 @@ func GPGSignPackages(ctx context.Context, signer gpgPackageSigner, out io.Writer
 	_, _ = fmt.Fprintf(out, "GPG-signed %d package(s)\n", len(packages))
 
 	return len(packages), nil
+}
+
+// packageFileSigner reuses the release sidecar lifecycle for the GPG package
+// role without changing the adapter's explicit input/output-path interface.
+type packageFileSigner struct {
+	signer      gpgPackageSigner
+	fingerprint string
+	passphrase  string
+}
+
+func (s packageFileSigner) Extensions() []string { return []string{".sig"} }
+
+func (s packageFileSigner) SignFile(ctx context.Context, file string) error {
+	return s.signer.DetachedSign(ctx, s.fingerprint, s.passphrase, file, file+".sig")
 }
 
 func validateGPGSignPackagesInput(signer gpgPackageSigner, in GPGSignPackagesInput) error {
@@ -109,6 +125,17 @@ func firstGPGFingerprint(colons string) string {
 }
 
 func packageFiles(dir string) ([]string, error) {
+	root, err := pathsafe.OpenRoot(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = root.Close() }()
+
 	var files []string
 
 	for _, pattern := range []string{"*.deb", "*.rpm", "*.apk"} {
@@ -120,9 +147,13 @@ func packageFiles(dir string) ([]string, error) {
 		sort.Strings(matches)
 
 		for _, match := range matches {
-			info, err := os.Stat(match)
+			info, err := os.Lstat(match)
 			if err != nil || info.IsDir() {
 				continue
+			}
+
+			if err := validateReleasePathComponents(match); err != nil {
+				return nil, err
 			}
 
 			files = append(files, match)

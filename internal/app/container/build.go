@@ -12,6 +12,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // imageBuilder is the slice of adapters/buildah.Adapter that BuildImage drives.
@@ -86,6 +87,10 @@ func BuildImage(
 	digest, err := pushByDigest(ctx, builder, pusher, req, out)
 	if err != nil {
 		return "", err
+	}
+
+	if !container.ValidDigest(digest) {
+		return "", fmt.Errorf("image push returned a malformed digest: %w", errs.ErrInvalidConfig)
 	}
 
 	if sink != nil {

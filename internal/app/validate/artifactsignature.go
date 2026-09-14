@@ -8,12 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/openpgp"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
+	openpgp "github.com/diggsweden/reusable-ci/v3/internal/pgp"
 )
 
 // ArtifactSignatureInput drives `reusable-ci validate artifact-
@@ -60,9 +59,8 @@ type ArtifactSignatureInput struct {
 
 // VerifyArtifactSignature inspects the on-disk sidecar layout,
 // resolves the signing method (or honours an explicit override),
-// and dispatches to the matching verifier. Returns nil on success;
-// errs.ErrPermissionDenied wrapping the underlying verify error on
-// signature mismatch.
+// and dispatches to the matching verifier. Returns nil on success and
+// errs.ErrValidation on a cryptographic mismatch, independent of backend.
 //
 // The cosignVerifier slice is the contract: production passes
 // *cosign.Adapter; tests pass an in-process fake.
@@ -83,19 +81,17 @@ func VerifyArtifactSignature(
 	switch resolved.method {
 	case domainrelease.SignMethodGPG:
 		return verifyGPG(in.Artifact, resolved.signaturePath, in.PublicKey)
-	case domainrelease.SignMethodSigstore:
+	case domainrelease.SignMethodSigstore, domainrelease.SignMethodKMS:
+		// Every trust input travels, so a key given for a keyless verify or an
+		// identity given for a KMS verify is refused rather than silently
+		// dropped: the operator asked for a constraint that would not be checked.
 		return verifyCosign(ctx, cosignVerifier, domainrelease.BlobVerifyRequest{
 			Artifact:           in.Artifact,
 			BundlePath:         resolved.signaturePath,
-			Keyless:            true,
+			Keyless:            resolved.method == domainrelease.SignMethodSigstore,
 			CertIdentityRegexp: in.CertIdentityRegexp,
 			CertOIDCIssuer:     in.CertOIDCIssuer,
-		}, out)
-	case domainrelease.SignMethodKMS:
-		return verifyCosign(ctx, cosignVerifier, domainrelease.BlobVerifyRequest{
-			Artifact:   in.Artifact,
-			BundlePath: resolved.signaturePath,
-			KeyRef:     in.KeyRef,
+			KeyRef:             in.KeyRef,
 		}, out)
 	default:
 		return fmt.Errorf("validate artifact-signature: method %q unsupported: %w", resolved.method, errs.ErrInvalidConfig)
@@ -225,11 +221,31 @@ func verifyGPG(artifactPath, signaturePath string, pubKeyArmor []byte) error {
 
 	defer func() { _ = sig.Close() }()
 
-	return openpgp.VerifyDetachedArmored(artifact, sig, pubKeyArmor)
+	if err := openpgp.VerifyDetachedArmored(artifact, sig, pubKeyArmor); err != nil {
+		if errors.Is(err, errs.ErrPermissionDenied) {
+			return fmt.Errorf("artifact GPG signature verification failed: %w: %w", err, errs.ErrValidation)
+		}
+
+		return err
+	}
+
+	return nil
 }
 
 func verifyCosign(ctx context.Context, verifier cosignBlobVerifier, in domainrelease.BlobVerifyRequest, errOut io.Writer) error {
-	return verifier.VerifyBlob(ctx, in, errOut)
+	if err := in.Validate(); err != nil {
+		return err
+	}
+
+	if err := verifier.VerifyBlob(ctx, in, errOut); err != nil {
+		if errors.Is(err, errs.ErrDependencyUnavailable) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("artifact cosign verification failed: %w", err)
+		}
+
+		return fmt.Errorf("artifact cosign verification failed: %w: %w", err, errs.ErrValidation)
+	}
+
+	return nil
 }
 
 // regularFileExists reports whether path is a regular file. Used
@@ -239,10 +255,6 @@ func verifyCosign(ctx context.Context, verifier cosignBlobVerifier, in domainrel
 func regularFileExists(path string) bool {
 	info, err := os.Stat(path)
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			return false
-		}
-
 		return false
 	}
 

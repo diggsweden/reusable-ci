@@ -110,21 +110,24 @@ type ReleaseTagGuardInput struct {
 
 // ReleaseTagGuard validates a stable final release tag or release-request tag and emits normalized outputs.
 func ReleaseTagGuard(ctx context.Context, sink ci.OutputSink, out io.Writer, in ReleaseTagGuardInput) error {
-	pattern := in.Pattern
-	if pattern == "" {
-		pattern = version.StableSemverTagRE.String()
+	matches := version.IsStableSemverTag
+	expected := "stable vMAJOR.MINOR.PATCH"
+
+	if in.Pattern != "" {
+		if !strings.HasPrefix(in.Pattern, "^") || !strings.HasSuffix(in.Pattern, "$") {
+			return fmt.Errorf("release-tag-guard: pattern must be anchored (^...$), got %q: %w", in.Pattern, errs.ErrUsage)
+		}
+
+		re, err := regexp.Compile(in.Pattern)
+		if err != nil {
+			return fmt.Errorf("compile release tag pattern %q: %w: %w", in.Pattern, err, errs.ErrUsage)
+		}
+
+		matches = re.MatchString
+		expected = in.Pattern
 	}
 
-	if !strings.HasPrefix(pattern, "^") || !strings.HasSuffix(pattern, "$") {
-		return fmt.Errorf("release-tag-guard: pattern must be anchored (^...$), got %q: %w", pattern, errs.ErrUsage)
-	}
-
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		return fmt.Errorf("compile release tag pattern %q: %w: %w", pattern, err, errs.ErrUsage)
-	}
-
-	releaseTag, releaseRequest, err := normalizeReleaseTag(re, pattern, in.Tag)
+	releaseTag, releaseRequest, err := normalizeReleaseTag(matches, expected, in.Tag)
 	if err != nil {
 		return err
 	}
@@ -149,8 +152,8 @@ func ReleaseTagGuard(ctx context.Context, sink ci.OutputSink, out io.Writer, in 
 // normalizeReleaseTag resolves tag against the anchored pattern, accepting a
 // final release tag directly or via a release-request/<tag> ref. It returns
 // the normalized release tag and, when present, the release-request ref name.
-func normalizeReleaseTag(re *regexp.Regexp, pattern, tag string) (string, string, error) {
-	if re.MatchString(tag) {
+func normalizeReleaseTag(matches func(string) bool, expected, tag string) (string, string, error) {
+	if matches(tag) {
 		return tag, "", nil
 	}
 
@@ -162,8 +165,8 @@ func normalizeReleaseTag(re *regexp.Regexp, pattern, tag string) (string, string
 		candidate = strings.TrimPrefix(candidate, "release-request/")
 	}
 
-	if !re.MatchString(candidate) {
-		return "", "", fmt.Errorf("release tag must match %s (got %q): %w", pattern, tag, errs.ErrValidation)
+	if !matches(candidate) {
+		return "", "", fmt.Errorf("release tag must match %s (got %q): %w", expected, tag, errs.ErrValidation)
 	}
 
 	return candidate, releaseRequest, nil

@@ -32,11 +32,12 @@ func mavenCmd() *cli.Command {
 func mavenRunCmd() *cli.Command {
 	return &cli.Command{
 		Name:  subCmdRun,
-		Usage: "run the full Maven release build (install, metadata, app/lib build, SBOM, summary)",
+		Usage: "run the full Maven release build (install, metadata, app/lib lifecycle, SBOM, summary)",
 		Description: `Runs the whole Maven build sequence in one step: install modules to the
-   local repo, resolve metadata, build the application (--build-type app) or
-   library (--build-type lib), generate the Build SBOM with the pinned
-   cyclonedx-maven-plugin (unless --no-build-sbom), and write the summaries.
+   local repo, resolve metadata, run the application lifecycle (--build-type app)
+   or library lifecycle and optional profile (--build-type lib), generate the
+   Build SBOM with the pinned cyclonedx-maven-plugin (unless --no-build-sbom),
+   and write the summaries. The project POM/profile owns attached artifacts.
 
    mvn executes in the current directory, not --working-dir: run this from the
    project root, or cd into the module first (the forge job does, then wraps it
@@ -47,7 +48,7 @@ EXAMPLE:
    cd module && reusable-ci build maven run --build-type app --cli-opts "-B -ntp" --sbom-tool-version 2.9.1`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: flagWorkingDir, Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory of the pom.xml to read for metadata; mvn itself runs in the current directory (cd in first)"},
-			&cli.StringFlag{Name: "build-type", Sources: cli.EnvVars("BUILD_TYPE"), Usage: "build shape: \"app\" (clean package) or \"lib\" (sources + javadoc)"},
+			&cli.StringFlag{Name: "build-type", Sources: cli.EnvVars("BUILD_TYPE"), Usage: "lifecycle: \"app\" (clean package) or \"lib\" (compile/test/package with optional --profile; POM owns attached artifacts)"},
 			&cli.StringFlag{Name: flagCLIOpts, Sources: cli.EnvVars("MAVEN_CLI_OPTS"), Usage: "extra args forwarded to mvn (whitespace-separated, e.g. \"-B -ntp\")"},
 			&cli.StringFlag{Name: "profile", Sources: cli.EnvVars("MAVEN_PROFILE"), Usage: "Maven profile to activate (library builds)"},
 			&cli.BoolFlag{Name: flagSkipTests, Sources: cli.EnvVars("SKIP_TESTS"), Usage: "skip the Maven test phase"},

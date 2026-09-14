@@ -6,9 +6,11 @@ package security
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
@@ -55,6 +57,8 @@ type RunOpengrepInput struct {
 // The orchestrator is intentionally thin — each phase is a named
 // helper so the top-to-bottom flow reads as: configure → invoke →
 // parse → summary → emit outputs → verdict.
+//
+//nolint:cyclop // config/input/report preflight and independent scan/publication outcomes remain explicit.
 func RunOpengrep(
 	ctx context.Context,
 	ops OpengrepOps,
@@ -69,6 +73,26 @@ func RunOpengrep(
 		return err
 	}
 
+	if aliasErr := validateScanInputReports(cfg.targetPath, cfg.jsonFile, cfg.sarifFile, cfg.textFile, cfg.gitlabFile); aliasErr != nil {
+		return aliasErr
+	}
+
+	for _, rules := range cfg.configList {
+		if aliasErr := validateScanInputReports(rules, cfg.jsonFile, cfg.sarifFile, cfg.textFile, cfg.gitlabFile); aliasErr != nil {
+			return aliasErr
+		}
+	}
+
+	workDir, err := prepareScanReports(cfg.jsonFile, cfg.sarifFile, cfg.textFile, cfg.gitlabFile)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = os.RemoveAll(workDir) }()
+
+	destination := cfg
+	cfg.jsonFile, cfg.sarifFile, cfg.textFile, cfg.gitlabFile = filepath.Join(workDir, "raw.json"), filepath.Join(workDir, "report.sarif"), filepath.Join(workDir, "report.txt"), filepath.Join(workDir, "gitlab.json")
+
 	exitCode, err := invokeOpengrep(ctx, ops, w, stderr, cfg)
 	if err != nil {
 		return err
@@ -81,6 +105,10 @@ func RunOpengrep(
 	counts, excerpt, err := readOpengrepResults(cfg)
 	if err != nil {
 		return err
+	}
+
+	if publishErr := publishOpengrepReports(cfg, destination, annot); publishErr != nil {
+		return publishErr
 	}
 
 	thresholdFailure := security.OpengrepHasFindingsMeetingThreshold(
@@ -97,6 +125,29 @@ func RunOpengrep(
 	}
 
 	return reportOpengrepVerdict(w, annot, cfg, counts, thresholdFailure)
+}
+
+func publishOpengrepReports(source, destination opengrepConfig, annot output.Annotator) error {
+	if err := publishScanReport(source.jsonFile, destination.jsonFile, true); err != nil {
+		return err
+	}
+
+	for _, report := range []struct {
+		source, destination string
+		json                bool
+	}{
+		{source.sarifFile, destination.sarifFile, true}, {source.gitlabFile, destination.gitlabFile, true}, {source.textFile, destination.textFile, false},
+	} {
+		if err := publishScanReport(report.source, report.destination, report.json); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if report.json {
+				return err
+			}
+
+			annot.Warningf("publish OpenGrep text report: %v", err)
+		}
+	}
+
+	return nil
 }
 
 // opengrepConfig is the resolved, defaulted view of RunOpengrepInput
@@ -208,13 +259,17 @@ func reportOpengrepCrash(ctx context.Context, summary ci.SummarySink, cfg opengr
 // cosmetic-only — a missing / unreadable file falls back to an empty
 // excerpt rather than failing the scan.
 func readOpengrepResults(cfg opengrepConfig) (security.OpengrepCounts, string, error) {
-	jsonBody, err := os.ReadFile(cfg.jsonFile)
+	jsonBody, err := readScanReport(cfg.jsonFile)
 	if err != nil {
 		return security.OpengrepCounts{}, "", fmt.Errorf("read opengrep json output %s: %w", cfg.jsonFile, err)
 	}
 
-	counts := security.CountOpengrepFindings(string(jsonBody))
-	textBody, _ := os.ReadFile(cfg.textFile)
+	counts, err := security.CountOpengrepFindings(string(jsonBody))
+	if err != nil {
+		return security.OpengrepCounts{}, "", err
+	}
+
+	textBody, _ := readScanReport(cfg.textFile)
 	excerpt := security.HeadN(string(textBody), 120)
 
 	return counts, excerpt, nil

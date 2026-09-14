@@ -5,6 +5,7 @@ package release
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,10 +21,14 @@ import (
 // Release file manifest defaults shared by the `release files` commands.
 const (
 	// DefaultReleaseFilesManifest is the default release file manifest path.
-	DefaultReleaseFilesManifest = "dist/release-files.json"
-	defaultReleaseDistDir       = "dist"
-	releaseFilesVersion         = 1
-	releaseFilesSectionAssets   = "assets"
+	DefaultReleaseFilesManifest   = "dist/release-files.json"
+	defaultReleaseDistDir         = "dist"
+	releaseFilesVersion           = 1
+	releaseFilesSectionAssets     = "assets"
+	releaseFilesSectionChecksums  = "checksums"
+	releaseFilesSectionSBOMs      = "sboms"
+	releaseFilesSectionEvidence   = "evidence"
+	releaseFilesSectionProvenance = "provenance"
 )
 
 // FileEntry is one classified release file in the manifest.
@@ -100,14 +105,13 @@ func WriteReleaseFileManifest(in WriteReleaseFileManifestInput) (*FileManifest, 
 		output = ctx.manifestFile
 	}
 
-	assets, err := resolveManifestAssets(ctx, in.AssetsJSONFile)
+	manifest, err := prepareReleaseFileManifest(ctx, in.AssetsJSONFile)
 	if err != nil {
 		return nil, err
 	}
 
-	manifest, err := buildReleaseFileManifest(ctx, assets)
-	if err != nil {
-		return nil, err
+	if validationErr := validateReleaseFileManifest(ctx, manifest); validationErr != nil {
+		return nil, validationErr
 	}
 
 	body, err := json.MarshalIndent(manifest, "", "  ")
@@ -127,11 +131,51 @@ func WriteReleaseFileManifest(in WriteReleaseFileManifestInput) (*FileManifest, 
 		return nil, fmt.Errorf("write release file manifest %s: %w", output, err)
 	}
 
-	if err := validateReleaseFileManifest(ctx, manifest); err != nil {
+	return manifest, nil
+}
+
+func prepareReleaseFileManifest(ctx releaseFilesCtx, assetsJSONFile string) (*FileManifest, error) {
+	existingValue, preserve, err := releaseFileManifestForRewrite(ctx, assetsJSONFile)
+	if err != nil {
 		return nil, err
 	}
 
-	return manifest, nil
+	var existing *FileManifest
+	if preserve {
+		existing = &existingValue
+	}
+
+	assets, err := resolveManifestAssets(ctx, assetsJSONFile)
+	if err != nil {
+		return nil, err
+	}
+
+	manifest, err := buildReleaseFileManifest(ctx, assets, existing)
+	if err != nil || existing == nil {
+		return manifest, err
+	}
+
+	return mergeReleaseFileManifests(ctx, existing, manifest)
+}
+
+// releaseFileManifestForRewrite returns an existing explicit manifest as the
+// classification source for finalization. An assets JSON input remains an
+// explicit replacement and preserves the original fresh-write behavior.
+func releaseFileManifestForRewrite(ctx releaseFilesCtx, assetsJSONFile string) (FileManifest, bool, error) {
+	if assetsJSONFile != "" || !releaseFileManifestAvailable(ctx.manifestFile) {
+		return FileManifest{}, false, nil
+	}
+
+	manifest, err := readReleaseFileManifest(ctx.manifestFile)
+	if err != nil {
+		return FileManifest{}, false, err
+	}
+
+	if err := validateReleaseFileManifest(ctx, manifest); err != nil {
+		return FileManifest{}, false, err
+	}
+
+	return *manifest, true, nil
 }
 
 // resolveManifestAssets returns the pre-collected assets from assetsJSONFile
@@ -200,13 +244,13 @@ func discoverReleaseFilesSection(ctx releaseFilesCtx, section string) ([]string,
 	switch section {
 	case releaseFilesSectionAssets:
 		return discoverAssetSectionPaths(ctx)
-	case "checksums":
+	case releaseFilesSectionChecksums:
 		return discoverChecksumSectionPaths(ctx)
-	case "sboms":
+	case releaseFilesSectionSBOMs:
 		return discoverSBOMSectionPaths(ctx)
-	case "evidence":
+	case releaseFilesSectionEvidence:
 		return nil, nil
-	case "provenance":
+	case releaseFilesSectionProvenance:
 		return discoverProvenanceSectionPaths(ctx), nil
 	default:
 		return nil, fmt.Errorf("release files section must be one of assets, checksums, sboms, evidence, provenance (got %q): %w", section, errs.ErrUsage)
@@ -277,7 +321,8 @@ func FindReleaseChecksumFile(in FilesInput) (string, error) {
 }
 
 // ValidateReleaseChecksums checks that the checksums file names every public
-// release asset exactly once and nothing else.
+// release asset exactly once, nothing else, and records each file's actual
+// SHA-256 digest.
 func ValidateReleaseChecksums(in ValidateReleaseChecksumsInput) error {
 	ctx := releaseFilesContext(in.FilesInput)
 
@@ -296,12 +341,16 @@ func ValidateReleaseChecksums(in ValidateReleaseChecksumsInput) error {
 		return err
 	}
 
-	allowed, err := allowedChecksumSubjects(ctx)
+	subjectPaths, err := checksumSubjectPaths(ctx)
 	if err != nil {
 		return err
 	}
 
-	return checkChecksumSubjects(subjects, allowed)
+	if err := checkChecksumSubjects(subjects, sortedChecksumSubjectNames(subjectPaths)); err != nil {
+		return err
+	}
+
+	return verifyReleaseChecksumDigests(subjects, subjectPaths)
 }
 
 // parseChecksumFileSubjects reads the checksums file and parses its subject
@@ -350,6 +399,34 @@ func checkChecksumSubjects(subjects []provenance.Subject, allowed []string) erro
 	}
 
 	return nil
+}
+
+func verifyReleaseChecksumDigests(subjects []provenance.Subject, subjectPaths map[string]string) error {
+	for _, subject := range subjects {
+		path := subjectPaths[subject.Name]
+
+		actual, err := sha256File(path)
+		if err != nil {
+			return fmt.Errorf("checksum release asset %s: %w", subject.Name, err)
+		}
+
+		if actual != subject.SHA256 {
+			return fmt.Errorf("checksum digest mismatch for %s: recorded %s, actual %s: %w", subject.Name, subject.SHA256, actual, errs.ErrValidation)
+		}
+	}
+
+	return nil
+}
+
+func sortedChecksumSubjectNames(subjectPaths map[string]string) []string {
+	names := make([]string, 0, len(subjectPaths))
+	for name := range subjectPaths {
+		names = append(names, name)
+	}
+
+	sort.Strings(names)
+
+	return names
 }
 
 // namesNotIn returns the sorted unique values that do not appear in others.
@@ -440,7 +517,7 @@ func addGoReleaserAssetEntries(ctx releaseFilesCtx, collector *releaseFileCollec
 }
 
 func addProvenanceAssetEntries(ctx releaseFilesCtx, collector *releaseFileCollector) error {
-	if err := collector.add(ctx, ctx.provenancePath(), "provenance"); err != nil {
+	if err := collector.add(ctx, ctx.provenancePath(), releaseFilesSectionProvenance); err != nil {
 		return err
 	}
 
@@ -489,15 +566,20 @@ func addPackageSignatureEntries(ctx releaseFilesCtx, collector *releaseFileColle
 	return nil
 }
 
-func buildReleaseFileManifest(ctx releaseFilesCtx, assets []FileEntry) (*FileManifest, error) {
-	checksumFile, err := discoverSingleChecksum(ctx)
-	if err != nil {
-		return nil, err
-	}
+func buildReleaseFileManifest(ctx releaseFilesCtx, assets []FileEntry, existing *FileManifest) (*FileManifest, error) {
+	var checksums []FileEntry
+	if existing != nil {
+		checksums = existing.Checksums
+	} else {
+		checksumFile, err := discoverSingleChecksum(ctx)
+		if err != nil {
+			return nil, err
+		}
 
-	checksums, err := entriesFromPaths(ctx, "checksum", []string{checksumFile})
-	if err != nil {
-		return nil, err
+		checksums, err = entriesFromPaths(ctx, "checksum", []string{checksumFile})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	sboms, err := discoverDistSBOMEntries(ctx)
@@ -507,7 +589,7 @@ func buildReleaseFileManifest(ctx releaseFilesCtx, assets []FileEntry) (*FileMan
 
 	var provenanceEntries []FileEntry
 	if regularReleaseFile(ctx.provenancePath()) {
-		provenanceEntries, err = entriesFromPaths(ctx, "provenance", []string{ctx.provenancePath()})
+		provenanceEntries, err = entriesFromPaths(ctx, releaseFilesSectionProvenance, []string{ctx.provenancePath()})
 		if err != nil {
 			return nil, err
 		}
@@ -523,6 +605,56 @@ func buildReleaseFileManifest(ctx releaseFilesCtx, assets []FileEntry) (*FileMan
 	}
 
 	return manifest, nil
+}
+
+func mergeReleaseFileManifests(ctx releaseFilesCtx, existing, generated *FileManifest) (*FileManifest, error) {
+	collector := &releaseFileCollector{}
+
+	for _, entries := range [][]FileEntry{existing.Assets, generated.Assets} {
+		for _, entry := range entries {
+			if err := collector.add(ctx, entry.Path, entry.Source); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	for _, section := range [][]FileEntry{existing.Checksums, existing.SBOMs, existing.Evidence, existing.Provenance} {
+		for _, entry := range section {
+			bundle := entry.Path + ".bundle"
+			if regularReleaseFile(bundle) {
+				if err := collector.add(ctx, bundle, "signature_bundle"); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
+	return &FileManifest{
+		Version:    releaseFilesVersion,
+		Assets:     collector.entries,
+		Checksums:  mergeManifestEntries(existing.Checksums, generated.Checksums),
+		SBOMs:      mergeManifestEntries(existing.SBOMs, generated.SBOMs),
+		Evidence:   mergeManifestEntries(existing.Evidence, generated.Evidence),
+		Provenance: mergeManifestEntries(existing.Provenance, generated.Provenance),
+	}, nil
+}
+
+func mergeManifestEntries(existing, generated []FileEntry) []FileEntry {
+	merged := make([]FileEntry, 0, len(existing)+len(generated))
+	seen := make(map[string]struct{}, len(existing)+len(generated))
+
+	for _, entries := range [][]FileEntry{existing, generated} {
+		for _, entry := range entries {
+			if _, ok := seen[entry.Path]; ok {
+				continue
+			}
+
+			seen[entry.Path] = struct{}{}
+			merged = append(merged, entry)
+		}
+	}
+
+	return merged
 }
 
 type goReleaserArtifact struct {
@@ -695,13 +827,12 @@ func validateReleaseFileManifest(ctx releaseFilesCtx, manifest *FileManifest) er
 		return fmt.Errorf("release file manifest version must be %d: %w", releaseFilesVersion, errs.ErrValidation)
 	}
 
-	assetPaths, err := manifestAssetPaths(manifest)
-	if err != nil {
+	if err := validateManifestSections(ctx, manifest); err != nil {
 		return err
 	}
 
-	allSections := [][]FileEntry{manifest.Assets, manifest.Checksums, manifest.SBOMs, manifest.Evidence, manifest.Provenance}
-	if err := validateManifestSections(ctx, allSections); err != nil {
+	assetPaths, err := manifestAssetPaths(manifest)
+	if err != nil {
 		return err
 	}
 
@@ -738,11 +869,29 @@ func manifestAssetPaths(manifest *FileManifest) (map[string]struct{}, error) {
 	return assetPaths, nil
 }
 
-// validateManifestSections checks every entry in every section and refuses the
-// internal release image ledger anywhere in the manifest.
-func validateManifestSections(ctx releaseFilesCtx, sections [][]FileEntry) error {
+// validateManifestSections checks every entry, rejects duplicates within one
+// section, and refuses the internal release image ledger anywhere.
+func validateManifestSections(ctx releaseFilesCtx, manifest *FileManifest) error {
+	sections := []struct {
+		name    string
+		entries []FileEntry
+	}{
+		{name: "assets", entries: manifest.Assets},
+		{name: releaseFilesSectionChecksums, entries: manifest.Checksums},
+		{name: releaseFilesSectionSBOMs, entries: manifest.SBOMs},
+		{name: releaseFilesSectionEvidence, entries: manifest.Evidence},
+		{name: releaseFilesSectionProvenance, entries: manifest.Provenance},
+	}
+
 	for _, section := range sections {
-		for _, entry := range section {
+		seen := make(map[string]struct{}, len(section.entries))
+		for _, entry := range section.entries {
+			if _, exists := seen[entry.Path]; exists {
+				return fmt.Errorf("release file manifest %s contains duplicate path %s: %w", section.name, entry.Path, errs.ErrValidation)
+			}
+
+			seen[entry.Path] = struct{}{}
+
 			if err := validateManifestEntry(ctx, entry); err != nil {
 				return err
 			}
@@ -778,20 +927,73 @@ func validateReleaseDistAsset(ctx releaseFilesCtx, path string) error {
 		return fmt.Errorf("artifact path must be under %s/: %s: %w", ctx.distDir, path, errs.ErrValidation)
 	}
 
-	if !regularReleaseFile(path) {
-		return fmt.Errorf("artifact path is missing, not a regular file, or a symlink: %s: %w", path, errs.ErrMissingInput)
+	return validateReleasePathComponents(path)
+}
+
+func validateReleasePathComponents(path string) error {
+	file, err := openReleaseFile(path)
+	if err != nil {
+		return err
 	}
 
-	return nil
+	return file.Close()
+}
+
+// openReleaseFile rejects linked parents and leaves, and binds file validation
+// to the descriptor used by readers rather than reopening it after a check.
+//
+//nolint:cyclop // each descriptor/type/identity failure independently refuses the file.
+func openReleaseFile(path string) (*os.File, error) {
+	if strings.HasSuffix(path, string(filepath.Separator)) {
+		return nil, fmt.Errorf("artifact path must name a regular file: %q: %w", path, errs.ErrMissingInput)
+	}
+
+	root, err := pathsafe.OpenRoot(filepath.Dir(path))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("release file parent for %q is missing: %w: %w", path, err, errs.ErrMissingInput)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("release file parent for %q: %w", path, err)
+	}
+
+	defer func() { _ = root.Close() }()
+
+	name := filepath.Base(path)
+
+	info, err := root.Lstat(name)
+	if err != nil {
+		return nil, fmt.Errorf("artifact path is missing or unreadable at %s: %w: %w", path, err, errs.ErrMissingInput)
+	}
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("artifact path contains symlink component %s: %w", path, errs.ErrValidation)
+	}
+
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("artifact path is not a regular file: %s: %w", path, errs.ErrMissingInput)
+	}
+
+	file, err := root.Open(name)
+	if err != nil {
+		return nil, fmt.Errorf("open release file %q: %w", path, err)
+	}
+
+	opened, statErr := file.Stat()
+
+	current, currentErr := root.Lstat(name)
+	if statErr != nil || currentErr != nil || !current.Mode().IsRegular() ||
+		!os.SameFile(info, opened) || !os.SameFile(current, opened) {
+		_ = file.Close()
+
+		return nil, fmt.Errorf("release file %q changed while opening: %w", path, errs.ErrValidation)
+	}
+
+	return file, nil
 }
 
 func regularReleaseFile(path string) bool {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return false
-	}
-
-	return info.Mode().IsRegular()
+	return validateReleasePathComponents(path) == nil
 }
 
 func releaseFileManifestAvailable(path string) bool {
@@ -802,13 +1004,13 @@ func manifestSection(manifest *FileManifest, section string) ([]FileEntry, error
 	switch section {
 	case releaseFilesSectionAssets:
 		return manifest.Assets, nil
-	case "checksums":
+	case releaseFilesSectionChecksums:
 		return manifest.Checksums, nil
-	case "sboms":
+	case releaseFilesSectionSBOMs:
 		return manifest.SBOMs, nil
-	case "evidence":
+	case releaseFilesSectionEvidence:
 		return manifest.Evidence, nil
-	case "provenance":
+	case releaseFilesSectionProvenance:
 		return manifest.Provenance, nil
 	default:
 		return nil, fmt.Errorf("release files section must be one of assets, checksums, sboms, evidence, provenance (got %q): %w", section, errs.ErrUsage)
@@ -824,15 +1026,15 @@ func entryPaths(entries []FileEntry) []string {
 	return paths
 }
 
-func allowedChecksumSubjects(ctx releaseFilesCtx) ([]string, error) {
+func checksumSubjectPaths(ctx releaseFilesCtx) (map[string]string, error) {
 	if releaseFileManifestAvailable(ctx.manifestFile) {
-		return allowedChecksumSubjectsFromManifest(ctx)
+		return checksumSubjectPathsFromManifest(ctx)
 	}
 
-	return allowedChecksumSubjectsFromArtifacts(ctx)
+	return checksumSubjectPathsFromArtifacts(ctx)
 }
 
-func allowedChecksumSubjectsFromManifest(ctx releaseFilesCtx) ([]string, error) {
+func checksumSubjectPathsFromManifest(ctx releaseFilesCtx) (map[string]string, error) {
 	manifest, err := readReleaseFileManifest(ctx.manifestFile)
 	if err != nil {
 		return nil, err
@@ -850,7 +1052,7 @@ func allowedChecksumSubjectsFromManifest(ctx releaseFilesCtx) ([]string, error) 
 		}
 	}
 
-	allowed := []string{}
+	paths := make(map[string]string, len(manifest.Assets))
 
 	for _, asset := range manifest.Assets {
 		if _, ok := excluded[asset.Path]; ok {
@@ -861,10 +1063,10 @@ func allowedChecksumSubjectsFromManifest(ctx releaseFilesCtx) ([]string, error) 
 			continue
 		}
 
-		allowed = append(allowed, filepath.Base(asset.Path))
+		paths[asset.Name] = asset.Path
 	}
 
-	return uniqueSorted(allowed), nil
+	return paths, nil
 }
 
 // checksumSubjectExcluded reports whether a manifest asset is metadata
@@ -876,13 +1078,13 @@ func checksumSubjectExcluded(path string) bool {
 	return strings.HasSuffix(path, ".bundle") || strings.HasSuffix(path, ".sig") || strings.HasSuffix(base, "checksums.txt") || base == "slsa-provenance.intoto.json"
 }
 
-func allowedChecksumSubjectsFromArtifacts(ctx releaseFilesCtx) ([]string, error) {
+func checksumSubjectPathsFromArtifacts(ctx releaseFilesCtx) (map[string]string, error) {
 	artifacts, err := readGoReleaserArtifacts(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	allowed := []string{}
+	paths := make(map[string]string, len(artifacts))
 
 	for _, artifact := range artifacts {
 		if !publishableGoReleaserAsset(artifact.Path, artifact.Type) || strings.HasSuffix(artifact.Path, "checksums.txt") {
@@ -893,10 +1095,15 @@ func allowedChecksumSubjectsFromArtifacts(ctx releaseFilesCtx) ([]string, error)
 			return nil, err
 		}
 
-		allowed = append(allowed, filepath.Base(artifact.Path))
+		name := filepath.Base(artifact.Path)
+		if existing, ok := paths[name]; ok && existing != artifact.Path {
+			return nil, fmt.Errorf("duplicate release asset basename: %s (first: %s, second: %s): %w", name, existing, artifact.Path, errs.ErrValidation)
+		}
+
+		paths[name] = artifact.Path
 	}
 
-	return uniqueSorted(allowed), nil
+	return paths, nil
 }
 
 func stringSet(values []string) map[string]struct{} {

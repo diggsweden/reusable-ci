@@ -29,9 +29,18 @@ func (p *Provider) ResolveContext(_ context.Context) (*provider.EventContext, er
 	refName := get("GITHUB_REF_NAME")
 	refType := classifyRefType(get)
 
-	branch := get("GITHUB_HEAD_REF") // populated on pull_request events
-	if branch == "" && refType == provider.RefTypeBranch {
+	// The head branch exists only on pull-request events; a push names its
+	// branch in the ref. Reading HEAD_REF for every event let a stray or
+	// aliased value replace the pushed branch.
+	branch := ""
+
+	switch refType {
+	case provider.RefTypePR:
+		branch = get("GITHUB_HEAD_REF")
+	case provider.RefTypeBranch:
 		branch = refName
+	case provider.RefTypeTag, provider.RefTypeOther:
+		// A tag or any other ref names no branch.
 	}
 
 	prNumber := ""
@@ -46,7 +55,7 @@ func (p *Provider) ResolveContext(_ context.Context) (*provider.EventContext, er
 
 	server := get("GITHUB_SERVER_URL")
 	if server == "" {
-		server = "https://github.com"
+		server = defaultServerURL
 	}
 
 	repoURL := ""

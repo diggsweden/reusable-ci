@@ -9,7 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -65,7 +65,7 @@ func TestGoMetadata_EmitsOutputs(t *testing.T) {
 	// consumer reads. Asserting it is what stops a return to a map, which
 	// is the diff-noise the comment on that slice describes.
 	wantOrder := []string{"binary-name", "version", "module"}
-	if got := sink.Order(); !reflect.DeepEqual(got, wantOrder) {
+	if got := sink.Order(); !slices.Equal(got, wantOrder) {
 		t.Errorf("emission order = %q, want %q", got, wantOrder)
 	}
 
@@ -179,11 +179,8 @@ func TestGoMetadata_Refusals(t *testing.T) {
 			wantErr: errs.ErrInvalidConfig,
 		},
 		{
-			// A bare keyword is not a directive: the line is trimmed before
-			// the "module " prefix test, so this reaches "directive not
-			// found" rather than the empty-path branch below it. That
-			// branch is unreachable for the same reason -- see
-			// docs/open-questions.md.
+			// x/mod/modfile rejects a bare directive before any metadata is
+			// emitted.
 			name:    "a bare module keyword is not a directive",
 			gomod:   "module \ngo 1.26\n",
 			in:      appbuild.GoMetadataInput{},
@@ -290,7 +287,7 @@ func TestGoTest_BuildsArgsAndRunsInDir(t *testing.T) {
 				t.Fatalf("calls = %d, want 1", len(tool.calls))
 			}
 
-			if !reflect.DeepEqual(tool.calls[0].Args, tc.want) {
+			if !slices.Equal(tool.calls[0].Args, tc.want) {
 				t.Errorf("args = %q, want %q", tool.calls[0].Args, tc.want)
 			}
 
@@ -321,7 +318,7 @@ func TestGoDownload_RunsModDownloadInDir(t *testing.T) {
 				t.Fatalf("calls = %d, want 1", len(tool.calls))
 			}
 
-			if want := []string{"mod", "download"}; !reflect.DeepEqual(tool.calls[0].Args, want) {
+			if want := []string{"mod", "download"}; !slices.Equal(tool.calls[0].Args, want) {
 				t.Errorf("args = %q, want %q", tool.calls[0].Args, want)
 			}
 
@@ -383,7 +380,7 @@ func TestGoBuildSBOM_WritesCanonicalPath(t *testing.T) {
 				"-output", filepath.Join(".reusable-ci", "go-build-sbom", tc.wantDir, "bom.json"),
 				".",
 			}
-			if !reflect.DeepEqual(tool.calls[0].Args, wantArgs) {
+			if !slices.Equal(tool.calls[0].Args, wantArgs) {
 				t.Errorf("args = %q, want %q", tool.calls[0].Args, wantArgs)
 			}
 
@@ -452,10 +449,14 @@ func TestGoBuildBinaries_BuildsPlatforms(t *testing.T) {
 
 	fsys := testfs.NewReal(t)
 
-	fysDist := fsys.WriteFile("dist/old", []byte("old"))
-	if fysDist == "" {
-		t.Fatal("fixture not written")
-	}
+	// Two fixtures for the narrow-cleanup contract go.go documents: a
+	// sibling artifact staged in dist/ by someone else, and a stale binary
+	// in a platform directory this run owns. The first must survive, the
+	// second must not. Neither was asserted -- the sibling was written and
+	// then only compared against "", which testfs.WriteFile can never
+	// return because it fails the test itself on error.
+	sibling := fsys.WriteFile("dist/release-notes.md", []byte("notes"))
+	stalePlatform := fsys.WriteFile("dist/linux-amd64/leftover", []byte("old"))
 
 	tool := &fakeGoTool{}
 
@@ -489,7 +490,7 @@ func TestGoBuildBinaries_BuildsPlatforms(t *testing.T) {
 		{env: []string{"CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64"}, out: filepath.Join(fsys.Root, "dist", "linux-amd64", "app-linux-amd64")},
 		{env: []string{"CGO_ENABLED=0", "GOOS=windows", "GOARCH=arm64"}, out: filepath.Join(fsys.Root, "dist", "windows-arm64", "app-windows-arm64.exe")},
 	} {
-		if !reflect.DeepEqual(tool.calls[i].Env, want.env) {
+		if !slices.Equal(tool.calls[i].Env, want.env) {
 			t.Errorf("call %d env = %q, want %q", i, tool.calls[i].Env, want.env)
 		}
 
@@ -500,13 +501,24 @@ func TestGoBuildBinaries_BuildsPlatforms(t *testing.T) {
 			"-o", want.out,
 			"./cmd/app",
 		}
-		if !reflect.DeepEqual(tool.calls[i].Args, wantArgs) {
+		if !slices.Equal(tool.calls[i].Args, wantArgs) {
 			t.Errorf("call %d args =\n%q\nwant\n%q", i, tool.calls[i].Args, wantArgs)
 		}
 	}
 
 	if !strings.Contains(out.String(), "Building linux/amd64") {
 		t.Errorf("out = %s", out.String())
+	}
+
+	// Only the platform directories this run owns are wiped.
+	if _, err := os.Stat(stalePlatform); !os.IsNotExist(err) {
+		t.Errorf("a stale binary survived in a platform dir this build owns (stat err = %v)", err)
+	}
+
+	// A blanket RemoveAll(dist) would take this with it: dist/ also holds
+	// tarballs, release notes and SBOMs staged by other steps.
+	if _, err := os.Stat(sibling); err != nil {
+		t.Errorf("cleanup deleted a sibling artifact it does not own: %v", err)
 	}
 }
 
@@ -546,8 +558,8 @@ func TestGoBuildBinaries_RejectsInvalidPlatformBeforeRemovingDist(t *testing.T) 
 		Version:    "v1.2.3",
 		Platforms:  "linux/amd64/v2",
 	})
-	if err == nil || !strings.Contains(err.Error(), "expected GOOS/GOARCH") {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "expected GOOS/GOARCH") {
+		t.Fatalf("err = %v, want ErrUsage naming the malformed platform", err)
 	}
 
 	if _, statErr := os.Stat(old); statErr != nil {

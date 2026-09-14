@@ -19,8 +19,8 @@ type LintEngine string
 
 // Recognised LintEngine values. none is the default: a forge- and
 // consumer-neutral engine ships no particular linter as its out-of-box choice.
-// A consumer selects nanolinter (fast, node-less) or megalinter (heavier,
-// governance-recognised) explicitly; none disables general linting entirely.
+// A consumer explicitly selects nanolinter or megalinter; none disables the
+// general lint stage.
 const (
 	LintEngineNanolinter LintEngine = "nanolinter"
 	LintEngineMegalinter LintEngine = "megalinter"

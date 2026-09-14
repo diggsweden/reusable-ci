@@ -6,6 +6,7 @@ package release_test
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -303,5 +304,144 @@ func TestGenerateProvenance_ExternalParameters(t *testing.T) {
 				t.Fatalf("%s: err = %v, want ErrValidation", name, err)
 			}
 		})
+	}
+}
+
+func TestGenerateProvenance_CompleteStatementForEachProfile(t *testing.T) {
+	t.Parallel()
+
+	// These are author-written wire expectations, not domain Build output or a
+	// projection that could silently discard subjects, timestamps or extra keys.
+	const (
+		wantGeneric = `{
+		"_type": "https://in-toto.io/Statement/v1",
+		"subject": [
+			{"name": "dist/app.tar.gz", "digest": {"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+			{"name": "dist/app-sboms.zip", "digest": {"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
+		],
+		"predicateType": "https://slsa.dev/provenance/v1",
+		"predicate": {
+			"buildDefinition": {
+				"buildType": "https://diggsweden.github.io/reusable-ci/release-build/v1",
+				"externalParameters": {"source": "git+https://codeberg.org/itiquette/repo", "ref": "v2.0.0"},
+				"internalParameters": {},
+				"resolvedDependencies": [
+					{"uri": "git+https://codeberg.org/itiquette/repo@v2.0.0", "digest": {"gitCommit": "dddddddddddddddddddddddddddddddddddddddd"}},
+					{"uri": "pkg:golang/github.com/foo/bar@v1.0.0", "digest": {"gomod_h1": "xyz"}}
+				]
+			},
+			"runDetails": {
+				"builder": {"id": "https://codeberg.org/itiquette/repo/.forgejo/workflows/release.yml@v2.0.0"},
+				"metadata": {
+					"invocationId": "https://codeberg.org/itiquette/repo/actions/runs/777",
+					"startedOn": "2026-06-01T12:34:56Z",
+					"finishedOn": "2026-06-01T12:34:56Z"
+				}
+			}
+		}
+	}`
+		wantForgejo = `{
+		"_type": "https://in-toto.io/Statement/v1",
+		"subject": [
+			{"name": "dist/app.tar.gz", "digest": {"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+			{"name": "dist/app-sboms.zip", "digest": {"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}
+		],
+		"predicateType": "https://slsa.dev/provenance/v1",
+		"predicate": {
+			"buildDefinition": {
+				"buildType": "https://forgejo.org/actions/buildtypes/workflow/v1",
+				"externalParameters": {
+					"workflow": {
+						"ref": "v2.0.0",
+						"repository": "https://codeberg.org/itiquette/repo",
+						"path": ".forgejo/workflows/release.yml"
+					}
+				},
+				"internalParameters": {"runner": "forgejo-actions"},
+				"resolvedDependencies": [
+					{"uri": "git+https://codeberg.org/itiquette/repo@v2.0.0", "digest": {"gitCommit": "dddddddddddddddddddddddddddddddddddddddd"}},
+					{"uri": "pkg:golang/github.com/foo/bar@v1.0.0", "digest": {"gomod_h1": "xyz"}}
+				]
+			},
+			"runDetails": {
+				"builder": {"id": "https://codeberg.org/itiquette/repo/.forgejo/workflows/release.yml@v2.0.0"},
+				"metadata": {
+					"invocationId": "https://codeberg.org/itiquette/repo/actions/runs/777",
+					"startedOn": "2026-06-01T12:34:56Z",
+					"finishedOn": "2026-06-01T12:34:56Z"
+				}
+			}
+		}
+	}`
+	)
+
+	for _, tc := range []struct {
+		name     string
+		profile  apprelease.ProvenanceProfile
+		workflow string
+		want     string
+	}{
+		{name: "generic", profile: "", workflow: "", want: wantGeneric},
+		{name: "forgejo workflow basename", profile: "forgejo-actions", workflow: "release.yml", want: wantForgejo},
+		{name: "forgejo prefixed workflow path", profile: "forgejo-actions", workflow: ".forgejo/workflows/release.yml", want: wantForgejo},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			body, err := apprelease.GenerateProvenance(apprelease.ProvenanceInput{
+				Checksums: strings.NewReader(
+					"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  dist/app.tar.gz\n" +
+						"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  dist/app-sboms.zip\n"),
+				GoSum:         strings.NewReader("github.com/foo/bar v1.0.0 h1:xyz=\n"),
+				RepositoryURL: "https://codeberg.org/itiquette/repo",
+				Ref:           "v2.0.0",
+				SHA:           "dddddddddddddddddddddddddddddddddddddddd",
+				BuilderID:     "https://codeberg.org/itiquette/repo/.forgejo/workflows/release.yml@v2.0.0",
+				InvocationID:  "https://codeberg.org/itiquette/repo/actions/runs/777",
+				StartedOn:     "2026-06-01T12:34:56Z",
+				Profile:       tc.profile,
+				Workflow:      tc.workflow,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var got, want any
+			if err := json.Unmarshal(body, &got); err != nil {
+				t.Fatalf("output is not valid JSON: %v", err)
+			}
+
+			if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
+				t.Fatalf("invalid expected JSON: %v", err)
+			}
+
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("statement = %s\nwant %s", body, tc.want)
+			}
+		})
+	}
+}
+
+func TestGenerateProvenance_RejectsUnknownProfile(t *testing.T) {
+	t.Parallel()
+
+	body, err := apprelease.GenerateProvenance(apprelease.ProvenanceInput{
+		Checksums:     strings.NewReader("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  dist/app.tar.gz\n"),
+		GoSum:         strings.NewReader("github.com/foo/bar v1.0.0 h1:xyz=\n"),
+		RepositoryURL: "https://codeberg.org/itiquette/repo",
+		Ref:           "v2.0.0",
+		SHA:           "dddddddddddddddddddddddddddddddddddddddd",
+		BuilderID:     "https://codeberg.org/itiquette/repo/.forgejo/workflows/release.yml@v2.0.0",
+		InvocationID:  "https://codeberg.org/itiquette/repo/actions/runs/777",
+		StartedOn:     "2026-06-01T12:34:56Z",
+		Profile:       "unsupported-runner",
+		Workflow:      "release.yml",
+	})
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), `provenance: unknown profile "unsupported-runner"`) {
+		t.Fatalf("err = %v, want ErrUsage identifying the unknown profile", err)
+	}
+
+	if body != nil {
+		t.Errorf("output = %q, want nil on profile refusal", body)
 	}
 }

@@ -241,6 +241,7 @@
     "requires_sigstore_egress": true
   },
   "git_signing": {
-    "method": "gpg"
+    "method": "gpg",
+    "imports_gpg_key": true
   }
 }

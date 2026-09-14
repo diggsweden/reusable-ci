@@ -6,10 +6,12 @@ package release_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	apprelease "github.com/diggsweden/reusable-ci/v3/internal/app/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 )
@@ -31,17 +33,23 @@ func TestResolveArtifactNames_PrintsOutputPairs(t *testing.T) {
 		{"NPM", "", "build-artifacts", "build-sbom"},
 	}
 	for _, c := range cases { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		var buf bytes.Buffer
-		if err := apprelease.ResolveArtifactNames(context.Background(), &buf, apprelease.ResolveArtifactNamesInput{
-			ProjectType: c.projType, ArtifactName: c.artifact,
-		}); err != nil {
-			t.Fatal(err)
-		}
+		t.Run(c.projType+"/"+c.artifact, func(t *testing.T) {
+			t.Parallel()
 
-		want := "name=" + c.wantName + "\nsbom-name=" + c.wantSBOM + "\n"
-		if buf.String() != want {
-			t.Errorf("project=%s artifact=%q\n got  %q\n want %q", c.projType, c.artifact, buf.String(), want)
-		}
+			var buf bytes.Buffer
+			if err := apprelease.ResolveArtifactNames(context.Background(), &buf, apprelease.ResolveArtifactNamesInput{
+				ProjectType: c.projType, ArtifactName: c.artifact,
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			// The whole document, so the two lines, their order and their
+			// exact content are all one assertion.
+			want := "name=" + c.wantName + "\nsbom-name=" + c.wantSBOM + "\n"
+			if buf.String() != want {
+				t.Errorf("got  %q\nwant %q", buf.String(), want)
+			}
+		})
 	}
 }
 
@@ -49,28 +57,8 @@ func TestResolveArtifactNames_EmptyProjectErrors(t *testing.T) {
 	t.Parallel()
 
 	err := apprelease.ResolveArtifactNames(context.Background(), &bytes.Buffer{}, apprelease.ResolveArtifactNamesInput{})
-	if err == nil || !strings.Contains(err.Error(), "project-type is required") {
-		t.Errorf("err = %v", err)
-	}
-}
-
-func TestResolveArtifactNames_ExactTwoLines(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-	if err := apprelease.ResolveArtifactNames(context.Background(), &buf, apprelease.ResolveArtifactNamesInput{
-		ProjectType: "maven",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	lines := strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("got %d lines: %q", len(lines), buf.String())
-	}
-
-	if !strings.HasPrefix(lines[0], "name=") || !strings.HasPrefix(lines[1], "sbom-name=") {
-		t.Errorf("unexpected output lines: %v", lines)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "project-type is required") {
+		t.Errorf("err = %v, want ErrUsage naming the missing type", err)
 	}
 }
 
@@ -163,13 +151,13 @@ func TestResolveMetadata_RequiresVersionAndRepo(t *testing.T) {
 	sink := fakeoutputsink.New(t)
 	if err := apprelease.ResolveMetadata(context.Background(), sink, &bytes.Buffer{}, apprelease.ResolveMetadataInput{
 		Repository: "owner/repo",
-	}); err == nil || !strings.Contains(err.Error(), "version is required") {
-		t.Errorf("missing version err = %v", err)
+	}); !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "version is required") {
+		t.Errorf("missing version err = %v, want ErrUsage", err)
 	}
 
 	if err := apprelease.ResolveMetadata(context.Background(), sink, &bytes.Buffer{}, apprelease.ResolveMetadataInput{
 		Version: "v1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-	}); err == nil || !strings.Contains(err.Error(), "repository is required") {
-		t.Errorf("missing repository err = %v", err)
+	}); !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "repository is required") {
+		t.Errorf("missing repository err = %v, want ErrUsage", err)
 	}
 }

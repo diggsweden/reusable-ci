@@ -18,45 +18,69 @@ package runtimetags
 
 import (
 	"regexp"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 )
 
-// RefPattern matches any reusable-ci runtime image reference and
-// captures its tag, e.g. "reusable-ci-runtime-java-25:v3.0.0" → "v3.0.0".
-// Local-only tags such as ":verify" are matched too; consumers that
-// only care about release pins filter with VersionPattern.
-//
 //nolint:gochecknoglobals // shared compiled pattern — read-only.
-var RefPattern = regexp.MustCompile(`reusable-ci-runtime[a-z0-9-]*:([A-Za-z0-9._-]+)`)
+var refPattern = regexp.MustCompile("reusable-ci-runtime(?:-[a-z0-9]+)*:([^\\s\"'`,;(){}\\[\\]<>]+)")
 
-// VersionPattern is the shape every published runtime tag must have:
-// the repo's own release version. It is the strict stable-semver shape,
-// single-sourced from domain/version so runtime pins and release tags
-// cannot drift apart.
-//
-//nolint:gochecknoglobals // shared compiled pattern — read-only.
-var VersionPattern = version.StableSemverTagRE
+// ValidVersion reports whether a published runtime tag is the repository's
+// stable v-prefixed semantic-version shape.
+func ValidVersion(value string) bool { return version.IsStableSemverTag(value) }
 
-// pinnedRefPattern matches only version-pinned references (never the
-// local ":verify" build tags), splitting the ref stem from the version.
-//
-//nolint:gochecknoglobals // shared compiled pattern — read-only.
-var pinnedRefPattern = regexp.MustCompile(`(reusable-ci-runtime[a-z0-9-]*:)v\d+\.\d+\.\d+`)
+func references(content string) [][]int {
+	var found [][]int
+
+	for _, match := range refPattern.FindAllStringSubmatchIndex(content, -1) {
+		if match[0] > 0 && !strings.ContainsRune("/ \t\r\n\"'`=([{", rune(content[match[0]-1])) {
+			continue
+		}
+
+		found = append(found, match)
+	}
+
+	return found
+}
+
+// Tags returns complete runtime-reference tags, including nonstable or invalid
+// pins so validators cannot mistake a stable prefix for a valid full token.
+func Tags(content string) []string {
+	refs := references(content)
+
+	tags := make([]string, 0, len(refs))
+	for _, match := range refs {
+		tags = append(tags, content[match[2]:match[3]])
+	}
+
+	return tags
+}
 
 // Rewrite replaces the version of every pinned runtime-image reference
 // in content with version, returning the new content and the number of
 // references rewritten. Non-version tags (":verify") are untouched.
-// The caller validates version against VersionPattern first.
+// The caller validates version with ValidVersion first.
 func Rewrite(content, version string) (string, int) {
 	count := 0
-	rewritten := pinnedRefPattern.ReplaceAllStringFunc(content, func(match string) string {
+
+	var rewritten strings.Builder
+
+	offset := 0
+
+	for _, match := range references(content) {
+		if !ValidVersion(content[match[2]:match[3]]) {
+			continue
+		}
+
+		rewritten.WriteString(content[offset:match[2]])
+		rewritten.WriteString(version)
+
+		offset = match[3]
 		count++
+	}
 
-		stem := pinnedRefPattern.FindStringSubmatch(match)[1]
+	rewritten.WriteString(content[offset:])
 
-		return stem + version
-	})
-
-	return rewritten, count
+	return rewritten.String(), count
 }

@@ -6,6 +6,7 @@ package sbom_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"reflect"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	appsbom "github.com/diggsweden/reusable-ci/v3/internal/app/sbom"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
@@ -28,7 +30,7 @@ func TestGenerateContainer_NoArtifactTypes_SingleGeneration(t *testing.T) {
 		RefName:     "v1.2.3",
 		Repo:        "diggsweden/example",
 		ImageName:   "ghcr.io/diggsweden/example",
-		ImageDigest: "sha256:deadbeef",
+		ImageDigest: "sha256:" + strings.Repeat("a", 64),
 	})
 	if err != nil {
 		t.Fatalf("GenerateContainer: %v\nstdout: %s", err, out.String())
@@ -42,7 +44,7 @@ func TestGenerateContainer_NoArtifactTypes_SingleGeneration(t *testing.T) {
 		t.Errorf("expected 2 output formats in the single call, got %d", got)
 	}
 
-	expectedImage := "ghcr.io/diggsweden/example@sha256:deadbeef"
+	expectedImage := "ghcr.io/diggsweden/example@sha256:" + strings.Repeat("a", 64)
 	if syft.calls[0].target != expectedImage {
 		t.Errorf("syft target = %q, want %q", syft.calls[0].target, expectedImage)
 	}
@@ -66,12 +68,16 @@ func TestGenerateContainer_VPrefixStripped(t *testing.T) {
 		RefName:     "v9.8.7",
 		Repo:        "org/repo",
 		ImageName:   "img",
-		ImageDigest: "sha256:abc",
+		ImageDigest: "sha256:" + strings.Repeat("a", 64),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// The SBOM filenames embed the version — verify the v was stripped.
-	matches, _ := os.ReadDir(dir)
+	matches, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	found := false
 
 	for _, e := range matches { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -104,7 +110,7 @@ func TestGenerateContainer_NamesEveryTypeButScansOnce(t *testing.T) {
 		RefName:       "1.0.0", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Repo:          "org/repo",
 		ImageName:     "img",
-		ImageDigest:   "sha256:abc",
+		ImageDigest:   "sha256:" + strings.Repeat("a", 64),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +120,7 @@ func TestGenerateContainer_NamesEveryTypeButScansOnce(t *testing.T) {
 	// overwriting the first, at the cost of a full image scan. Both types are
 	// still named in the output below; only the scanning was duplicated.
 	want := []syftCall{{
-		target: "img@sha256:abc",
+		target: "img@sha256:" + strings.Repeat("a", 64),
 		outputs: map[string]string{
 			"cyclonedx-json": "repo-1.0.0-analyzed-container-sbom.cyclonedx.json",
 			"spdx-json":      "repo-1.0.0-analyzed-container-sbom.spdx.json",
@@ -135,16 +141,36 @@ func TestGenerateContainer_NamesEveryTypeButScansOnce(t *testing.T) {
 	}
 }
 
-func TestGenerateContainer_RequiresAllFields(t *testing.T) {
-	cases := []appsbom.GenerateContainerInput{
-		{Repo: "r", ImageName: "i", ImageDigest: "d"},    // no RefName
-		{RefName: "1", ImageName: "i", ImageDigest: "d"}, // no Repo
-		{RefName: "1", Repo: "r", ImageDigest: "d"},      // no ImageName
-		{RefName: "1", Repo: "r", ImageName: "i"},        // no ImageDigest
+// TestGenerateContainer_RequiresEveryIdentifyingField pins each missing-flag
+// guard to ErrUsage (exit 2 — the operator's command line is incomplete) and
+// checks the message names the flag that is missing, so the guards cannot drift
+// into a bare "invalid input". Nothing is scanned before validation passes.
+func TestGenerateContainer_RequiresEveryIdentifyingField(t *testing.T) {
+	cases := map[string]struct {
+		in       appsbom.GenerateContainerInput
+		wantFlag string
+	}{
+		"no ref name":     {in: appsbom.GenerateContainerInput{Repo: "r", ImageName: "i", ImageDigest: "d"}, wantFlag: "--ref-name"},
+		"no repository":   {in: appsbom.GenerateContainerInput{RefName: "1", ImageName: "i", ImageDigest: "d"}, wantFlag: "--repository"},
+		"no image name":   {in: appsbom.GenerateContainerInput{RefName: "1", Repo: "r", ImageDigest: "d"}, wantFlag: "--image-name"},
+		"no image digest": {in: appsbom.GenerateContainerInput{RefName: "1", Repo: "r", ImageName: "i"}, wantFlag: "--image-digest"},
 	}
-	for i, c := range cases {
-		if err := appsbom.GenerateContainer(context.Background(), &fakeSyft{}, nil, &fakeGit{}, io.Discard, io.Discard, c); err == nil {
-			t.Errorf("case %d: expected error", i)
-		}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			syft := &fakeSyft{}
+
+			err := appsbom.GenerateContainer(context.Background(), syft, nil, &fakeGit{}, io.Discard, io.Discard, tc.in)
+			if !errors.Is(err, errs.ErrUsage) {
+				t.Fatalf("err = %v, want ErrUsage", err)
+			}
+
+			if !strings.Contains(err.Error(), tc.wantFlag) {
+				t.Errorf("err = %v, want it to name %s", err, tc.wantFlag)
+			}
+
+			if len(syft.calls) != 0 {
+				t.Errorf("scanned before validating the input: %+v", syft.calls)
+			}
+		})
 	}
 }

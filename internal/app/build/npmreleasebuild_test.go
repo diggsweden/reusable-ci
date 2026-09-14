@@ -4,10 +4,16 @@
 package build_test
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/stretchr/testify/require"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -20,12 +26,18 @@ import (
 var errMissingTestScript = errors.New("missing script: test")
 
 type fakeNPMRunner struct {
-	calls  [][]string
-	failOn map[string]error // first-arg → error
+	calls   [][]string
+	failOn  map[string]error // first-arg → error
+	dirs    []string
+	outputs []io.Writer
+	errors  []io.Writer
 }
 
-func (f *fakeNPMRunner) RunInherit(_ context.Context, _ string, _, _ io.Writer, args ...string) error {
+func (f *fakeNPMRunner) RunInherit(_ context.Context, dir string, stdout, stderr io.Writer, args ...string) error {
 	f.calls = append(f.calls, args)
+	f.dirs = append(f.dirs, dir)
+	f.outputs = append(f.outputs, stdout)
+	f.errors = append(f.errors, stderr)
 
 	if len(args) > 0 && f.failOn != nil {
 		if err := f.failOn[args[0]]; err != nil {
@@ -33,7 +45,35 @@ func (f *fakeNPMRunner) RunInherit(_ context.Context, _ string, _, _ io.Writer, 
 		}
 	}
 
+	if len(args) == 4 && args[0] == "pack" && args[1] == "--json" && args[2] == "--pack-destination" {
+		if err := os.WriteFile(filepath.Join(args[3], "org-app-1.0.0.tgz"), npmTarballBytes("1.0.0"), 0o600); err != nil {
+			return err
+		}
+
+		_, err := io.WriteString(stdout, `[{"name":"@org/app","version":"1.0.0","filename":"org-app-1.0.0.tgz"}]`)
+
+		return err
+	}
+
+	if len(args) == 6 && args[0] == "--yes" {
+		return os.WriteFile(args[5], []byte(`{"bomFormat":"CycloneDX","specVersion":"1.6","version":1}`), 0o600)
+	}
+
 	return nil
+}
+
+func npmTarballBytes(version string) []byte {
+	var buffer bytes.Buffer
+
+	gzipWriter := gzip.NewWriter(&buffer)
+	tarWriter := tar.NewWriter(gzipWriter)
+	body := `{"name":"@org/app","version":"` + version + `"}`
+	_ = tarWriter.WriteHeader(&tar.Header{Name: "package/package.json", Mode: 0o600, Size: int64(len(body))})
+	_, _ = io.WriteString(tarWriter, body)
+	_ = tarWriter.Close()
+	_ = gzipWriter.Close()
+
+	return buffer.Bytes()
 }
 
 func (f *fakeNPMRunner) firstArgs() []string {
@@ -79,6 +119,32 @@ func TestNPMReleaseBuild_RunsFullSequence(t *testing.T) {
 	if len(npxRunner.calls) != 1 || !strings.Contains(strings.Join(npxRunner.calls[0], " "), "@cyclonedx/cyclonedx-npm@4.2.1") {
 		t.Errorf("npx calls = %v", npxRunner.calls)
 	}
+
+	require.Equal(t, [][]string{{"ci"}, {"test"}, {"run", "build"}, {"pack", "--json", "--pack-destination", npmRunner.calls[3][3]}}, npmRunner.calls)
+	require.Equal(t, []string{"--yes", "@cyclonedx/cyclonedx-npm@4.2.1", "--output-format", "json", "--output", npxRunner.calls[0][5]}, npxRunner.calls[0])
+	require.Equal(t, "bom.json", filepath.Base(npxRunner.calls[0][5]))
+	require.Equal(t, dir, filepath.Dir(filepath.Dir(npxRunner.calls[0][5])))
+
+	for i, callDir := range npmRunner.dirs {
+		require.Equal(t, dir, callDir)
+		require.Same(t, &out, npmRunner.errors[i])
+
+		if i < 3 {
+			require.Same(t, &out, npmRunner.outputs[i])
+		}
+	}
+
+	require.Equal(t, []string{dir}, npxRunner.dirs)
+	require.Same(t, &out, npxRunner.outputs[0])
+	require.Same(t, &out, npxRunner.errors[0])
+
+	body, err := os.ReadFile(filepath.Join(dir, "org-app-1.0.0.tgz"))
+	require.NoError(t, err)
+	require.Equal(t, npmTarballBytes("1.0.0"), body)
+	body, err = os.ReadFile(filepath.Join(dir, "bom.json"))
+	require.NoError(t, err)
+	require.True(t, json.Valid(body))
+	require.JSONEq(t, `{"bomFormat":"CycloneDX","specVersion":"1.6","version":1}`, string(body))
 }
 
 func TestNPMReleaseBuild_SkipTests(t *testing.T) {

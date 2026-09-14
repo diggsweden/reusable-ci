@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -78,8 +77,8 @@ func generateDualSBOMs(
 	}
 
 	for _, f := range []string{spdxFile, cdxFile} { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		info, statErr := os.Stat(deps.ws.outputPath(f))
-		if statErr != nil || info.Size() == 0 {
+		info, statErr := deps.ws.outputInfo(f)
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 			_, _ = fmt.Fprintf(deps.stderr, "   %s Failed to generate: %s\n", clicolor.Cross(deps.stderr), f)
 
 			return fmt.Errorf("generate %s: missing or empty output: %w", f, errs.ErrMissingInput)
@@ -121,46 +120,45 @@ func generateBuildLayer(
 		root = "."
 	}
 
-	files := maybeGenerateBuildBOM(ctx, deps, projectType, subj.name, root)
+	files, err := maybeGenerateBuildBOM(ctx, deps, projectType, subj.name, root)
+	if err != nil {
+		return err
+	}
 
 	switch projectType {
 	case projecttype.Maven:
-		emitBuildBOM(deps, root, files, subj, buildBOMSpec{
+		return emitBuildBOM(deps, root, files, subj, buildBOMSpec{
 			includes: []string{"*/target/bom.json"},
 			stack:    "Maven",
 			hint:     "run cyclonedx-maven-plugin during build",
 		})
 	case projecttype.NPM:
-		emitBuildBOM(deps, root, files, subj, buildBOMSpec{
+		return emitBuildBOM(deps, root, files, subj, buildBOMSpec{
 			includes: []string{"*/bom.json"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 			excludes: []string{"*/node_modules/*"},
 			stack:    "npm",
 			hint:     "run @cyclonedx/cyclonedx-npm during build",
 		})
-	case projecttype.Gradle:
-		emitBuildBOM(deps, root, files, subj, buildBOMSpec{
+	case projecttype.Gradle, projecttype.GradleAndroid:
+		return emitBuildBOM(deps, root, files, subj, buildBOMSpec{
 			includes: []string{"*/build/reports/bom.json", "*/build/reports/cyclonedx/bom.json"},
-			stack:    "Gradle",
+			stack:    string(projectType),
 			hint:     "run cyclonedx-gradle-plugin during build",
 		})
 	case projecttype.Cargo:
-		emitBuildBOM(deps, root, files, subj, buildBOMSpec{
+		return emitBuildBOM(deps, root, files, subj, buildBOMSpec{
 			includes: []string{"*/bom.json"},
 			excludes: []string{"*/target/*"},
 			stack:    "Cargo",
 			hint:     "run cargo-cyclonedx during build",
 		})
 	case projecttype.Go:
-		emitGoBuildBOM(deps, root, files, subj)
+		return emitGoBuildBOM(deps, root, files, subj)
 	case projecttype.Python:
-		_, _ = fmt.Fprintln(deps.w, "   ⚠️  Build SBOM not implemented for project type: python")
+		return fmt.Errorf("build SBOM is not implemented for project type python: %w", errs.ErrUnsupported)
 	default:
-		_, _ = fmt.Fprintf(deps.w, "   ⚠️  Build SBOM not supported for project type: %s\n", projectType)
+		return fmt.Errorf("build SBOM is not supported for project type %s: %w", projectType, errs.ErrUnsupported)
 	}
-
-	_, _ = fmt.Fprintln(deps.w)
-
-	return nil
 }
 
 // maybeGenerateBuildBOM walks the workspace and, when no build byproduct BOM
@@ -169,19 +167,22 @@ func generateBuildLayer(
 // go used `build go sbom` and cargo shelled out to `cargo cyclonedx`. Returns
 // the (re-walked) file list so the harvest step below picks up the new BOM.
 // maven/gradle/npm return ErrUnsupported and stay harvest-only.
-func maybeGenerateBuildBOM(ctx context.Context, deps layerDeps, projectType projecttype.Type, name, root string) []string {
-	files := walkAllFiles(deps.ws, root)
+func maybeGenerateBuildBOM(ctx context.Context, deps layerDeps, projectType projecttype.Type, name, root string) ([]string, error) {
+	files, err := walkAllFiles(deps.ws, root)
+	if err != nil {
+		return nil, err
+	}
 
 	if deps.gen == nil || !noBuildBOM(files) {
-		return files
+		return files, nil
 	}
 
 	if genErr := deps.gen.GenerateBuildSBOM(ctx, projectType, ".", name, deps.stderr); genErr != nil {
-		if !errors.Is(genErr, errs.ErrUnsupported) {
-			_, _ = fmt.Fprintf(deps.w, "   %s generate build BOM: %v\n", clicolor.Cross(deps.w), genErr)
+		if errors.Is(genErr, errs.ErrUnsupported) {
+			return files, nil
 		}
 
-		return files
+		return nil, fmt.Errorf("generate build BOM: %w", genErr)
 	}
 
 	return walkAllFiles(deps.ws, root) // re-walk to pick up the generated bom.json
@@ -198,7 +199,7 @@ func noBuildBOM(files []string) bool {
 
 // emitGoBuildBOM prefers a BOM under the artifact's own directory and falls
 // back to any BOM outside dist/.
-func emitGoBuildBOM(deps layerDeps, root string, files []string, subj subject) {
+func emitGoBuildBOM(deps layerDeps, root string, files []string, subj subject) error {
 	spec := buildBOMSpec{
 		excludes: []string{"*/dist/*"},
 		stack:    "Go",
@@ -218,19 +219,20 @@ func emitGoBuildBOM(deps layerDeps, root string, files []string, subj subject) {
 		})
 	}
 
-	emitBuildBOMSource(deps, root, src, subj, spec)
+	return emitBuildBOMSource(deps, root, src, subj, spec)
 }
 
 // emitBuildBOM finds the aggregate BOM file (shallowest-match in the
 // search root) and copies it to the canonical Build-layer name.
-func emitBuildBOM(deps layerDeps, root string, files []string, subj subject, spec buildBOMSpec) {
+func emitBuildBOM(deps layerDeps, root string, files []string, subj subject, spec buildBOMSpec) error {
 	src := domainsbom.FindBuildBOM(domainsbom.FindBuildBOMInput{
 		Files: files, Includes: spec.includes, Excludes: spec.excludes,
 	})
-	emitBuildBOMSource(deps, root, src, subj, spec)
+
+	return emitBuildBOMSource(deps, root, src, subj, spec)
 }
 
-func emitBuildBOMSource(deps layerDeps, root, src string, subj subject, spec buildBOMSpec) {
+func emitBuildBOMSource(deps layerDeps, root, src string, subj subject, spec buildBOMSpec) error {
 	if src == "" {
 		if spec.hint != "" {
 			_, _ = fmt.Fprintf(deps.w, "   ⚠️  No %s Build SBOM found - %s\n", spec.stack, spec.hint)
@@ -238,7 +240,7 @@ func emitBuildBOMSource(deps layerDeps, root, src string, subj subject, spec bui
 			_, _ = fmt.Fprintf(deps.w, "   ⚠️  No %s Build SBOM found\n", spec.stack)
 		}
 
-		return
+		return fmt.Errorf("no %s Build SBOM found: %s: %w", spec.stack, spec.hint, errs.ErrMissingInput)
 	}
 
 	srcPath := src
@@ -246,32 +248,98 @@ func emitBuildBOMSource(deps layerDeps, root, src string, subj subject, spec bui
 		srcPath = filepath.ToSlash(filepath.Join(root, src))
 	}
 
+	declared, err := harvestedSubject(deps, srcPath, subj)
+	if err != nil {
+		return err
+	}
+
 	out := domainsbom.BuildLayerFilename(subj.name, subj.version, subj.sha)
 	if err := copyFile(deps.ws, srcPath, out); err != nil {
 		_, _ = fmt.Fprintf(deps.w, "   %s Failed to copy %s → %s: %v\n", clicolor.Cross(deps.w), srcPath, out, err)
 
-		return
+		return fmt.Errorf("copy build SBOM %s to %s: %w", srcPath, out, err)
 	}
 
-	_, _ = fmt.Fprintf(deps.w, "   %s %s (harvested from %s)\n", clicolor.Check(deps.w), out, srcPath)
+	_, _ = fmt.Fprintf(deps.w, "   %s %s (harvested from %s, %s)\n", clicolor.Check(deps.w), out, srcPath, describeSubject(declared))
+
+	return nil
+}
+
+// harvestedSubject binds the harvested BOM to the release being published.
+//
+// The file is copied byte-for-byte under a name that asserts a subject, so the
+// document has to be the format that name promises and must not declare a
+// different release. Discovery walks the workspace for a bom.json, and in a
+// multi-module tree the shallowest match can easily belong to another module:
+// without this check that module's inventory ships as the release's Build SBOM.
+//
+// Only the release core is compared, and only when both sides state one. A
+// component name is deliberately not required to match: build tools name it by
+// module or artifactId while the subject carries a sanitized artifact name, and
+// there is no mapping between the two that would not be a guess. An aggregate
+// BOM declares no component at all and is accepted as the tree inventory it is.
+func harvestedSubject(deps layerDeps, srcPath string, subj subject) (domainsbom.DeclaredSubject, error) {
+	body, err := deps.ws.readFile(srcPath)
+	if err != nil {
+		return domainsbom.DeclaredSubject{}, fmt.Errorf("read harvested build SBOM %s: %w", srcPath, err)
+	}
+
+	declared, err := domainsbom.ReadDeclaredSubject(body)
+	if err != nil {
+		_, _ = fmt.Fprintf(deps.w, "   %s %s: %v\n", clicolor.Cross(deps.w), srcPath, err)
+
+		return domainsbom.DeclaredSubject{}, fmt.Errorf("harvested build SBOM %s: %w", srcPath, err)
+	}
+
+	same, stated := domainsbom.SameRelease(declared.Version, subj.version)
+	if stated && !same {
+		_, _ = fmt.Fprintf(deps.w, "   %s %s declares version %s, not %s\n", clicolor.Cross(deps.w), srcPath, declared.Version, subj.version)
+
+		return domainsbom.DeclaredSubject{}, fmt.Errorf(
+			"harvested build SBOM %s describes %q version %s, not the release being published (%s): %w",
+			srcPath, declared.Name, declared.Version, subj.version, errs.ErrValidation)
+	}
+
+	return declared, nil
+}
+
+// describeSubject records what the harvested document claims, so the binding is
+// visible in the log rather than only in its refusals.
+func describeSubject(declared domainsbom.DeclaredSubject) string {
+	if declared.Aggregate {
+		return "aggregate BOM, no declared component"
+	}
+
+	if declared.Version == "" {
+		return fmt.Sprintf("declares %q", declared.Name)
+	}
+
+	return fmt.Sprintf("declares %q %s", declared.Name, declared.Version)
 }
 
 func copyFile(ws workspace, src, dst string) error {
-	in, err := ws.open(src)
+	in, err := ws.openInputRegular(src)
 	if err != nil {
 		return err
 	}
 
 	defer func() { _ = in.Close() }()
 
-	out, err := os.Create(ws.outputPath(dst))
+	out, err := ws.createOutput(dst, 0o600)
 	if err != nil {
 		return err
 	}
 
-	defer func() { _ = out.Close() }()
-
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		_ = ws.removeOutput(dst)
+
+		return err
+	}
+
+	if err := out.Close(); err != nil {
+		_ = ws.removeOutput(dst)
+
 		return err
 	}
 
@@ -310,9 +378,19 @@ func generateArtifactLayer(
 
 	switch projectType {
 	case projecttype.Maven:
-		return scanArtifacts(ctx, deps, findMavenJARs(deps.ws), subj, jarScan)
+		artifacts, err := findMavenJARs(deps.ws)
+		if err != nil {
+			return err
+		}
+
+		return scanArtifacts(ctx, deps, artifacts, subj, jarScan)
 	case projecttype.NPM:
-		return scanArtifacts(ctx, deps, findNPMTarballs(deps.ws), subj, artifactScan{
+		artifacts, err := findNPMTarballs(deps.ws)
+		if err != nil {
+			return err
+		}
+
+		return scanArtifacts(ctx, deps, artifacts, subj, artifactScan{
 			layerType: "analyzed-tararchive", ext: "tgz", missingWarn: "No NPM tarball found",
 		})
 	case projecttype.Gradle:
@@ -321,15 +399,24 @@ func generateArtifactLayer(
 				_, _ = fmt.Fprintln(deps.w, "   ⚠️  No build/libs/ directory found")
 				_, _ = fmt.Fprintln(deps.w)
 
-				return nil
+				return fmt.Errorf("no Gradle artifacts found in build/libs: %w", errs.ErrMissingInput)
 			}
 
 			return fmt.Errorf("stat build/libs: %w", err)
 		}
 
-		return scanArtifacts(ctx, deps, findGradleJARs(deps.ws, subj.name), subj, jarScan)
+		artifacts, err := findGradleJARs(deps.ws, subj.name)
+		if err != nil {
+			return err
+		}
+
+		return scanArtifacts(ctx, deps, artifacts, subj, jarScan)
 	case projecttype.Go:
-		artifacts := findGoExecutables(deps.ws, subj.name)
+		artifacts, err := findGoExecutables(deps.ws, subj.name)
+		if err != nil {
+			return err
+		}
+
 		if err := scanArtifacts(ctx, deps, artifacts, subj, artifactScan{
 			layerType: "analyzed-binary", missingWarn: "No Go binary found",
 		}); err != nil {
@@ -340,7 +427,11 @@ func generateArtifactLayer(
 			_, _ = fmt.Fprintln(deps.w, "   Note: Build SBOM from go.mod is usually sufficient")
 		}
 	case projecttype.Cargo:
-		artifacts := findCargoExecutables(deps.ws, subj.name)
+		artifacts, err := findCargoExecutables(deps.ws, subj.name)
+		if err != nil {
+			return err
+		}
+
 		if err := scanArtifacts(ctx, deps, artifacts, subj, artifactScan{
 			layerType: "analyzed-binary", missingWarn: "No Rust binary found",
 		}); err != nil {
@@ -353,7 +444,7 @@ func generateArtifactLayer(
 	case projecttype.Python:
 		return scanPythonWheels(ctx, deps, subj)
 	default:
-		_, _ = fmt.Fprintf(deps.w, "   ⚠️  Unknown project type: %s\n", projectType)
+		return fmt.Errorf("analyzed-artifact SBOM is not supported for project type %s: %w", projectType, errs.ErrUnsupported)
 	}
 
 	_, _ = fmt.Fprintln(deps.w)
@@ -362,8 +453,9 @@ func generateArtifactLayer(
 }
 
 // scanArtifacts emits dual SBOMs for each artifact in artifacts.
-// Empty artifact list logs the warning and returns nil (matches the
-// bash `|| log_warning ...`).
+// Empty artifact lists fail closed: reaching this function means the layer was
+// explicitly requested, so a warning-only success would publish incomplete
+// evidence.
 func scanArtifacts(
 	ctx context.Context,
 	deps layerDeps,
@@ -374,7 +466,7 @@ func scanArtifacts(
 	if len(artifacts) == 0 {
 		_, _ = fmt.Fprintf(deps.w, "   ⚠️  %s\n", scan.missingWarn)
 
-		return nil
+		return fmt.Errorf("%s: %w", scan.missingWarn, errs.ErrMissingInput)
 	}
 
 	for _, a := range artifacts { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -397,12 +489,16 @@ func scanArtifacts(
 // scanPythonWheels handles the .whl / .tar.gz dual-extension trim
 // that's specific to Python artifacts.
 func scanPythonWheels(ctx context.Context, deps layerDeps, subj subject) error {
-	artifacts := findPythonWheels(deps.ws)
+	artifacts, err := findPythonWheels(deps.ws)
+	if err != nil {
+		return err
+	}
+
 	if len(artifacts) == 0 {
 		_, _ = fmt.Fprintln(deps.w, "   ⚠️  No Python wheel/sdist found")
 		_, _ = fmt.Fprintln(deps.w, "   Note: Source layer SBOM is usually sufficient")
 
-		return nil
+		return fmt.Errorf("no Python wheel or source distribution found: %w", errs.ErrMissingInput)
 	}
 
 	for _, a := range artifacts { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -431,7 +527,7 @@ func generateContainerLayer(ctx context.Context, deps layerDeps, containerImage 
 		_, _ = fmt.Fprintln(deps.w, "   ⚠️  No container image specified, skipping")
 		_, _ = fmt.Fprintln(deps.w)
 
-		return nil
+		return fmt.Errorf("no container image specified for requested analyzed-container SBOM: %w", errs.ErrMissingInput)
 	}
 
 	_, _ = fmt.Fprintf(deps.w, "   Scanning container: %s\n", containerImage)

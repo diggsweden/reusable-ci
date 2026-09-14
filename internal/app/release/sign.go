@@ -4,6 +4,7 @@
 package release
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -57,9 +58,15 @@ type SignInput struct {
 // artifact in ReleaseArtifactsDir, and each AttachArtifacts match. Asset
 // signatures land in the working directory under <basename>.asc. The CLI wires
 // openpgp.NewSignerFromArmor (env-sourced key); tests pass an in-memory fake.
+//
+//nolint:cyclop // a sequence of independent "sign this class if present" guards (checksums, release dir, attach globs).
 func SignArtifacts(ctx context.Context, signer Signer, out io.Writer, in SignInput) error {
 	if signer == nil {
 		return fmt.Errorf("sign: signer is required: %w", errs.ErrUsage)
+	}
+
+	if _, err := signerExtensions(signer); err != nil {
+		return err
 	}
 
 	if in.AssemblyFile != "" {
@@ -73,12 +80,6 @@ func SignArtifacts(ctx context.Context, signer Signer, out io.Writer, in SignInp
 
 	in = resolved
 
-	if !in.SkipChecksumsFile {
-		if checksumErr := signChecksumsIfPresent(ctx, signer, in.ChecksumsFile, out); checksumErr != nil {
-			return checksumErr
-		}
-	}
-
 	sectionFiles, err := releaseFilesManifestSectionFiles(in)
 	if err != nil {
 		return err
@@ -86,19 +87,63 @@ func SignArtifacts(ctx context.Context, signer Signer, out io.Writer, in SignInp
 
 	in.Files = append(in.Files, sectionFiles...)
 
-	if err := signExactFiles(ctx, signer, out, in.Files); err != nil {
+	selected, err := selectExactSignFiles(in.Files)
+	if err != nil {
 		return err
 	}
 
-	signAsset := newAssetSigner(ctx, signer, out)
+	var (
+		assets          []string
+		discoveryOutput bytes.Buffer
+	)
 
+	collect := func(path string) error {
+		if err := validateReleasePathComponents(path); err != nil {
+			return err
+		}
+
+		assets = append(assets, path)
+
+		return nil
+	}
 	if !in.SkipReleaseArtifactsDir {
-		if err := signReleaseArtifactsDir(in.ReleaseArtifactsDir, signAsset, out); err != nil {
+		if err := signReleaseArtifactsDir(in.ReleaseArtifactsDir, collect, &discoveryOutput); err != nil {
 			return err
 		}
 	}
 
-	return signAttachArtifacts(in.AttachArtifacts, out, signAsset)
+	if err := signAttachArtifacts(in.AttachArtifacts, &discoveryOutput, collect); err != nil {
+		return err
+	}
+
+	if !in.SkipChecksumsFile {
+		if err := validateReleasePathComponents(in.ChecksumsFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+
+	_, _ = io.Copy(out, &discoveryOutput)
+	if !in.SkipChecksumsFile {
+		if checksumErr := signChecksumsIfPresent(ctx, signer, in.ChecksumsFile, out); checksumErr != nil {
+			return checksumErr
+		}
+	}
+
+	for _, file := range selected {
+		_, _ = fmt.Fprintf(out, "Signing %s\n", file)
+		if err := signFileWithSidecars(ctx, signer, file); err != nil {
+			return fmt.Errorf("sign %q: %w", file, err)
+		}
+	}
+
+	signAsset := newAssetSigner(ctx, signer, out)
+	for _, path := range assets {
+		if err := signAsset(path); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // resolveSignInput applies the checksums-file and release-artifacts-dir
@@ -178,13 +223,14 @@ func signAssemblyArtifacts(ctx context.Context, signer Signer, out io.Writer, as
 		return err
 	}
 
-	signed := map[string]struct{}{}
-	sign := func(path string) error {
+	selected := make([]string, 0, len(asm.Assets)+2)
+	seen := map[string]struct{}{}
+	selectFile := func(path string) error {
 		if path == "" {
 			return nil
 		}
 
-		if _, ok := signed[path]; ok {
+		if _, ok := seen[path]; ok {
 			return nil
 		}
 
@@ -192,47 +238,51 @@ func signAssemblyArtifacts(ctx context.Context, signer Signer, out io.Writer, as
 			return fmt.Errorf("assembly sign target %q is missing or not a regular file: %w", path, errs.ErrMissingInput)
 		}
 
-		_, _ = fmt.Fprintf(out, "Signing %s\n", path)
-		if err := signer.SignFile(ctx, path); err != nil {
-			return fmt.Errorf("sign %q: %w", path, err)
-		}
-
-		signed[path] = struct{}{}
+		selected = append(selected, path)
+		seen[path] = struct{}{}
 
 		return nil
 	}
 
 	for _, asset := range asm.Assets {
-		if err := sign(asset.Path); err != nil {
+		if err := selectFile(asset.Path); err != nil {
 			return err
 		}
 	}
 
 	if asm.SBOMZipFile != "" && regularFileExists(asm.SBOMZipFile) {
-		if err := sign(asm.SBOMZipFile); err != nil {
+		if err := selectFile(asm.SBOMZipFile); err != nil {
 			return err
 		}
 	}
 
 	if asm.ChecksumFile != "" {
 		if regularFileNonEmpty(asm.ChecksumFile) {
-			return sign(asm.ChecksumFile)
-		}
-
-		if len(asm.Assets) > 0 || regularFileExists(asm.SBOMZipFile) {
+			if err := selectFile(asm.ChecksumFile); err != nil {
+				return err
+			}
+		} else if len(asm.Assets) > 0 || regularFileExists(asm.SBOMZipFile) {
 			return fmt.Errorf("assembly checksums file %q is missing or empty; run release checksums --assembly first: %w", asm.ChecksumFile, errs.ErrMissingInput)
+		}
+	}
+
+	for _, path := range selected {
+		_, _ = fmt.Fprintf(out, "Signing %s\n", path)
+		if err := signFileWithSidecars(ctx, signer, path); err != nil {
+			return fmt.Errorf("sign %q: %w", path, err)
 		}
 	}
 
 	return nil
 }
 
-// signExactFiles signs operator-supplied files in place. Unlike
+// selectExactSignFiles preflights operator-supplied files for in-place signing. Unlike
 // AttachArtifacts, it does not glob and does not move sidecars to the current
 // directory; callers use this for pre-validated release files whose sidecars
 // must stay adjacent to the input file.
-func signExactFiles(ctx context.Context, signer Signer, out io.Writer, files []string) error {
-	signed := map[string]struct{}{}
+func selectExactSignFiles(files []string) ([]string, error) {
+	selected := make([]string, 0, len(files))
+	seen := map[string]struct{}{}
 
 	for _, file := range files {
 		file = strings.TrimSpace(file)
@@ -240,23 +290,19 @@ func signExactFiles(ctx context.Context, signer Signer, out io.Writer, files []s
 			continue
 		}
 
-		if _, ok := signed[file]; ok {
+		if _, ok := seen[file]; ok {
 			continue
 		}
 
-		if !regularFileExists(file) {
-			return fmt.Errorf("sign file %q is missing or not a regular file: %w", file, errs.ErrMissingInput)
+		if err := validateReleasePathComponents(file); err != nil {
+			return nil, err
 		}
 
-		_, _ = fmt.Fprintf(out, "Signing %s\n", file)
-		if err := signer.SignFile(ctx, file); err != nil {
-			return fmt.Errorf("sign %q: %w", file, err)
-		}
-
-		signed[file] = struct{}{}
+		selected = append(selected, file)
+		seen[file] = struct{}{}
 	}
 
-	return nil
+	return selected, nil
 }
 
 // signChecksumsIfPresent signs the checksums file when it exists and
@@ -270,7 +316,7 @@ func signChecksumsIfPresent(ctx context.Context, signer Signer, checksumsFile st
 
 	_, _ = fmt.Fprintf(out, "Signing %s\n", checksumsFile)
 
-	if err := signer.SignFile(ctx, checksumsFile); err != nil {
+	if err := signFileWithSidecars(ctx, signer, checksumsFile); err != nil {
 		return fmt.Errorf("sign checksums: %w", err)
 	}
 
@@ -294,7 +340,7 @@ func newAssetSigner(ctx context.Context, signer Signer, out io.Writer) func(stri
 
 		_, _ = fmt.Fprintf(out, "Signing %s\n", base)
 
-		if err := signer.SignFile(ctx, path); err != nil {
+		if err := signFileWithSidecars(ctx, signer, path); err != nil {
 			return fmt.Errorf("sign %q: %w", base, err)
 		}
 
@@ -315,6 +361,63 @@ func newAssetSigner(ctx context.Context, signer Signer, out io.Writer) func(stri
 
 		return nil
 	}
+}
+
+func signerExtensions(signer Signer) ([]string, error) {
+	extensions := signer.Extensions()
+	if len(extensions) == 0 {
+		return nil, fmt.Errorf("signer advertises no signature sidecar extension: %w", errs.ErrInvalidConfig)
+	}
+
+	seen := make(map[string]struct{}, len(extensions))
+	for _, ext := range extensions {
+		if ext == "." || !strings.HasPrefix(ext, ".") || strings.ContainsAny(ext, "/\\\r\n") {
+			return nil, fmt.Errorf("signer advertises unsafe signature sidecar extension %q: %w", ext, errs.ErrInvalidConfig)
+		}
+
+		if _, ok := seen[ext]; ok {
+			return nil, fmt.Errorf("signer advertises duplicate signature sidecar extension %q: %w", ext, errs.ErrInvalidConfig)
+		}
+
+		seen[ext] = struct{}{}
+	}
+
+	return extensions, nil
+}
+
+// signFileWithSidecars removes stale outputs, invokes the backend, and proves
+// that every advertised sidecar was freshly produced as a non-empty regular
+// file before the release flow may continue.
+//
+//nolint:cyclop // preflight, stale-output removal and each produced sidecar fail independently.
+func signFileWithSidecars(ctx context.Context, signer Signer, file string) error {
+	if err := validateReleasePathComponents(file); err != nil {
+		return err
+	}
+
+	extensions, err := signerExtensions(signer)
+	if err != nil {
+		return err
+	}
+
+	for _, ext := range extensions {
+		if err := os.Remove(file + ext); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("remove stale sidecar %q: %w", file+ext, err)
+		}
+	}
+
+	if err := signer.SignFile(ctx, file); err != nil {
+		return err
+	}
+
+	for _, ext := range extensions {
+		info, err := os.Lstat(file + ext)
+		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+			return fmt.Errorf("signer did not produce non-empty regular sidecar %q: %w", file+ext, errs.ErrValidation)
+		}
+	}
+
+	return nil
 }
 
 // signReleaseArtifactsDir signs every regular file in dir that

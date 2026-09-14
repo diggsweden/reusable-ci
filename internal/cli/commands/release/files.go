@@ -72,7 +72,7 @@ func filesManifestCmd() *cli.Command {
 
 	return &cli.Command{
 		Name:  "manifest",
-		Usage: "write the versioned release file manifest",
+		Usage: "write or finalize the versioned release file manifest",
 		Flags: flags,
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			input := apprelease.WriteReleaseFileManifestInput{
@@ -155,7 +155,7 @@ func filesValidateChecksumsCmd() *cli.Command {
 
 	return &cli.Command{
 		Name:  "validate-checksums",
-		Usage: "validate that the checksums file names every public release asset exactly once",
+		Usage: "validate that the checksums file names and matches every public release asset exactly once",
 		Flags: flags,
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			return apprelease.ValidateReleaseChecksums(apprelease.ValidateReleaseChecksumsInput{

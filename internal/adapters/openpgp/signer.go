@@ -18,12 +18,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domaingpg "github.com/diggsweden/reusable-ci/v3/internal/domain/gpg"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // Signer signs files in-process using a decrypted OpenPGP entity. Once
@@ -35,6 +39,7 @@ import (
 // key) or NewSignerFromEntity (tests: in-process openpgp.NewEntity).
 type Signer struct {
 	entity *openpgp.Entity
+	config *packet.Config
 }
 
 // NewSignerFromArmor parses an ASCII-armored OpenPGP private key, applies
@@ -102,6 +107,37 @@ func NewSignerFromEntity(entity *openpgp.Entity) *Signer {
 	return &Signer{entity: entity}
 }
 
+// NewSignerFromArmorAt constructs a signer whose signature creation time is
+// fixed. Release workflows pass the prepared commit epoch so exact reruns emit
+// byte-identical .asc sidecars instead of embedding wall-clock time.
+func NewSignerFromArmorAt(armor []byte, passphrase string, createdAt time.Time) (*Signer, error) {
+	signer, err := NewSignerFromArmor(armor, passphrase)
+	if err != nil {
+		return nil, err
+	}
+
+	if !createdAt.IsZero() {
+		if err := signer.setDeterministicCreationTime(createdAt); err != nil {
+			return nil, err
+		}
+	}
+
+	return signer, nil
+}
+
+// NewSignerFromEntityAt is the fixed-time counterpart used by tests and
+// in-process callers that already own a decrypted entity.
+func NewSignerFromEntityAt(entity *openpgp.Entity, createdAt time.Time) (*Signer, error) {
+	signer := NewSignerFromEntity(entity)
+	if !createdAt.IsZero() {
+		if err := signer.setDeterministicCreationTime(createdAt); err != nil {
+			return nil, err
+		}
+	}
+
+	return signer, nil
+}
+
 // ReadMetadata parses armor (private or public key) and returns the
 // primary-key fingerprint, long key ID, and the first identity's
 // Name + Email. Replaces shell-outs to `gpg --list-secret-keys
@@ -128,43 +164,12 @@ func ReadMetadata(armor []byte) (domaingpg.Metadata, error) {
 	return entityMetadata(list[0]), nil
 }
 
-// PrimaryFingerprints parses an armored public-key bundle (one or more
-// "PGP PUBLIC KEY BLOCK" sections concatenated) and returns the
-// 40-char uppercase-hex primary-key fingerprint of every key in it.
-//
-// It turns a committed `.reusable-ci/allowed_gpg_keys.asc` keyring into
-// the GPG signer allowlist: the same file is both the verification key
-// material (passed to VerifyTagSignature) and the set of authorised
-// fingerprints, so the two can never drift apart.
-//
-// Empty armor → empty slice, nil error (caller treats "no keys" as
-// "no allowlist from this source").
-func PrimaryFingerprints(armor []byte) ([]string, error) {
-	armor = bytes.TrimSpace(armor)
-	if len(armor) == 0 {
-		return nil, nil
-	}
-
-	list, err := openpgp.ReadArmoredKeyRing(bytes.NewReader(armor))
-	if err != nil {
-		return nil, fmt.Errorf("parse armored key ring: %w: %w", err, errs.ErrMalformedInput)
-	}
-
-	fps := make([]string, 0, len(list))
-	for _, entity := range list {
-		if entity.PrimaryKey == nil {
-			continue
-		}
-
-		fps = append(fps, strings.ToUpper(fmt.Sprintf("%X", entity.PrimaryKey.Fingerprint)))
-	}
-
-	return fps, nil
-}
-
-// entityMetadata extracts the typed metadata from an openpgp.Entity.
-// Splits the primary identity's User ID (RFC 4880 §5.11 — "Name
-// (comment) <email>") into Name + Email.
+// entityMetadata extracts the typed metadata from an openpgp.Entity: the
+// primary-key fingerprint and the key's primary User ID (RFC 4880 §5.11,
+// "Name (comment) <email>"), which is what git user.name and user.email are
+// set from. go-crypto picks the identity flagged primary, then the most
+// recently self-certified one, so the choice is stable and is the one the
+// key's owner marked.
 func entityMetadata(entity *openpgp.Entity) domaingpg.Metadata {
 	md := domaingpg.Metadata{
 		Fingerprint: strings.ToUpper(fmt.Sprintf("%X", entity.PrimaryKey.Fingerprint)),
@@ -173,11 +178,9 @@ func entityMetadata(entity *openpgp.Entity) domaingpg.Metadata {
 		md.KeyID = md.Fingerprint[len(md.Fingerprint)-16:]
 	}
 
-	for _, ident := range entity.Identities {
+	if ident := entity.PrimaryIdentity(); ident != nil && ident.UserId != nil {
 		md.Name = ident.UserId.Name
 		md.Email = ident.UserId.Email
-
-		break // first identity wins (matches `gpg --list-keys` precedence)
 	}
 
 	return md
@@ -213,15 +216,24 @@ func (s *Signer) SignFile(_ context.Context, path string) error {
 
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(path+".asc", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644) //nolint:gosec // sig file lives next to artifact; both are caller paths.
-	if err != nil {
-		return fmt.Errorf("create %q: %w", path+".asc", err)
+	var signature bytes.Buffer
+	if signErr := openpgp.ArmoredDetachSign(&signature, s.entity, in, s.config); signErr != nil {
+		return fmt.Errorf("detach-sign %q: %w", path, signErr)
 	}
 
-	defer func() { _ = out.Close() }()
+	staging, err := pathsafe.NewArtifactStaging(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("stage signature for %q: %w", path, err)
+	}
 
-	if err := openpgp.ArmoredDetachSign(out, s.entity, in, nil); err != nil {
-		return fmt.Errorf("detach-sign %q: %w", path, err)
+	defer func() { _ = staging.Close() }()
+
+	if err := staging.Root().WriteFile(filepath.Base(path)+".asc", signature.Bytes(), 0o644); err != nil {
+		return fmt.Errorf("write signature for %q: %w", path, err)
+	}
+
+	if err := staging.Install(); err != nil {
+		return fmt.Errorf("install signature for %q: %w", path, err)
 	}
 
 	return nil
@@ -233,32 +245,6 @@ func (s *Signer) SignFile(_ context.Context, path string) error {
 // (which produces multiple sidecars in keyless mode).
 func (s *Signer) Extensions() []string { return []string{".asc"} }
 
-// VerifyDetachedArmored verifies an armored detached signature
-// against an artifact, using the supplied armored public key(s) as
-// the trust anchor. Wraps go-crypto's CheckArmoredDetachedSignature
-// so the validate flow doesn't need to import openpgp directly.
-//
-// Returns nil when the signature verifies against any entity in
-// pubKeyArmor. Any failure (parse, verify, IO) is wrapped with
-// errs.ErrPermissionDenied so callers can detect verification
-// failures distinct from infrastructure errors.
-func VerifyDetachedArmored(artifact io.Reader, signature io.Reader, pubKeyArmor []byte) error {
-	keyring, err := openpgp.ReadArmoredKeyRing(bytes.NewReader(pubKeyArmor))
-	if err != nil {
-		return fmt.Errorf("parse armored public key: %w: %w", err, errs.ErrMalformedInput)
-	}
-
-	if len(keyring) == 0 {
-		return fmt.Errorf("public key armor is empty: %w", errs.ErrMissingInput)
-	}
-
-	if _, err := openpgp.CheckArmoredDetachedSignature(keyring, artifact, signature, nil); err != nil {
-		return fmt.Errorf("verify detached signature: %w: %w", err, errs.ErrPermissionDenied)
-	}
-
-	return nil
-}
-
 // WriteSignature signs message and writes the armored detached signature
 // to w. Used by callers that already have the message in memory and want
 // to control where the signature lands (e.g. signing the checksums file
@@ -268,5 +254,39 @@ func (s *Signer) WriteSignature(w io.Writer, message io.Reader) error {
 		return fmt.Errorf("signer not initialised: %w", errs.ErrUsage)
 	}
 
-	return openpgp.ArmoredDetachSign(w, s.entity, message, nil)
+	return openpgp.ArmoredDetachSign(w, s.entity, message, s.config)
+}
+
+func (s *Signer) setDeterministicCreationTime(createdAt time.Time) error {
+	if s == nil || s.entity == nil || s.entity.PrimaryKey == nil {
+		return fmt.Errorf("signer not initialised: %w", errs.ErrUsage)
+	}
+
+	createdAt = createdAt.UTC()
+
+	key, ok := s.entity.SigningKey(createdAt)
+	if !ok || key.PublicKey == nil {
+		return fmt.Errorf("no valid OpenPGP signing key at %s: %w", createdAt.Format(time.RFC3339), errs.ErrInvalidConfig)
+	}
+
+	if key.PublicKey.Version >= 6 {
+		return fmt.Errorf("deterministic OpenPGP sidecars require a v4 key; v6 signatures mandate random salt: %w", errs.ErrUnsupported)
+	}
+
+	switch key.PublicKey.PubKeyAlgo {
+	case packet.PubKeyAlgoRSA, packet.PubKeyAlgoRSASignOnly,
+		packet.PubKeyAlgoEdDSA, packet.PubKeyAlgoEd25519, packet.PubKeyAlgoEd448:
+	case packet.PubKeyAlgoDSA, packet.PubKeyAlgoECDSA:
+		return fmt.Errorf("deterministic OpenPGP sidecars do not support randomized signing algorithm %v: %w", key.PublicKey.PubKeyAlgo, errs.ErrUnsupported)
+	default:
+		return fmt.Errorf("deterministic OpenPGP sidecars do not support signing algorithm %v: %w", key.PublicKey.PubKeyAlgo, errs.ErrUnsupported)
+	}
+
+	nondeterministic := false
+	s.config = &packet.Config{
+		Time:                                  func() time.Time { return createdAt },
+		NonDeterministicSignaturesViaNotation: &nondeterministic,
+	}
+
+	return nil
 }

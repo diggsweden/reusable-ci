@@ -7,7 +7,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -76,9 +76,12 @@ func TestChecksums_AttachArtifactsKeepsPath(t *testing.T) {
 		t.Errorf("count = %d, want 1", count)
 	}
 
-	data, _ := os.ReadFile("checksums.sha256")
-	if !strings.Contains(string(data), "extra/binary-amd64") {
-		t.Errorf("manifest should keep original path, got: %q", data)
+	// Exactly one subject, spelled with its directory: files reached through
+	// --attach-artifacts keep the path the caller named, unlike the ones
+	// discovered under release-artifacts/ which are listed by basename.
+	want := []string{"extra/binary-amd64"}
+	if got := checksumSubjects(t, "checksums.sha256"); !slices.Equal(got, want) {
+		t.Errorf("subjects = %v, want %v", got, want)
 	}
 }
 
@@ -100,7 +103,7 @@ func TestChecksums_ListsBothSBOMFormats(t *testing.T) {
 	}
 
 	want := []string{"my-app-sbom.spdx.json", "my-app-sbom.cyclonedx.json"}
-	if got := checksumSubjects(t, "checksums.sha256"); !reflect.DeepEqual(got, want) {
+	if got := checksumSubjects(t, "checksums.sha256"); !slices.Equal(got, want) {
 		t.Errorf("subjects = %v, want %v", got, want)
 	}
 }
@@ -125,7 +128,7 @@ func TestChecksums_LabelsContainerSBOMsWithoutTheirDirectory(t *testing.T) {
 	}
 
 	want := []string{"my-app-analyzed-container-sbom.spdx.json"}
-	if got := checksumSubjects(t, "checksums.sha256"); !reflect.DeepEqual(got, want) {
+	if got := checksumSubjects(t, "checksums.sha256"); !slices.Equal(got, want) {
 		t.Errorf("subjects = %v, want %v", got, want)
 	}
 }
@@ -222,7 +225,7 @@ func TestChecksums_HonoursACustomOutputPath(t *testing.T) {
 			// created empty at the custom path would satisfy every other
 			// check here.
 			want := []string{"test.jar"}
-			if got := checksumSubjects(t, outputFile); !reflect.DeepEqual(got, want) {
+			if got := checksumSubjects(t, outputFile); !slices.Equal(got, want) {
 				t.Errorf("subjects in %s = %v, want %v", outputFile, got, want)
 			}
 
@@ -248,10 +251,105 @@ func TestChecksums_CommaSeparatedAttachPatterns(t *testing.T) {
 		t.Errorf("count = %d, want 2", count)
 	}
 
-	body, _ := os.ReadFile("checksums.sha256")
-	for _, want := range []string{"file1.txt", "file2.md"} { //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		if !strings.Contains(string(body), want) {
-			t.Errorf("missing %q in %q", want, body)
+	want := []string{"file1.txt", "file2.md"}
+	if got := checksumSubjects(t, "checksums.sha256"); !slices.Equal(got, want) {
+		t.Errorf("subjects = %v, want %v", got, want)
+	}
+}
+
+// TestChecksums_ExcludesItsOwnOutputFromTheManifest covers the case where the
+// manifest is written into the directory it is hashing.
+//
+// The output file is created before the walk, so a walk over its own directory
+// finds it — empty at that point — and records sha256 e3b0c44…, the hash of
+// nothing. The manifest then fails `sha256sum --check` against itself the
+// moment it is verified, which is the one thing a checksums file exists to
+// survive. The guard is in the code and nothing exercised it: every other test
+// writes the manifest outside the directories being hashed.
+func TestChecksums_ExcludesItsOwnOutputFromTheManifest(t *testing.T) {
+	fsys := testfs.NewReal(t)
+	fsys.Chdir()
+
+	// The manifest lands in the same directory it is told to hash.
+	dir := fsys.MkdirAll("release-artifacts")
+	fsys.WriteFile(filepath.Join("release-artifacts", "app.jar"), []byte("hi"))
+
+	output := filepath.Join(dir, "checksums.sha256")
+
+	count, err := apprelease.Checksums(&bytes.Buffer{}, apprelease.ChecksumsInput{
+		ReleaseArtifactsDir: dir,
+		OutputFile:          output,
+	})
+	if err != nil {
+		t.Fatalf("Checksums: %v", err)
+	}
+
+	if count != 1 {
+		t.Errorf("count = %d, want 1: only the artifact, not the manifest", count)
+	}
+
+	entries := checksumEntries(t, output)
+	for _, entry := range entries {
+		if entry.Subject == "checksums.sha256" {
+			t.Errorf("the manifest lists itself: %+v", entry)
 		}
+
+		// The hash of an empty file is what self-inclusion would record.
+		if entry.Digest == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
+			t.Errorf("manifest records the empty-file digest for %q", entry.Subject)
+		}
+	}
+
+	if len(entries) != 1 || entries[0].Subject != "app.jar" {
+		t.Errorf("manifest = %+v, want only app.jar", entries)
+	}
+}
+
+// TestChecksums_ManifestOrderIsDeterministic pins the line order.
+//
+// A checksums manifest is signed and compared across runs, so two runs over the
+// same inputs must produce the same bytes. Directory reads are not ordered by
+// the filesystem, and the fixtures elsewhere in this file each hash two files
+// and compare them as a map — which cannot see order at all.
+func TestChecksums_ManifestOrderIsDeterministic(t *testing.T) {
+	names := []string{"zeta.tgz", "alpha.jar", "middle.txt", "beta.zip"}
+
+	render := func(t *testing.T) []string {
+		t.Helper()
+
+		fsys := testfs.NewReal(t)
+		fsys.Chdir()
+
+		for _, name := range names {
+			fsys.WriteFile(filepath.Join("release-artifacts", name), []byte(name))
+		}
+
+		if _, err := apprelease.Checksums(&bytes.Buffer{}, apprelease.ChecksumsInput{}); err != nil {
+			t.Fatalf("Checksums: %v", err)
+		}
+
+		entries := checksumEntries(t, "checksums.sha256")
+
+		subjects := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			subjects = append(subjects, entry.Subject)
+		}
+
+		return subjects
+	}
+
+	first := render(t)
+	second := render(t)
+
+	if !slices.Equal(first, second) {
+		t.Errorf("two runs produced different orders:\n  %v\n  %v", first, second)
+	}
+
+	if len(first) != len(names) {
+		t.Fatalf("manifest lists %v, want %d entries", first, len(names))
+	}
+
+	if !slices.IsSorted(first) {
+		t.Errorf("manifest order = %v, want it sorted so a signed manifest is reproducible", first)
 	}
 }

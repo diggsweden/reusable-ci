@@ -11,7 +11,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
 )
 
-func TestParseLintEngine(t *testing.T) {
+func TestParseLintEngine_IsCaseInsensitiveAndDefaultsToNone(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]pipeline.LintEngine{

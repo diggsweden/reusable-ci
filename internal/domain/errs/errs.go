@@ -18,7 +18,10 @@ package errs
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"net"
+	"net/url"
+	"syscall"
 )
 
 // Sentinels callers wrap with `fmt.Errorf("ctx: %w", sentinel)` so
@@ -193,9 +196,16 @@ func ExitCodeFromError(err error) ExitCodeType {
 		// with no domain sentinel. It is a transient external-dependency
 		// problem ("the forge/registry was unreachable"), not an internal
 		// defect, so it must not fall through to ExitCodeSoftware (70), which
-		// tells CI to report a code defect. Checked last so any explicit
+		// tells CI to report a code defect. Checked after the sentinels so any explicit
 		// sentinel (e.g. a 401 turned into ErrPermissionDenied) wins first.
 		return ExitCodeUnavailable
+	case errors.Is(err, fs.ErrNotExist):
+		// A file or directory the command was pointed at is not there, and no
+		// caller classified it: EX_NOINPUT, the same answer ErrMissingInput
+		// gives, rather than "internal bug".
+		return ExitCodeNoInput
+	case errors.Is(err, fs.ErrPermission):
+		return ExitCodeNoPerm
 	default:
 		return ExitCodeSoftware
 	}
@@ -208,7 +218,25 @@ func ExitCodeFromError(err error) ExitCodeType {
 // HTTP-based adapter. Timeouts already match the context.DeadlineExceeded case
 // above and land on the same code, so this is purely the non-timeout tail.
 func isNetworkError(err error) bool {
-	var netErr net.Error
+	// *url.Error implements net.Error, but it is also what url.Parse returns
+	// for a malformed URL, before any request is built. That failure is the
+	// caller's input and retrying it cannot succeed, so only a url.Error whose
+	// cause is itself a network failure counts.
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return isNetworkError(urlErr.Err)
+	}
 
-	return errors.As(err, &netErr)
+	var netErr net.Error
+	if !errors.As(err, &netErr) {
+		return false
+	}
+
+	// syscall.Errno has Timeout and Temporary methods, so it satisfies
+	// net.Error too. A bare errno in the chain is an operating-system error
+	// such as ENOENT from opening a file -- a socket failure arrives wrapped
+	// in *net.OpError, which errors.As reaches first.
+	_, isErrno := netErr.(syscall.Errno)
+
+	return !isErrno
 }

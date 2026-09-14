@@ -5,8 +5,11 @@ package build
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 // RenderGradleInitScript returns the Kotlin init script body that
@@ -26,27 +29,47 @@ import (
 //     init-script classpath has no plugin-marker resolution step, so
 //     the marker-only path fails with "Plugin with id ... not found".
 //
-//  2. We `apply<CycloneDxPlugin>()` by class (note the upstream
-//     CamelCase: capital D in "Dx"). Init-script classpath does NOT
+//  2. We apply by class. Init-script classpath does NOT
 //     auto-register plugin IDs against the project plugin registry,
 //     so `apply(plugin = "org.cyclonedx.bom")` fails. The class name
-//     is stable across the v1.x → v2.x transition.
+//     is version-dependent: `CycloneDxPlugin` (capital D) through
+//     v1.x/v2.x, renamed `CyclonedxPlugin` in v3 (verified against the
+//     3.2.1 jar's plugin descriptor). Rendering the wrong one fails
+//     script compilation and silently skips the build SBOM.
+//
+// v3 also moves the aggregate output from build/reports/bom.json to
+// build/reports/cyclonedx/; the harvest globs in app/sbom and
+// app/summary already cover both locations.
 func RenderGradleInitScript(version string) string {
-	return fmt.Sprintf(`import org.cyclonedx.gradle.CycloneDxPlugin
+	class := cyclonedxPluginClass(version)
+
+	return fmt.Sprintf(`import org.cyclonedx.gradle.%[1]s
 
 initscript {
     repositories {
         gradlePluginPortal()
     }
     dependencies {
-        classpath("org.cyclonedx:cyclonedx-gradle-plugin:%s")
+        classpath("org.cyclonedx:cyclonedx-gradle-plugin:%[2]s")
     }
 }
 
 allprojects {
-    apply<CycloneDxPlugin>()
+    apply<%[1]s>()
 }
-`, version)
+`, class, version)
+}
+
+// cyclonedxPluginClass returns the plugin class for the pinned version:
+// upstream renamed CycloneDxPlugin to CyclonedxPlugin in v3. An
+// unparsable version keeps the pre-v3 name, matching prior behaviour.
+func cyclonedxPluginClass(version string) string {
+	major, _, _ := strings.Cut(version, ".")
+	if n, err := strconv.Atoi(major); err == nil && n >= 3 {
+		return "CyclonedxPlugin"
+	}
+
+	return "CycloneDxPlugin"
 }
 
 // GradleSummaryInput drives RenderGradleSummary.
@@ -63,8 +86,8 @@ func RenderGradleSummary(in GradleSummaryInput, now time.Time) string {
 
 	_, _ = fmt.Fprintf(&b, "## Gradle Build Summary 🔨\n")
 	_, _ = fmt.Fprintf(&b, "\n")
-	_, _ = fmt.Fprintf(&b, "- **Java:** %s\n", in.JavaVersion)
-	_, _ = fmt.Fprintf(&b, "- **Tasks:** %s\n", in.GradleTasks)
+	_, _ = fmt.Fprintf(&b, "- **Java:** %s\n", summary.LiteralText(in.JavaVersion))
+	_, _ = fmt.Fprintf(&b, "- **Tasks:** %s\n", summary.LiteralText(in.GradleTasks))
 
 	if in.SkipTests {
 		_, _ = fmt.Fprintf(&b, "- **Tests:** ⊘ Skipped\n")
@@ -73,7 +96,7 @@ func RenderGradleSummary(in GradleSummaryInput, now time.Time) string {
 	}
 
 	if in.Version != "" {
-		_, _ = fmt.Fprintf(&b, "- **Version:** %s\n", in.Version)
+		_, _ = fmt.Fprintf(&b, "- **Version:** %s\n", summary.LiteralText(in.Version))
 	}
 
 	_, _ = fmt.Fprintf(&b, "\n")

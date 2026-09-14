@@ -5,6 +5,7 @@ package baseimages
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -34,7 +35,7 @@ type baseImageInputOutput struct {
 // PromoteBaseImages verifies candidate/base evidence, promotes missing final
 // immutable tags, and emits the compact JSON outputs consumed by downstream base
 // image jobs.
-func PromoteBaseImages(ctx context.Context, registry baseImageRegistry, verifier imageEvidenceVerifier, out io.Writer, in BaseImagePromoteInput) (BaseImagePromoteResult, error) {
+func PromoteBaseImages(ctx context.Context, registry baseImageRegistry, verifier imageEvidenceVerifier, out io.Writer, in BaseImagePromoteInput) (BaseImagePromoteResult, error) { //nolint:cyclop // validate all metadata, verify all evidence, then copy; each phase fails closed.
 	if registry == nil {
 		return BaseImagePromoteResult{}, fmt.Errorf("base images promote: registry is required: %w", errs.ErrUsage)
 	}
@@ -51,56 +52,46 @@ func PromoteBaseImages(ctx context.Context, registry baseImageRegistry, verifier
 		return BaseImagePromoteResult{}, fmt.Errorf("base images promote: all-images-json must contain at least one image: %w", errs.ErrValidation)
 	}
 
-	promoted := make([]promotedBaseImage, 0, len(in.Images))
+	items := make([]BaseImageMetadata, 0, len(in.Images))
+
+	destinations := make(map[string]bool, len(in.Images))
 	for idx, image := range in.Images {
 		item, err := normalizePromoteBaseImage(image, in.BaseInputID, in.ExpectedRepository)
 		if err != nil {
 			return BaseImagePromoteResult{}, fmt.Errorf("base images promote: entry %d: %w", idx, err)
 		}
 
-		ref, err := promoteOneBaseImage(ctx, registry, verifier, out, in, item)
-		if err != nil {
-			return BaseImagePromoteResult{}, err
+		if destinations[item.Tag] {
+			return BaseImagePromoteResult{}, fmt.Errorf("base images promote: duplicate final destination: %w", errs.ErrValidation)
 		}
 
-		promoted = append(promoted, promotedBaseImage{Flavor: item.Flavor, Tag: item.Tag, Ref: ref, BaseInputID: item.BaseInputID})
+		destinations[item.Tag] = true
+		items = append(items, item)
+	}
+	// Evidence and immutable destination checks for every entry precede copies.
+	for _, item := range items {
+		if err := preflightBaseImagePromotion(ctx, registry, verifier, in, item); err != nil {
+			return BaseImagePromoteResult{}, err
+		}
+	}
+
+	promoted := make([]promotedBaseImage, 0, len(items))
+	for _, item := range items {
+		if item.CandidateRef != "" {
+			if err := ensureFinalBaseTag(ctx, registry, out, item, digestFromRef(item.Ref)); err != nil {
+				return BaseImagePromoteResult{}, err
+			}
+		}
+
+		promoted = append(promoted, promotedBaseImage{Flavor: item.Flavor, Tag: item.Tag, Ref: item.Ref, BaseInputID: item.BaseInputID})
 	}
 
 	return baseImagePromotionResult(promoted)
 }
 
-// promoteOneBaseImage promotes one normalized base image (verifying its
-// candidate evidence and copying the final tag when needed) and returns the
-// digest-pinned ref recorded for downstream jobs.
-func promoteOneBaseImage(ctx context.Context, registry baseImageRegistry, verifier imageEvidenceVerifier, out io.Writer, in BaseImagePromoteInput, item BaseImageMetadata) (string, error) {
-	ref := item.Ref
-	if item.CandidateRef != "" {
-		if err := promoteCandidateBaseImage(ctx, registry, verifier, out, in, item); err != nil {
-			return "", err
-		}
-
-		ref = item.CandidateRef
-	} else if err := verifyBaseTagDigest(ctx, registry, item.Tag, digestFromRef(item.Ref), in.ExpectedRepository); err != nil {
-		return "", err
-	}
-
-	_, _ = fmt.Fprintf(out, "Verifying promoted base image evidence: flavor=%s digest=%s\n", item.Flavor, digestFromRef(ref))
-	if err := verifyBaseImageEvidence(ctx, verifier, out, ref, in.CosignPublicKey, baseImageLineageExpectation{
-		Source: in.ExpectedSource, Workflow: in.ExpectedWorkflow, Flavor: item.Flavor, BaseInputID: item.BaseInputID,
-	}, 3); err != nil {
-		return "", err
-	}
-
-	return ref, nil
-}
-
-// promoteCandidateBaseImage verifies the candidate's evidence and tag digest,
-// then ensures the immutable final tag exists and points at the candidate.
-func promoteCandidateBaseImage(ctx context.Context, registry baseImageRegistry, verifier imageEvidenceVerifier, out io.Writer, in BaseImagePromoteInput, item BaseImageMetadata) error {
-	digest := digestFromRef(item.CandidateRef)
-
-	_, _ = fmt.Fprintf(out, "Verifying candidate base image before promotion: flavor=%s digest=%s\n", item.Flavor, digest)
-	if err := verifyBaseImageEvidence(ctx, verifier, out, item.CandidateRef, in.CosignPublicKey, baseImageLineageExpectation{
+func preflightBaseImagePromotion(ctx context.Context, registry baseImageRegistry, verifier imageEvidenceVerifier, in BaseImagePromoteInput, item BaseImageMetadata) error {
+	digest := digestFromRef(item.Ref)
+	if err := verifyBaseImageEvidence(ctx, verifier, io.Discard, item.Ref, in.CosignPublicKey, baseImageLineageExpectation{
 		Source: in.ExpectedSource, Workflow: in.ExpectedWorkflow, Flavor: item.Flavor, BaseInputID: item.BaseInputID,
 	}, 3); err != nil {
 		return err
@@ -112,7 +103,20 @@ func promoteCandidateBaseImage(ctx context.Context, registry baseImageRegistry, 
 		}
 	}
 
-	return ensureFinalBaseTag(ctx, registry, out, item, digest)
+	finalDigest, err := registry.ResolveDigest(ctx, item.Tag)
+	if errors.Is(err, errs.ErrMissingInput) && item.CandidateRef != "" {
+		return nil
+	}
+
+	if err != nil {
+		return fmt.Errorf("base images promote: resolve final tag: %w", err)
+	}
+
+	if finalDigest != digest {
+		return fmt.Errorf("base images promote: immutable final base tag already exists with a different digest: %w", errs.ErrValidation)
+	}
+
+	return nil
 }
 
 // ensureFinalBaseTag copies the candidate to the immutable final tag when the
@@ -126,6 +130,10 @@ func ensureFinalBaseTag(ctx context.Context, registry baseImageRegistry, out io.
 		}
 
 		return nil
+	}
+
+	if !errors.Is(err, errs.ErrMissingInput) {
+		return fmt.Errorf("base images promote: resolve immutable final base tag %s: %w", item.Tag, err)
 	}
 
 	_, _ = fmt.Fprintf(out, "Promoting base image: flavor=%s digest=%s final=%s\n", item.Flavor, digest, item.Tag)

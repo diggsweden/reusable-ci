@@ -5,7 +5,6 @@ package imageledger
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -124,13 +123,13 @@ func verifyPromotedTagsAfterCleanup(ctx context.Context, reg CleanupRegistry, en
 }
 
 func refServesDigestIfPresent(ctx context.Context, reg DigestResolver, ref, want string) (bool, error) {
-	got, err := reg.ResolveDigest(ctx, ref)
+	got, present, err := resolveDigestIfPresent(ctx, reg, ref)
 	if err != nil {
-		if errors.Is(err, errs.ErrMissingInput) {
-			return false, nil
-		}
+		return false, err
+	}
 
-		return false, fmt.Errorf("resolve %s: %w", ref, err)
+	if !present {
+		return false, nil
 	}
 
 	if got != want {

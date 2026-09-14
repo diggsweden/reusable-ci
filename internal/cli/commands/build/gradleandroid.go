@@ -21,7 +21,7 @@ func gradleAndroidCmd() *cli.Command {
 		Name:  "gradle-android",
 		Usage: "android (gradle) build pipeline",
 		Commands: []*cli.Command{
-			gradleAndroidRunCmd(),
+			gradleAndroidRunCmd(gradle.New()),
 			gradleAndroidMetadataCmd(),
 			gradleAndroidDecodeKeystoreCmd(),
 			gradleAndroidWriteSecretsPropertiesCmd(),
@@ -33,25 +33,30 @@ func gradleAndroidCmd() *cli.Command {
 // gradleAndroidRunCmd runs the whole Android release build in one step (the
 // Android sibling of `build gradle run`); the granular subcommands remain the
 // composable units. The job keeps only checkout + artifact upload around it.
-func gradleAndroidRunCmd() *cli.Command {
+func gradleAndroidRunCmd(ops appbuild.AndroidGradleOps) *cli.Command {
 	return &cli.Command{
 		Name:  subCmdRun,
 		Usage: "run the full Android release build (artifact-names, keystore, metadata, tasks, build, SBOM)",
 		Description: `Runs the whole Android build sequence in one step: compose artifact names,
    make ./gradlew executable, decode the signing keystore (when --enable-signing),
    resolve metadata + tasks, write secrets.properties, run the gradle build, and
-   generate the Build SBOM. Signing passwords stay env vars the gradle build
-   reads; the keystore is decoded outside the project dir. Emits the artifact
-   names + version as outputs for downstream upload/publish jobs.
+   generate the Build SBOM. Signing requires ANDROID_KEYSTORE_PASSWORD,
+   ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD; password bytes are preserved and
+   whitespace-only aliases are refused. These values are passed in the Gradle
+   child environment, not argv. The keystore is decoded into a private directory
+   outside the project. Injected secrets.properties is create-only: an occupied
+   destination is refused before effects. Without injection, existing properties
+   are left alone. Run-owned signing files are cleaned after build and SBOM,
+   including on failure; cleanup errors are returned. Replaced properties are
+   preserved. Emits artifact names + version for downstream upload/publish jobs.
 
-   ./gradlew executes in the current directory, not --working-dir: run this from
-   the project root, or cd in first (the forge job does). --working-dir only
-   locates gradle.properties for metadata.
+   Both ./gradlew invocations and metadata use --working-dir. Inherited JDK/SDK
+   runtime settings remain available; this command is not a build sandbox.
 
 EXAMPLE:
    cd app && reusable-ci build gradle-android run --build-types release --include-aab --enable-signing`,
 		Flags: []cli.Flag{
-			&cli.StringFlag{Name: flagWorkingDir, Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "directory of gradle.properties to read for metadata; ./gradlew itself runs in the current directory (cd in first)"},
+			&cli.StringFlag{Name: flagWorkingDir, Value: ".", Sources: cli.EnvVars("WORKING_DIRECTORY"), Usage: "project directory for metadata, the Gradle build and Build SBOM"},
 			&cli.BoolFlag{Name: "include-date", Value: true, Sources: cli.EnvVars("INCLUDE_DATE_STAMP"), Usage: "append a YYYYMMDD-HHMMSS stamp to the artifact name"},
 			&cli.StringFlag{Name: "prefix", Sources: cli.EnvVars("ARTIFACT_NAME_PREFIX"), Usage: "optional prefix prepended to every artifact name"},
 			&cli.StringFlag{Name: flagRepositoryName, Sources: cli.EnvVars("REPOSITORY_NAME"), Usage: "repository basename used in the default name"},
@@ -67,7 +72,7 @@ EXAMPLE:
 			&cli.BoolFlag{Name: flagSkipTests, Sources: cli.EnvVars("SKIP_TESTS"), Usage: usageSkipTestTask},
 			&cli.BoolFlag{Name: flagBuildSBOM, Value: true, Sources: cli.EnvVars("ENABLE_BUILD_SBOM"), Usage: "generate the cyclonedx-gradle-plugin Build SBOM (default true)"},
 			&cli.StringFlag{Name: flagSBOMToolVersion, Sources: cli.EnvVars("CYCLONEDX_GRADLE_VERSION"), Usage: "pinned cyclonedx-gradle-plugin version (required when --build-sbom)"},
-			&cli.StringFlag{Name: flagTempDir, Sources: cienv.TempDir(), Usage: "scratch directory the signing keystore is decoded into, outside the project dir"},
+			&cli.StringFlag{Name: flagTempDir, Sources: cienv.TempDir(), Usage: "existing scratch parent for a private signing directory, outside the project dir"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			keystoreBase64, err := secret.Resolve(cmd.String("keystore-base64-file"), "ANDROID_KEYSTORE_BASE64")
@@ -81,7 +86,7 @@ EXAMPLE:
 			}
 
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
-				return appbuild.AndroidReleaseBuild(ctx, d.OutputSink, d.SummarySink, gradle.New(), deps.Annotator(cmd), os.Stderr, os.Stderr, appbuild.AndroidReleaseBuildInput{
+				return appbuild.AndroidReleaseBuild(ctx, d.OutputSink, d.SummarySink, ops, deps.Annotator(cmd), os.Stderr, os.Stderr, appbuild.AndroidReleaseBuildInput{
 					ReleaseBuildOptions: appbuild.ReleaseBuildOptions{
 						Dir:             cmd.String(flagWorkingDir),
 						ArtifactName:    cmd.String("name-override"),
@@ -95,6 +100,9 @@ EXAMPLE:
 					ProductFlavor:           cmd.String(flagFlavor),
 					EnableSigning:           cmd.Bool("enable-signing"),
 					KeystoreBase64:          keystoreBase64,
+					KeystorePassword:        os.Getenv("ANDROID_KEYSTORE_PASSWORD"),
+					KeyAlias:                os.Getenv("ANDROID_KEY_ALIAS"),
+					KeyPassword:             os.Getenv("ANDROID_KEY_PASSWORD"),
 					SecretsPropertiesBase64: secretsBase64,
 					GradleTasksOverride:     cmd.String("tasks-override"),
 					BuildTypes:              cmd.String("build-types"),

@@ -6,6 +6,7 @@ package validate
 import (
 	"context"
 	"os"
+	"strings"
 
 	"github.com/urfave/cli/v3"
 
@@ -21,7 +22,7 @@ import (
 
 // authGroup wires `reusable-ci validate auth <verb>` — release-flow
 // authentication checks: probe a release-bot token against the
-// platform API, probe the bot's repo/branch access, gate non-SNAPSHOT
+// platform API, probe the bot's repo/branch access, gate production
 // releases via the bot-permissions API, and presence-check the
 // container/package registry password before a publish step runs.
 func authGroup() *cli.Command {
@@ -122,9 +123,10 @@ func authRegistryCmd() *cli.Command {
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
 			annot := deps.Annotator(cmd)
-			// Presence-check on $REGISTRY_PASSWORD via env (the value
-			// never reaches argv).
-			hasPassword := os.Getenv("REGISTRY_PASSWORD") != ""
+			// Presence-check via env (the value never reaches argv), on the
+			// same names `container login` resolves the password from.
+			// A blank value is missing, as the other credential checks treat it.
+			hasPassword := strings.TrimSpace(os.Getenv("REGISTRY_TOKEN")) != "" || strings.TrimSpace(os.Getenv("REGISTRY_PASSWORD")) != ""
 
 			return apppublish.RegistryAuth(ctx, os.Stderr, os.Stderr, annot, publish.RegistryAuthInput{
 				UseCIToken:       cmd.Bool("use-ci-token"),

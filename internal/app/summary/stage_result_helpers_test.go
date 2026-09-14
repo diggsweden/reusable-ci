@@ -11,11 +11,37 @@ import (
 func stageResultJSON(t *testing.T, stage string, targets map[string]string) string {
 	t.Helper()
 
+	ran := false
+	result := "skipped"
+
+	for _, status := range targets {
+		switch status {
+		case "failure":
+			result = "failure"
+			ran = true
+		case "cancelled":
+			if result != "failure" {
+				result = "cancelled"
+			}
+
+			ran = true
+		case "success":
+			if result == "skipped" {
+				result = "success"
+			}
+
+			ran = true
+		case "skipped":
+		default:
+			t.Fatalf("unknown fixture result %q", status)
+		}
+	}
+
 	body, err := json.Marshal(map[string]any{
 		"version": 1,
 		"stage":   stage,
-		"result":  "success", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-		"ran":     true,
+		"result":  result,
+		"ran":     ran,
 		"targets": targets,
 	})
 	if err != nil {

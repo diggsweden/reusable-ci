@@ -7,11 +7,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	domaingit "github.com/diggsweden/reusable-ci/v3/internal/domain/git"
 	domainversion "github.com/diggsweden/reusable-ci/v3/internal/domain/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
@@ -31,14 +36,15 @@ type changelogRenderGit interface {
 }
 
 type changelogRenderer interface {
-	RenderFull(ctx context.Context, backend, config, tag, outputPath string) error
-	RenderBody(ctx context.Context, backend, config, tag string) (string, error)
+	RenderFull(ctx context.Context, backend, config, tag, outputPath, repositoryURL string) error
+	RenderBody(ctx context.Context, backend, config, tag, repositoryURL string) (string, error)
 }
 
 // ChangelogRenderInput drives `reusable-ci version render-changelog`.
 type ChangelogRenderInput struct {
 	Backend                string // git-chglog or git-cliff; empty defaults to git-chglog
 	Tag                    string // final stable release tag
+	RepositoryURL          string // canonical HTTPS web URL used in generated changelog links
 	Remote                 string // empty defaults to origin
 	Branch                 string // empty defaults to main
 	ChangelogConfig        string
@@ -73,10 +79,6 @@ func ChangelogRender(ctx context.Context, repo changelogRenderGit, renderer chan
 		return nil, fmt.Errorf("render-changelog: fetch %s %s: %w", in.Remote, in.Branch, err)
 	}
 
-	if err := repo.Checkout(ctx, in.Branch); err != nil {
-		return nil, fmt.Errorf("render-changelog: checkout %s: %w", in.Branch, err)
-	}
-
 	reused, err := tryExistingReleaseRecovery(ctx, repo, out, in)
 	if err != nil {
 		return nil, err
@@ -84,6 +86,10 @@ func ChangelogRender(ctx context.Context, repo changelogRenderGit, renderer chan
 
 	if reused != "" {
 		return &ChangelogRenderOutput{ExistingReleaseSHA: reused}, nil
+	}
+
+	if err = repo.Checkout(ctx, in.Branch); err != nil {
+		return nil, fmt.Errorf("render-changelog: checkout %s: %w", in.Branch, err)
 	}
 
 	if err = warnExistingBump(ctx, repo, out, in); err != nil {
@@ -121,7 +127,7 @@ func finalizeChangelogCommitFiles(ctx context.Context, repo changelogRenderGit, 
 
 // renderChangelogFull renders the full changelog file and reports its size.
 func renderChangelogFull(ctx context.Context, renderer changelogRenderer, out io.Writer, in ChangelogRenderInput) error {
-	if err := renderer.RenderFull(ctx, in.Backend, in.ChangelogConfig, in.Tag, in.ChangelogPath); err != nil {
+	if err := renderer.RenderFull(ctx, in.Backend, in.ChangelogConfig, in.Tag, in.ChangelogPath, in.RepositoryURL); err != nil {
 		return fmt.Errorf("render-changelog: render %s with %s: %w", in.ChangelogPath, in.Backend, err)
 	}
 
@@ -138,16 +144,19 @@ func renderChangelogFull(ctx context.Context, renderer changelogRenderer, out io
 // writeCommitMessageFiles renders the commit body and writes the commit-body
 // and commit-message files consumed by the later signing step.
 func writeCommitMessageFiles(ctx context.Context, renderer changelogRenderer, in ChangelogRenderInput) error {
-	body, err := renderer.RenderBody(ctx, in.Backend, in.CommitBodyConfig, in.Tag)
+	body, err := renderer.RenderBody(ctx, in.Backend, in.CommitBodyConfig, in.Tag, in.RepositoryURL)
 	if err != nil {
 		return fmt.Errorf("render-changelog: render commit body with %s: %w", in.Backend, err)
 	}
 
-	if err := os.WriteFile(in.CommitBodyPath, []byte(body), 0o644); err != nil { //nolint:gosec // non-secret commit body consumed by later CI steps.
+	// Atomic replacement: a failed or interrupted write never leaves a
+	// truncated message for the signing step, and a symlink planted at either
+	// path in the checkout is replaced rather than followed.
+	if err := cliio.WriteFile(in.CommitBodyPath, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("render-changelog: write %s: %w", in.CommitBodyPath, err)
 	}
 
-	if err := os.WriteFile(in.CommitMessagePath, []byte(commitMessage(in.Tag, body, in.CommitTrailers)), 0o644); err != nil { //nolint:gosec // non-secret commit message consumed by later CI steps.
+	if err := cliio.WriteFile(in.CommitMessagePath, []byte(commitMessage(in.Tag, body, in.CommitTrailers)), 0o644); err != nil {
 		return fmt.Errorf("render-changelog: write %s: %w", in.CommitMessagePath, err)
 	}
 
@@ -155,15 +164,8 @@ func writeCommitMessageFiles(ctx context.Context, renderer changelogRenderer, in
 }
 
 func validateChangelogRenderInput(in ChangelogRenderInput) error {
-	switch {
-	case in.Tag == "":
-		return fmt.Errorf("render-changelog: tag is required: %w", errs.ErrUsage)
-	case strings.ContainsAny(in.Tag, "\n\r") || !domainversion.IsStableSemverTag(in.Tag):
-		return fmt.Errorf("render-changelog: tag must look like stable vMAJOR.MINOR.PATCH: %s: %w", in.Tag, errs.ErrValidation)
-	case in.ChangelogConfig == "":
-		return fmt.Errorf("render-changelog: changelog config is required: %w", errs.ErrUsage)
-	case in.CommitBodyConfig == "":
-		return fmt.Errorf("render-changelog: commit body config is required: %w", errs.ErrUsage)
+	if err := requiredChangelogRenderFields(in); err != nil {
+		return err
 	}
 
 	backend := in.Backend
@@ -175,7 +177,69 @@ func validateChangelogRenderInput(in ChangelogRenderInput) error {
 		return fmt.Errorf("render-changelog: backend must be git-chglog or git-cliff: %s: %w", backend, errs.ErrValidation)
 	}
 
+	return validateChangelogRepositoryURL(in.RepositoryURL)
+}
+
+// requiredChangelogRenderFields checks the inputs that must be present and
+// well-formed before any of the rendering decisions matter.
+func requiredChangelogRenderFields(in ChangelogRenderInput) error {
+	switch {
+	case in.Tag == "":
+		return fmt.Errorf("render-changelog: tag is required: %w", errs.ErrUsage)
+	case strings.ContainsAny(in.Tag, "\n\r") || !domainversion.IsStableSemverTag(in.Tag):
+		return fmt.Errorf("render-changelog: tag must look like stable vMAJOR.MINOR.PATCH: %s: %w", in.Tag, errs.ErrValidation)
+	case in.RepositoryURL == "":
+		return fmt.Errorf("render-changelog: repository URL is required: %w", errs.ErrUsage)
+	case in.ChangelogConfig == "":
+		return fmt.Errorf("render-changelog: changelog config is required: %w", errs.ErrUsage)
+	case in.CommitBodyConfig == "":
+		return fmt.Errorf("render-changelog: commit body config is required: %w", errs.ErrUsage)
+	}
+
 	return nil
+}
+
+func validateChangelogRepositoryURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("render-changelog: invalid repository URL: %w", errs.ErrValidation)
+	}
+
+	if !canonicalHTTPSURL(raw, parsed) || !ownerAndRepositoryPath(parsed.Path) {
+		return fmt.Errorf("render-changelog: repository URL must be canonical HTTPS without credentials, escapes, query, fragment, or trailing slash: %w", errs.ErrValidation)
+	}
+
+	return nil
+}
+
+// canonicalHTTPSURL reports whether the URL is the plain https://host/... form
+// this renderer embeds in a changelog: no credentials, no query, no fragment,
+// and no escaping that would make the rendered link differ from the input.
+func canonicalHTTPSURL(raw string, parsed *url.URL) bool {
+	return parsed.Scheme == "https" && parsed.Opaque == "" && parsed.Hostname() != "" && parsed.User == nil &&
+		parsed.RawQuery == "" && !parsed.ForceQuery && parsed.Fragment == "" && parsed.RawPath == "" &&
+		!strings.ContainsAny(raw, "\\?#") && parsed.EscapedPath() == parsed.Path
+}
+
+// ownerAndRepositoryPath reports whether the path names at least an owner and a
+// repository, with no empty, dot or trailing segment.
+func ownerAndRepositoryPath(path string) bool {
+	if strings.HasSuffix(path, "/") {
+		return false
+	}
+
+	segments := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	if len(segments) < 2 {
+		return false
+	}
+
+	for _, segment := range segments {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+
+	return true
 }
 
 func withChangelogRenderDefaults(in ChangelogRenderInput) ChangelogRenderInput {
@@ -192,7 +256,7 @@ func withChangelogRenderDefaults(in ChangelogRenderInput) ChangelogRenderInput {
 	}
 
 	if in.ChangelogPath == "" {
-		in.ChangelogPath = "CHANGELOG.md"
+		in.ChangelogPath = defaultChangelogFile
 	}
 
 	if in.CommitBodyPath == "" {
@@ -210,7 +274,7 @@ func withChangelogRenderDefaults(in ChangelogRenderInput) ChangelogRenderInput {
 	return in
 }
 
-func tryExistingReleaseRecovery(ctx context.Context, repo changelogRenderGit, out io.Writer, in ChangelogRenderInput) (string, error) {
+func tryExistingReleaseRecovery(ctx context.Context, repo changelogRenderGit, out io.Writer, in ChangelogRenderInput) (string, error) { //nolint:cyclop // verify immutable identity, complete checkout, then atomically publish the marker.
 	remoteCommit, exists, err := repo.RemoteTagCommitIfExists(ctx, in.Remote, in.Tag, in.Token)
 	if err != nil {
 		return "", fmt.Errorf("render-changelog: resolve remote tag %s: %w", in.Tag, err)
@@ -220,27 +284,40 @@ func tryExistingReleaseRecovery(ctx context.Context, repo changelogRenderGit, ou
 		return "", nil
 	}
 
-	_ = remoteCommit
-
 	if err = repo.FetchTagForceFromRemote(ctx, in.Remote, in.Tag, in.Token); err != nil {
 		return "", fmt.Errorf("render-changelog: fetch existing release tag %s: %w", in.Tag, err)
 	}
 
-	sha, err := repo.RevParse(ctx, in.Tag+"^{commit}")
+	sha, err := repo.RevParse(ctx, "refs/tags/"+in.Tag+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("render-changelog: resolve existing release tag commit: %w", err)
+	}
+
+	if !domaingit.ValidCommitSHA(remoteCommit) || sha != remoteCommit {
+		return "", fmt.Errorf("render-changelog: immutable release tag moved between observation and fetch: %w", errs.ErrValidation)
 	}
 
 	if err = verifyExistingReleaseCommit(ctx, repo, in, sha); err != nil {
 		return "", err
 	}
 
-	if err = os.WriteFile(in.ExistingReleaseSHAPath, []byte(sha+"\n"), 0o644); err != nil { //nolint:gosec // non-secret recovery marker consumed by later CI steps.
+	if err = repo.Checkout(ctx, sha); err != nil {
+		return "", fmt.Errorf("render-changelog: checkout existing release commit: %w", err)
+	}
+
+	stage, err := pathsafe.NewArtifactStaging(filepath.Dir(in.ExistingReleaseSHAPath))
+	if err != nil {
+		return "", err
+	}
+
+	defer func() { _ = stage.Close() }()
+
+	if err = stage.Root().WriteFile(filepath.Base(in.ExistingReleaseSHAPath), []byte(sha+"\n"), 0o644); err != nil {
 		return "", fmt.Errorf("render-changelog: write %s: %w", in.ExistingReleaseSHAPath, err)
 	}
 
-	if err = repo.Checkout(ctx, sha); err != nil {
-		return "", fmt.Errorf("render-changelog: checkout existing release commit: %w", err)
+	if err = stage.Install(); err != nil {
+		return "", fmt.Errorf("publish recovery marker: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(out, "Existing final release tag detected for %s; reusing %s for same-version recovery.\n", in.Tag, sha)

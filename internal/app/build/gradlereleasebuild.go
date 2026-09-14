@@ -5,10 +5,12 @@ package build
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	appsummary "github.com/diggsweden/reusable-ci/v3/internal/app/summary"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
@@ -52,12 +54,28 @@ type gradleDeps struct {
 // SBOM (unless disabled), and write the SBOM-status + build summaries.
 //
 // It is the Gradle sibling of GoReleaseBuild — the binary-owned build sequence
-// (Design Rule 1). ./gradlew runs in the process working directory (the forge
-// job's working-directory). The SBOM is best-effort (failure warns + reports
-// failure status but does not fail the build).
+// (Design Rule 1). Every Gradle invocation uses the selected project directory.
+// Enabled Build SBOM generation is mandatory: a
+// failure is summarized and returned so the release fails closed.
 //
 //nolint:varnamelen // idiomatic short names (w/in) — testing/http/io conventions, matching the sibling build funcs.
 func GradleReleaseBuild(ctx context.Context, summarySink ci.SummarySink, ops GradleOps, w, stderr io.Writer, in GradleReleaseBuildInput) error {
+	dir, err := filepath.Abs(defaultDir(in.Dir))
+	if err != nil {
+		return err
+	}
+
+	in.Dir = dir
+	ops = projectGradle{GradleOps: ops, dir: dir}
+
+	if strings.TrimSpace(in.Tasks) == "" {
+		return fmt.Errorf("gradle tasks are required: %w", errs.ErrUsage)
+	}
+
+	if in.EnableBuildSBOM && strings.TrimSpace(in.SBOMToolVersion) == "" {
+		return fmt.Errorf("SBOM tool version is required: %w", errs.ErrUsage)
+	}
+
 	if err := makeGradlewExecutable(in.Dir); err != nil {
 		return err
 	}
@@ -103,12 +121,13 @@ func makeGradlewExecutable(dir string) error {
 func gradleSBOMStep(ctx context.Context, deps gradleDeps, in GradleReleaseBuildInput) error {
 	outcome := outcomeSkipped
 
+	var generationErr error
+
 	if in.EnableBuildSBOM {
 		outcome = outcomeSuccess
 		if err := gradleBuildSBOM(ctx, deps, in); err != nil {
 			outcome = outcomeFailure
-
-			_, _ = fmt.Fprintf(deps.stderr, "WARN: Gradle Build SBOM generation failed (continuing): %v\n", err)
+			generationErr = fmt.Errorf("gradle Build SBOM generation failed: %w", err)
 		}
 	}
 
@@ -117,7 +136,11 @@ func gradleSBOMStep(ctx context.Context, deps gradleDeps, in GradleReleaseBuildI
 		Outcome:   outcome,
 		WorkDir:   defaultDir(in.Dir),
 	}); err != nil {
-		return fmt.Errorf("write SBOM status: %w", err)
+		return errors.Join(generationErr, fmt.Errorf("write SBOM status: %w", err))
+	}
+
+	if generationErr != nil {
+		return generationErr
 	}
 
 	return nil

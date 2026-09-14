@@ -1,125 +1,136 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-// Package platform holds the use cases behind `reusable-ci platform`: getting
-// a repository onto the runner, and reporting what the runner has.
-//
-// One file per subcommand: checkout.go, resolve_ref.go and workspace.go for
-// `checkout`, `resolve-ref` and `debug-workspace`. A new `platform` subcommand
-// gets a new file here.
-//
-// Not to be confused with two neighbours it sits close to in a listing:
-// domain/ci holds the sink ports, and adapters/platform reads the environment
-// to decide which forge is running.
+// Package platform orchestrates checkout and workspace diagnostics.
 package platform
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
-// DebugWorkspaceInput drives DebugWorkspace.
+// DebugWorkspaceInput describes the workspace and diagnostic action context.
 type DebugWorkspaceInput struct {
-	// Root is the workspace root. Empty → cwd.
-	Root string
-	// ActionRepository / ActionRef are passed through from the workflow
-	// for reproducibility ($ACTION_REPOSITORY / $ACTION_REF).
+	Root             string // empty defaults to cwd
 	ActionRepository string
 	ActionRef        string
 }
 
-// DebugWorkspace prints the workspace listing, the .github-shared/
-// listing if present, validate-* script paths, and the github action
-// context.
-func DebugWorkspace(w io.Writer, in DebugWorkspaceInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	root := in.Root
-	if root == "" {
-		var err error
+// DebugWorkspace lists only descriptor-rooted workspace entries. It validates
+// the complete listing before writing so a bad shared tree cannot half-report.
+func DebugWorkspace(out io.Writer, in DebugWorkspaceInput) error { //nolint:cyclop // two rooted listings and a checked script walk complete before output.
+	if out == nil {
+		return fmt.Errorf("debug-workspace: output writer is required: %w", errs.ErrUsage)
+	}
 
-		root, err = os.Getwd()
-		if err != nil {
-			return fmt.Errorf("getwd: %w", err)
+	dir := in.Root
+	if dir == "" {
+		dir = "."
+	}
+
+	root, err := pathsafe.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = root.Close() }()
+
+	var body bytes.Buffer
+	fmt.Fprintln(&body, "=== Workspace structure ===")
+
+	if listErr := listDirVerbose(&body, root); listErr != nil {
+		return listErr
+	}
+
+	fmt.Fprintln(&body, "\n=== .github-shared structure ===")
+
+	var scripts []string
+
+	shared, err := pathsafe.OpenRoot(filepath.Join(root.Name(), ".github-shared"))
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		fmt.Fprintln(&body, ".github-shared not found")
+	case err != nil:
+		return err
+	default:
+		defer func() { _ = shared.Close() }()
+
+		if listErr := listDirVerbose(&body, shared); listErr != nil {
+			return listErr
 		}
-	}
 
-	_, _ = fmt.Fprintln(w, "=== Workspace structure ===")
-	listDirVerbose(w, root)
-
-	_, _ = fmt.Fprintln(w, "")
-	_, _ = fmt.Fprintln(w, "=== .github-shared structure ===")
-
-	shared := filepath.Join(root, ".github-shared")
-	if _, err := os.Stat(shared); err == nil {
-		listDirVerbose(w, shared)
-	} else {
-		_, _ = fmt.Fprintln(w, ".github-shared not found")
-	}
-
-	_, _ = fmt.Fprintln(w, "")
-	_, _ = fmt.Fprintln(w, "=== Looking for scripts ===")
-
-	found := false
-
-	if _, err := os.Stat(shared); err == nil {
-		_ = filepath.WalkDir(shared, func(path string, d fs.DirEntry, err error) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-			if err != nil {
-				slog.Debug("DebugWorkspace: skipping unreadable entry", "path", path, "err", err)
-
-				return nil
+		if walkErr := fs.WalkDir(shared.FS(), ".", func(path string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
 			}
 
-			if d.IsDir() {
-				return nil
+			if entry.Type()&fs.ModeSymlink != 0 {
+				return fmt.Errorf("workspace diagnostic tree contains a link: %w", errs.ErrValidation)
 			}
 
-			name := d.Name()
-			if strings.HasPrefix(name, "validate-") && strings.HasSuffix(name, ".sh") {
-				_, _ = fmt.Fprintln(w, path)
-
-				found = true
+			if entry.Type().IsRegular() && strings.HasPrefix(entry.Name(), "validate-") && strings.HasSuffix(entry.Name(), ".sh") {
+				scripts = append(scripts, filepath.Join(shared.Name(), path))
 			}
 
 			return nil
-		})
+		}); walkErr != nil {
+			return walkErr
+		}
 	}
 
-	if !found {
-		_, _ = fmt.Fprintln(w, "No scripts found")
+	fmt.Fprintln(&body, "\n=== Looking for scripts ===")
+
+	for _, path := range scripts {
+		fmt.Fprintln(&body, workspaceText(path))
 	}
 
-	_, _ = fmt.Fprintln(w, "")
-	_, _ = fmt.Fprintln(w, "=== GitHub context ===")
-	_, _ = fmt.Fprintf(w, "action_repository: %s\n", in.ActionRepository)
-	_, _ = fmt.Fprintf(w, "action_ref: %s\n", in.ActionRef)
+	if len(scripts) == 0 {
+		fmt.Fprintln(&body, "No scripts found")
+	}
+
+	fmt.Fprintln(&body, "\n=== GitHub context ===")
+	fmt.Fprintf(&body, "action_repository: %s\naction_ref: %s\n", workspaceText(in.ActionRepository), workspaceText(in.ActionRef))
+	_, err = io.Copy(out, &body)
+
+	return err
+}
+
+func listDirVerbose(out io.Writer, root *os.Root) error {
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+
+		if _, err := fmt.Fprintf(out, "%s %8d %s\n", info.Mode(), info.Size(), workspaceText(entry.Name())); err != nil {
+			return err
+		}
+	}
 
 	return nil
 }
 
-// listDirVerbose prints a `ls -la`-shaped listing. The bash uses real
-// `ls -la` output for visual fidelity; this is a coarser equivalent
-// (mode + size + name) since the Go port doesn't need pixel-perfect
-// match for a debug helper.
-func listDirVerbose(out io.Writer, dir string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		_, _ = fmt.Fprintf(out, "(error reading %s: %v)\n", dir, err)
-
-		return
+func workspaceText(value string) string {
+	if !utf8.ValidString(value) || strings.ContainsFunc(value, unicode.IsControl) {
+		return strconv.QuoteToASCII(value)
 	}
 
-	for _, e := range entries { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		info, err := e.Info()
-		if err != nil {
-			_, _ = fmt.Fprintf(out, "?  %s\n", e.Name())
-
-			continue
-		}
-
-		_, _ = fmt.Fprintf(out, "%s %8d %s\n", info.Mode(), info.Size(), e.Name())
-	}
+	return value
 }

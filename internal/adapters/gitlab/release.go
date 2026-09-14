@@ -20,6 +20,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // contentTypeJSON is the request Content-Type for GitLab's JSON endpoints.
@@ -58,6 +59,10 @@ func releasePayload(spec provider.ReleaseSpec, desc string, includeTag bool) map
 //
 //nolint:cyclop // REST flow: delete-if-exists → create release → upload + link each asset.
 func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider.ReleaseSpec) error {
+	if err := validateReleaseSpec(spec); err != nil {
+		return err
+	}
+
 	if spec.Tag == "" {
 		return fmt.Errorf("CreateRelease: tag is empty: %w", errs.ErrUsage)
 	}
@@ -66,17 +71,20 @@ func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider
 		return fmt.Errorf("CreateRelease: repo is empty: %w", errs.ErrUsage)
 	}
 
+	if len(spec.Assets) > 0 {
+		if err := p.requireReleaseAssetUploadToken("CreateRelease"); err != nil {
+			return err
+		}
+	}
+
 	apiBase, headers := p.apiContext()
 	headers["Content-Type"] = contentTypeJSON
 	encoded := url.PathEscape(repo)
 	endpoint := projectEndpoint(apiBase, repo) + "/releases"
 
-	desc := spec.Name
-	if spec.NotesFile != "" {
-		body, err := os.ReadFile(spec.NotesFile)
-		if err == nil {
-			desc = string(body)
-		}
+	desc, err := releaseDescription(spec)
+	if err != nil {
+		return err
 	}
 
 	payload, err := json.Marshal(releasePayload(spec, desc, true))
@@ -118,6 +126,10 @@ func (p *Provider) CreateRelease(ctx context.Context, repo string, spec provider
 // assets are uploaded and linked, and links no longer in spec.Assets are
 // removed. It satisfies the provider.ReleasePublisher role.
 func (p *Provider) PublishRelease(ctx context.Context, repo string, spec provider.ReleaseSpec) error {
+	if err := validateReleaseSpec(spec); err != nil {
+		return err
+	}
+
 	if spec.Tag == "" {
 		return fmt.Errorf("PublishRelease: tag is empty: %w", errs.ErrUsage)
 	}
@@ -126,14 +138,18 @@ func (p *Provider) PublishRelease(ctx context.Context, repo string, spec provide
 		return fmt.Errorf("PublishRelease: repo is empty: %w", errs.ErrUsage)
 	}
 
+	if len(spec.Assets) > 0 {
+		if err := p.requireReleaseAssetUploadToken("PublishRelease"); err != nil {
+			return err
+		}
+	}
+
 	apiBase, headers := p.apiContext()
 	encoded := url.PathEscape(repo)
 
-	desc := spec.Name
-	if spec.NotesFile != "" {
-		if body, err := os.ReadFile(spec.NotesFile); err == nil {
-			desc = string(body)
-		}
+	desc, err := releaseDescription(spec)
+	if err != nil {
+		return err
 	}
 
 	if err := p.upsertRelease(ctx, apiBase, encoded, spec, desc, headers); err != nil {
@@ -147,6 +163,45 @@ func (p *Provider) PublishRelease(ctx context.Context, repo string, spec provide
 	}
 
 	return p.deleteStaleReleaseLinks(ctx, apiBase, encoded, spec.Tag, spec.Assets, headers)
+}
+
+func validateReleaseSpec(spec provider.ReleaseSpec) error {
+	if spec.Draft || spec.Prerelease {
+		return fmt.Errorf("GitLab releases do not support draft or prerelease flags: %w", errs.ErrUnsupported)
+	}
+
+	return validateLocalReleaseAssets(spec.Assets)
+}
+
+func validateLocalReleaseAssets(files []string) error {
+	seen := map[string]bool{}
+
+	for _, file := range files {
+		base := filepath.Base(file)
+		if seen[base] {
+			return fmt.Errorf("duplicate release asset basename: %w", errs.ErrValidation)
+		}
+
+		seen[base] = true
+
+		root, err := pathsafe.OpenRoot(filepath.Dir(file))
+		if err != nil {
+			return err
+		}
+
+		info, err := root.Lstat(base)
+		_ = root.Close()
+
+		if err != nil {
+			return err
+		}
+
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("release asset must be a regular file: %w", errs.ErrValidation)
+		}
+	}
+
+	return nil
 }
 
 // upsertRelease creates the release when it does not yet exist, otherwise
@@ -214,14 +269,9 @@ func (p *Provider) deleteStaleReleaseLinks(ctx context.Context, apiBase, encoded
 	linksEndpoint := strings.TrimRight(apiBase, "/") + "/api/v4/projects/" + encoded +
 		"/releases/" + url.PathEscape(tag) + "/assets/links"
 
-	body, err := getJSON(ctx, p.HTTPClient, linksEndpoint, headers)
+	links, err := p.listReleaseLinks(ctx, linksEndpoint, tag, headers)
 	if err != nil {
-		return fmt.Errorf("gitlab list release asset links for %s: %w", tag, err)
-	}
-
-	var links []gitlabReleaseLink
-	if err := json.Unmarshal(body, &links); err != nil {
-		return fmt.Errorf("gitlab parse release asset links for %s: %w", tag, err)
+		return err
 	}
 
 	desiredNames := make(map[string]struct{}, len(desired))
@@ -244,8 +294,8 @@ func (p *Provider) deleteStaleReleaseLinks(ctx context.Context, apiBase, encoded
 }
 
 // UploadReleaseAsset uploads a single file to GitLab project uploads, then links
-// the returned URL to the release identified by tag. Existing release links with
-// the same basename are deleted first to match GitHub's --clobber semantics.
+// the returned URL to the release identified by tag. An existing same-name link
+// is repointed only after the new bytes have uploaded successfully.
 func (p *Provider) UploadReleaseAsset(ctx context.Context, tag, file string) error {
 	if tag == "" {
 		return fmt.Errorf("UploadReleaseAsset: tag is empty: %w", errs.ErrUsage)
@@ -260,24 +310,33 @@ func (p *Provider) UploadReleaseAsset(ctx context.Context, tag, file string) err
 		return fmt.Errorf("UploadReleaseAsset: CI_PROJECT_PATH is required: %w", errs.ErrUsage)
 	}
 
+	if err := p.requireReleaseAssetUploadToken("UploadReleaseAsset"); err != nil {
+		return err
+	}
+
 	apiBase, headers := p.apiContext()
 	encoded := url.PathEscape(repo)
 
 	return p.uploadAndLinkReleaseAsset(ctx, apiBase, encoded, repo, tag, file, headers)
 }
 
+func (p *Provider) requireReleaseAssetUploadToken(operation string) error {
+	if strings.TrimSpace(p.envFunc()("GITLAB_TOKEN")) == "" {
+		return fmt.Errorf("%s: GITLAB_TOKEN is required for GitLab project uploads; CI_JOB_TOKEN does not support the project uploads API: %w", operation, errs.ErrPermissionDenied)
+	}
+
+	return nil
+}
+
 func (p *Provider) uploadAndLinkReleaseAsset(ctx context.Context, apiBase, encodedProject, repo, tag, file string, headers map[string]string) error {
 	name := filepath.Base(file)
-	if err := p.deleteExistingReleaseLink(ctx, apiBase, encodedProject, tag, name, headers); err != nil {
-		return err
-	}
 
 	assetURL, err := p.uploadProjectFile(ctx, apiBase, encodedProject, repo, file, headers)
 	if err != nil {
 		return err
 	}
 
-	return p.createReleaseLink(ctx, apiBase, encodedProject, tag, name, assetURL, headers)
+	return p.linkReleaseAsset(ctx, apiBase, encodedProject, tag, name, assetURL, headers)
 }
 
 type gitlabReleaseLink struct {
@@ -285,32 +344,44 @@ type gitlabReleaseLink struct {
 	Name string `json:"name"`
 }
 
-func (p *Provider) deleteExistingReleaseLink(ctx context.Context, apiBase, encodedProject, tag, name string, headers map[string]string) error {
-	linksEndpoint := strings.TrimRight(apiBase, "/") + "/api/v4/projects/" + encodedProject +
-		"/releases/" + url.PathEscape(tag) + "/assets/links"
-
-	body, err := getJSON(ctx, p.HTTPClient, linksEndpoint, headers)
-	if err != nil {
-		return fmt.Errorf("gitlab list release asset links for %s: %w", tag, err)
-	}
-
+// listReleaseLinks pages through a release's asset links. GitLab paginates the
+// list at 20 by default, so a single request left the links of a larger
+// release unseen: a same-name link on a later page was never replaced and a
+// stale one never removed. A short page is the last one.
+func (p *Provider) listReleaseLinks(ctx context.Context, linksEndpoint, tag string, headers map[string]string) ([]gitlabReleaseLink, error) {
 	var links []gitlabReleaseLink
-	if err := json.Unmarshal(body, &links); err != nil {
-		return fmt.Errorf("gitlab parse release asset links for %s: %w", tag, err)
-	}
 
-	for _, link := range links {
-		if link.Name != name {
-			continue
+	seen := make(map[int]bool)
+
+	for page := 1; ; page++ {
+		body, err := getJSON(ctx, p.HTTPClient, fmt.Sprintf("%s?per_page=%d&page=%d", linksEndpoint, gitlabPageSize, page), headers)
+		if err != nil {
+			return nil, fmt.Errorf("gitlab list release asset links for %s: %w", tag, err)
 		}
 
-		deleteEndpoint := linksEndpoint + "/" + strconv.Itoa(link.ID)
-		if err := deleteJSON(ctx, p.HTTPClient, deleteEndpoint, headers); err != nil {
-			return fmt.Errorf("gitlab delete existing release asset link %q: %w", name, err)
+		var batch []gitlabReleaseLink
+		if err := json.Unmarshal(body, &batch); err != nil {
+			return nil, fmt.Errorf("gitlab parse release asset links for %s: %w: %w", tag, err, errs.ErrMalformedInput)
+		}
+
+		// A server that ignores the page parameter answers every request
+		// with the same full page. Reconciliation would then act on a list
+		// of duplicates, so a link seen on an earlier page ends the listing
+		// as malformed rather than being collected again.
+		for _, link := range batch {
+			if seen[link.ID] {
+				return nil, fmt.Errorf("gitlab list release asset links for %s: page %d repeats link %d: %w", tag, page, link.ID, errs.ErrMalformedInput)
+			}
+
+			seen[link.ID] = true
+		}
+
+		links = append(links, batch...)
+
+		if len(batch) < gitlabPageSize {
+			return links, nil
 		}
 	}
-
-	return nil
 }
 
 type gitlabUploadResponse struct {
@@ -358,7 +429,19 @@ func gitlabUploadedAssetURL(apiBase, repo string, uploaded gitlabUploadResponse)
 	return ""
 }
 
-func (p *Provider) createReleaseLink(ctx context.Context, apiBase, encodedProject, tag, name, assetURL string, headers map[string]string) error {
+// linkReleaseAsset points the release's link for name at assetURL. An existing
+// same-name link is updated in place (GitLab refuses two links with one name),
+// so the release never lacks the asset: deleting it and then failing to create
+// the replacement used to leave no link at all.
+func (p *Provider) linkReleaseAsset(ctx context.Context, apiBase, encodedProject, tag, name, assetURL string, headers map[string]string) error {
+	linksEndpoint := strings.TrimRight(apiBase, "/") + "/api/v4/projects/" + encodedProject +
+		"/releases/" + url.PathEscape(tag) + "/assets/links"
+
+	links, err := p.listReleaseLinks(ctx, linksEndpoint, tag, headers)
+	if err != nil {
+		return err
+	}
+
 	linkPayload, err := json.Marshal(map[string]any{"name": name, "url": assetURL})
 	if err != nil {
 		return fmt.Errorf("gitlab marshal release asset link %q: %w", name, err)
@@ -371,8 +454,18 @@ func (p *Provider) createReleaseLink(ctx context.Context, apiBase, encodedProjec
 
 	linkHeaders["Content-Type"] = contentTypeJSON
 
-	linksEndpoint := strings.TrimRight(apiBase, "/") + "/api/v4/projects/" + encodedProject +
-		"/releases/" + url.PathEscape(tag) + "/assets/links"
+	for _, link := range links {
+		if link.Name != name {
+			continue
+		}
+
+		if err := putJSON(ctx, p.HTTPClient, linksEndpoint+"/"+strconv.Itoa(link.ID), linkHeaders, linkPayload); err != nil {
+			return fmt.Errorf("gitlab update release asset link %q: %w", name, err)
+		}
+
+		return nil
+	}
+
 	if err := postJSON(ctx, p.HTTPClient, linksEndpoint, linkHeaders, linkPayload); err != nil {
 		return fmt.Errorf("gitlab create release asset link %q: %w", name, err)
 	}
@@ -400,7 +493,7 @@ func postMultipartFile(ctx context.Context, client *http.Client, endpoint string
 		_ = reader.Close()
 		_ = writer.Close()
 
-		return nil, fmt.Errorf("build request: %w", err)
+		return nil, privateRequestError(err)
 	}
 
 	for k, v := range headers {
@@ -415,7 +508,9 @@ func postMultipartFile(ctx context.Context, client *http.Client, endpoint string
 
 	go streamMultipartFile(writer, multipartWriter, field, file, f)
 
-	resp, err := client.Do(req)
+	defer func() { _ = reader.Close() }()
+
+	resp, err := doRequest(client, req)
 	if err != nil {
 		return nil, err
 	}
@@ -455,17 +550,28 @@ func streamMultipartFile(writer *io.PipeWriter, multipartWriter *multipart.Write
 func readMultipartResponse(resp *http.Response) ([]byte, error) {
 	body, readErr := io.ReadAll(resp.Body)
 	if readErr != nil {
-		return nil, fmt.Errorf("read body: %w", readErr)
+		return nil, privateRequestError(readErr)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		cls := errs.FromHTTPStatus(resp.StatusCode)
-		if cls == nil {
-			cls = errs.ErrDependencyUnavailable
-		}
-
-		return nil, fmt.Errorf("HTTP %d: %s: %w", resp.StatusCode, string(body), cls)
+		return nil, responseStatusError(resp.StatusCode)
 	}
 
 	return body, nil
+}
+
+// releaseDescription is the release body: the notes file when set, else the
+// name. An unreadable notes file is an error, as it is for GitHub and
+// Forgejo: a release must not ship with its name as the body.
+func releaseDescription(spec provider.ReleaseSpec) (string, error) {
+	if spec.NotesFile == "" {
+		return spec.Name, nil
+	}
+
+	body, err := os.ReadFile(spec.NotesFile) //nolint:gosec // release notes path is a CLI-flag value.
+	if err != nil {
+		return "", fmt.Errorf("read release notes %q: %w", spec.NotesFile, err)
+	}
+
+	return string(body), nil
 }

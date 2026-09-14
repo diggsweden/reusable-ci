@@ -20,7 +20,7 @@ import (
 // SBOM generation.
 const distRoot = "dist"
 
-func findMavenJARs(ws workspace) []string {
+func findMavenJARs(ws workspace) ([]string, error) {
 	// Search ./release-artifacts → ./release-artifacts/target → ./target
 	jarFilter := func(name string) bool {
 		if !strings.HasSuffix(name, ".jar") {
@@ -37,28 +37,37 @@ func findMavenJARs(ws workspace) []string {
 		return true
 	}
 	for _, root := range []string{domainrelease.DefaultReleaseArtifactsDir, domainrelease.DefaultReleaseArtifactsDir + "/target", "target"} {
-		if hits := walkMatching(ws, root, jarFilter); len(hits) > 0 {
-			return hits
+		hits, err := walkMatching(ws, root, jarFilter)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(hits) > 0 {
+			return hits, nil
 		}
 	}
 
-	return nil
+	return nil, nil
 }
 
-func findNPMTarballs(ws workspace) []string {
+func findNPMTarballs(ws workspace) ([]string, error) {
 	for _, root := range []string{domainrelease.DefaultReleaseArtifactsDir, "."} {
-		hits := walkMatching(ws, root, func(name string) bool {
+		hits, err := walkMatching(ws, root, func(name string) bool {
 			return strings.HasSuffix(name, ".tgz")
 		})
+		if err != nil {
+			return nil, err
+		}
+
 		if len(hits) > 0 {
-			return hits
+			return hits, nil
 		}
 	}
 
-	return nil
+	return nil, nil
 }
 
-func findGradleJARs(ws workspace, name string) []string {
+func findGradleJARs(ws workspace, name string) ([]string, error) {
 	prefix := name + "-"
 
 	return walkMatching(ws, "build/libs", func(n string) bool { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -74,22 +83,30 @@ func findGradleJARs(ws workspace, name string) []string {
 	})
 }
 
-func findGoExecutables(ws workspace, name string) []string {
+func findGoExecutables(ws workspace, name string) ([]string, error) {
 	// GitHub artifact downloads do not preserve executable bits. Match the
 	// Go release/extraction names first, then keep the executable-bit fallback
 	// for local/direct runs.
 	for _, root := range []string{domainrelease.DefaultReleaseArtifactsDir, distRoot} {
-		hits := walkMatching(ws, root, func(n string) bool {
+		hits, err := walkMatching(ws, root, func(n string) bool {
 			return isGoBinaryName(n, name)
 		})
+		if err != nil {
+			return nil, err
+		}
+
 		if len(hits) > 0 {
-			return hits
+			return hits, nil
 		}
 	}
 
-	hits := walkExecutable(ws, domainrelease.DefaultReleaseArtifactsDir)
+	hits, err := walkExecutable(ws, domainrelease.DefaultReleaseArtifactsDir)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(hits) > 0 {
-		return hits
+		return hits, nil
 	}
 	// Fallback: cwd, by exact name (bash also accepts the binary name only).
 	return walkMatching(ws, ".", func(n string) bool { return n == name })
@@ -113,24 +130,33 @@ func isGoBinaryName(n, name string) bool { //nolint:varnamelen // idiomatic shor
 	return false
 }
 
-func findCargoExecutables(ws workspace, name string) []string {
+func findCargoExecutables(ws workspace, name string) ([]string, error) {
 	// Artifact-first cargo lands binaries in dist/<goos>-<goarch>/<name>-<goos>-<goarch>,
 	// matching the Go shape. GitHub artifact downloads do not preserve the
 	// executable bit, so name-pattern matching wins over a bit-check fallback.
 	for _, root := range []string{domainrelease.DefaultReleaseArtifactsDir, distRoot} {
-		hits := walkMatching(ws, root, func(n string) bool {
+		hits, err := walkMatching(ws, root, func(n string) bool {
 			return isRustBinaryName(n, name)
 		})
+		if err != nil {
+			return nil, err
+		}
+
 		if len(hits) > 0 {
-			return hits
+			return hits, nil
 		}
 	}
 
-	if hits := walkExecutable(ws, domainrelease.DefaultReleaseArtifactsDir); len(hits) > 0 {
-		return hits
+	hits, err := walkExecutable(ws, domainrelease.DefaultReleaseArtifactsDir)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(hits) > 0 {
+		return hits, nil
 	}
 	// Container-first cargo: cargo's own release tree.
-	return walkExecutableNoDebugInfo(ws, "target/release")
+	return listExecutableNoDebugInfo(ws, "target/release")
 }
 
 func isRustBinaryName(n, name string) bool { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -151,15 +177,19 @@ func isRustBinaryName(n, name string) bool { //nolint:varnamelen // idiomatic sh
 	return false
 }
 
-func findPythonWheels(ws workspace) []string {
+func findPythonWheels(ws workspace) ([]string, error) {
 	for _, root := range []string{domainrelease.DefaultReleaseArtifactsDir, distRoot} {
-		hits := walkMatching(ws, root, func(n string) bool {
+		hits, err := walkMatching(ws, root, func(n string) bool {
 			return strings.HasSuffix(n, ".whl") || strings.HasSuffix(n, ".tar.gz")
 		})
+		if err != nil {
+			return nil, err
+		}
+
 		if len(hits) > 0 {
-			return hits
+			return hits, nil
 		}
 	}
 
-	return nil
+	return nil, nil
 }

@@ -47,6 +47,7 @@
 package livetest
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -88,6 +89,11 @@ const (
 	frozenContractFactsEnv = "RC_LIVE_CONTRACT_FACTS"
 	frozenCAFactsEnv       = "RC_LIVE_CA_FACTS"
 	proxyBinaryEnv         = "RC_LIVE_CREDENTIAL_PROXY_BIN"
+	probeJSONBinaryEnv     = "RC_LIVE_PROBE_JSON_BIN"
+	runnerBinaryEnv        = "RC_LIVE_RUNNER_BIN"
+	runnerBinarySHA256Env  = "RC_LIVE_RUNNER_SHA256"
+	liveProfileEnv         = "RC_LIVE_PROFILE"
+	liveExpectedRoadEnv    = "RC_LIVE_EXPECT_ROAD"
 
 	// ownerEnvPrefix is how the operator declares which owner on each forge
 	// this run may act under. It is a consumer concern, so it lives in this
@@ -217,7 +223,7 @@ func Selected(tb TB, forge provider.ForgeAPI) bool {
 	}
 
 	_, err = selectedEndpointFor(contract, forge)
-	if err != nil && !strings.Contains(err.Error(), "selects no") {
+	if err != nil && !errors.Is(err, errNoEndpoint) {
 		tb.Fatalf("livetest: %v", err)
 	}
 
@@ -398,7 +404,7 @@ func validateTarget(target Target) error {
 		return fmt.Errorf("%s credential username is empty: %w", target.Forge, errs.ErrValidation)
 	}
 
-	if !ownerPattern.MatchString(target.Owner) || target.Owner == "." || target.Owner == ".." {
+	if !validOwner(target.Owner) {
 		return fmt.Errorf("owner %q is not a resource owner: %w", target.Owner, errs.ErrValidation)
 	}
 
@@ -777,7 +783,7 @@ func Identity(runID string, refs []targetRef, resourcePrefix string) (string, er
 			return "", err
 		}
 
-		if !ownerPattern.MatchString(ref.owner) {
+		if !validOwner(ref.owner) {
 			return "", fmt.Errorf("%s owner %q is not a resource owner: %w", ref.forge, ref.owner, errs.ErrValidation)
 		}
 
@@ -797,6 +803,13 @@ func Identity(runID string, refs []targetRef, resourcePrefix string) (string, er
 	sort.Strings(entries)
 
 	return "run=" + runID + "|targets=" + strings.Join(entries, ","), nil
+}
+
+// validOwner is the one owner rule for the acted-on target and for every entry
+// of the identity the operator confirms: a path segment of owner characters
+// that is not the current or parent directory.
+func validOwner(owner string) bool {
+	return ownerPattern.MatchString(owner) && owner != "." && owner != ".."
 }
 
 func identityEntry(forge, host, owner, resourcePrefix string) string {

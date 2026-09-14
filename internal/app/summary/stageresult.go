@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -59,7 +60,7 @@ type stagePlanTarget struct {
 // StageResult composes a stage-result manifest from any typed stage plan whose
 // targets object contains per-target runs flags.
 //
-//nolint:cyclop // envelope marshalling: one branch per stage-result field (provider × ecosystem × status).
+//nolint:cyclop,gocognit // complete preflight precedes target aggregation and the existing multi-sink publication sequence.
 func StageResult(
 	ctx context.Context,
 	out ci.OutputSink,
@@ -83,6 +84,28 @@ func StageResult(
 		return nil, err
 	}
 
+	if in.JSONOutputKey != "" && (in.JSONOutputKey != strings.TrimSpace(in.JSONOutputKey) || !isStageFieldName(in.JSONOutputKey)) {
+		return nil, fmt.Errorf("invalid json output key: %w", errs.ErrUsage)
+	}
+
+	switch in.JSONOutputKey {
+	case "stage-result", "stage-ran", "result-json":
+		return nil, fmt.Errorf("json output key %q is reserved: %w", in.JSONOutputKey, errs.ErrUsage)
+	}
+
+	extras, err := normalizedStagePairs("extra", in.Extras, reservedStageResultKeys())
+	if err != nil {
+		return nil, err
+	}
+
+	var jsonFields []domainsummary.KeyValue
+	if in.JSONOutputKey != "" {
+		jsonFields, err = normalizedStagePairs("json-field", in.JSONFields, nil)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	targetNames := make([]string, 0, len(plan.Targets))
 	for name := range plan.Targets {
 		targetNames = append(targetNames, name)
@@ -93,16 +116,6 @@ func StageResult(
 	resultByTarget, fromRecords, err := buildResultMap(ctx, jobs, targetNames, in)
 	if err != nil {
 		return nil, err
-	}
-
-	if _, err := keyValueMap("extra", in.Extras, reservedStageResultKeys()); err != nil {
-		return nil, err
-	}
-
-	if in.JSONOutputKey != "" {
-		if _, err := keyValueMap("json-field", in.JSONFields, nil); err != nil {
-			return nil, err
-		}
 	}
 
 	results := make([]domainsummary.Result, 0, len(targetNames))
@@ -146,7 +159,7 @@ func StageResult(
 		Stage:   plan.Stage,
 		Result:  domainsummary.StageResult(ran, results),
 		Ran:     ran,
-		Extras:  in.Extras,
+		Extras:  extras,
 		Targets: targets,
 	}
 	if err := emitStageOutputs(ctx, out, manifest, plan.Stage, env); err != nil {
@@ -154,7 +167,7 @@ func StageResult(
 	}
 
 	if in.JSONOutputKey != "" {
-		if err := emitJSONOutput(ctx, out, in.JSONOutputKey, in.JSONFields); err != nil {
+		if err := emitJSONOutput(ctx, out, in.JSONOutputKey, jsonFields); err != nil {
 			return nil, err
 		}
 	}
@@ -251,6 +264,20 @@ func collectRecords(ctx context.Context, jobs ci.JobResultStore, jobResultsMap s
 	return records, nil
 }
 
+func normalizedStagePairs(label string, kvs []domainsummary.KeyValue, reserved map[string]struct{}) ([]domainsummary.KeyValue, error) {
+	if _, err := keyValueMap(label, kvs, reserved); err != nil {
+		return nil, err
+	}
+
+	// Retain validated key spellings without changing caller storage or pair order.
+	normalized := slices.Clone(kvs)
+	for i := range normalized {
+		normalized[i].Key = strings.TrimSpace(normalized[i].Key)
+	}
+
+	return normalized, nil
+}
+
 func keyValueMap(label string, kvs []domainsummary.KeyValue, reserved map[string]struct{}) (map[string]string, error) {
 	m := make(map[string]string, len(kvs)) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	for _, kv := range kvs {
@@ -308,6 +335,7 @@ func plannedResult(result string, runs bool) (domainsummary.Result, error) {
 
 func reservedStageResultKeys() map[string]struct{} {
 	return map[string]struct{}{
+		"version": {},
 		"stage":   {},
 		"result":  {},
 		"ran":     {},
@@ -316,7 +344,6 @@ func reservedStageResultKeys() map[string]struct{} {
 }
 
 func isStageName(value string) bool {
-	value = strings.TrimSpace(value)
 	if value == "" {
 		return false
 	}
@@ -341,7 +368,6 @@ func isStageTargetName(value string) bool {
 }
 
 func isStageFieldName(value string) bool {
-	value = strings.TrimSpace(value)
 	if value == "" {
 		return false
 	}

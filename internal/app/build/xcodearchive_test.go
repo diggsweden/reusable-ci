@@ -6,14 +6,16 @@ package build_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
 
@@ -21,10 +23,15 @@ type fakeXcodeBuild struct {
 	calls    [][]string
 	exitCode int
 	err      error
+	run      func([]string)
 }
 
 func (f *fakeXcodeBuild) RunInherit(_ context.Context, _, _ io.Writer, args ...string) (int, error) {
 	f.calls = append(f.calls, args)
+	if f.run != nil {
+		f.run(args)
+	}
+
 	if f.err != nil {
 		return -1, f.err
 	}
@@ -34,6 +41,8 @@ func (f *fakeXcodeBuild) RunInherit(_ context.Context, _, _ io.Writer, args ...s
 
 func TestXcodeArchive_WorkspaceArgComposition(t *testing.T) {
 	fsys := testfs.NewReal(t)
+	fsys.MkdirAll("App.xcworkspace")
+	fsys.WriteFile("Config.xcconfig", []byte("SETTING = value\n"))
 	tmp := fsys.Root
 	fsys.Chdir()
 
@@ -69,7 +78,7 @@ func TestXcodeArchive_WorkspaceArgComposition(t *testing.T) {
 		"-xcconfig", "Config.xcconfig",
 		"CURRENT_PROJECT_VERSION=42",
 	}
-	if !reflect.DeepEqual(ops.calls[0], want) {
+	if !slices.Equal(ops.calls[0], want) {
 		t.Errorf("xcodebuild args =\n%q\nwant\n%q", ops.calls[0], want)
 	}
 
@@ -90,6 +99,7 @@ func TestXcodeArchive_WorkspaceArgComposition(t *testing.T) {
 
 func TestXcodeArchive_ProjectFallback(t *testing.T) {
 	fsys := testfs.NewReal(t)
+	fsys.MkdirAll("App.xcodeproj")
 	fsys.Chdir()
 
 	ops := &fakeXcodeBuild{}
@@ -115,7 +125,7 @@ func TestXcodeArchive_ProjectFallback(t *testing.T) {
 		"-destination", "generic/platform=iOS",
 		"-skipPackagePluginValidation",
 	}
-	if !reflect.DeepEqual(ops.calls[0], want) {
+	if !slices.Equal(ops.calls[0], want) {
 		t.Errorf("xcodebuild args =\n%q\nwant\n%q", ops.calls[0], want)
 	}
 
@@ -124,15 +134,33 @@ func TestXcodeArchive_ProjectFallback(t *testing.T) {
 	}
 }
 
+// Each of the three decides what is built: without a scheme xcodebuild
+// picks one, and without a destination it builds for the host. Both would
+// produce an archive that is not the release.
 func TestXcodeArchive_RequiresSchemeConfigurationDestination(t *testing.T) {
-	cases := []appbuild.XcodeArchiveInput{
-		{Configuration: "Release", Destination: "generic/platform=iOS"}, // no scheme
-		{Scheme: "App", Destination: "generic/platform=iOS"},            // no config
-		{Scheme: "App", Configuration: "Release"},                       // no destination
-	}
-	for i, c := range cases {
-		if err := appbuild.XcodeArchive(context.Background(), &fakeXcodeBuild{}, io.Discard, io.Discard, c); err == nil {
-			t.Errorf("case %d: expected error", i)
-		}
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		in   appbuild.XcodeArchiveInput
+	}{
+		{name: "no scheme", in: appbuild.XcodeArchiveInput{Configuration: "Release", Destination: "generic/platform=iOS"}},
+		{name: "no configuration", in: appbuild.XcodeArchiveInput{Scheme: "App", Destination: "generic/platform=iOS"}},
+		{name: "no destination", in: appbuild.XcodeArchiveInput{Scheme: "App", Configuration: "Release"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ops := &fakeXcodeBuild{}
+
+			err := appbuild.XcodeArchive(context.Background(), ops, io.Discard, io.Discard, tc.in)
+			if !errors.Is(err, errs.ErrUsage) {
+				t.Fatalf("err = %v, want ErrUsage", err)
+			}
+
+			if len(ops.calls) != 0 {
+				t.Errorf("ran xcodebuild on a refused input: %v", ops.calls)
+			}
+		})
 	}
 }

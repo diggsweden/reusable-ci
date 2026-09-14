@@ -11,6 +11,8 @@ import (
 )
 
 func TestValidateRegistryAuth_OKWithCITokenAndDefaultRegistry(t *testing.T) {
+	t.Parallel()
+
 	res := publish.ValidateRegistryAuth(publish.RegistryAuthInput{
 		UseCIToken: true, Registry: "ghcr.io", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
@@ -20,6 +22,8 @@ func TestValidateRegistryAuth_OKWithCITokenAndDefaultRegistry(t *testing.T) {
 }
 
 func TestValidateRegistryAuth_ErrorsWhenCustomAuthNoPassword(t *testing.T) {
+	t.Parallel()
+
 	res := publish.ValidateRegistryAuth(publish.RegistryAuthInput{
 		UseCIToken: false, Registry: "ghcr.io", HasPassword: false,
 	})
@@ -33,6 +37,8 @@ func TestValidateRegistryAuth_ErrorsWhenCustomAuthNoPassword(t *testing.T) {
 }
 
 func TestValidateRegistryAuth_WarnsOnCITokenWithCustomRegistry(t *testing.T) {
+	t.Parallel()
+
 	res := publish.ValidateRegistryAuth(publish.RegistryAuthInput{
 		UseCIToken: true, Registry: "https://npm.pkg.github.com",
 		ExpectedRegistry: "ghcr.io", HasPassword: false,
@@ -47,6 +53,8 @@ func TestValidateRegistryAuth_WarnsOnCITokenWithCustomRegistry(t *testing.T) {
 }
 
 func TestValidateRegistryAuth_DefaultsExpectedRegistryToGHCR(t *testing.T) {
+	t.Parallel()
+
 	res := publish.ValidateRegistryAuth(publish.RegistryAuthInput{
 		UseCIToken: true, Registry: "https://other.example",
 	})
@@ -56,6 +64,8 @@ func TestValidateRegistryAuth_DefaultsExpectedRegistryToGHCR(t *testing.T) {
 }
 
 func TestValidateRegistryAuth_OKWithCustomAuthAndPasswordForCommonRegistries(t *testing.T) {
+	t.Parallel()
+
 	for _, registry := range []string{
 		"ghcr.io",
 		"docker.io",
@@ -77,6 +87,8 @@ func TestValidateRegistryAuth_OKWithCustomAuthAndPasswordForCommonRegistries(t *
 }
 
 func TestValidateRegistryAuth_CustomExpectedRegistryCases(t *testing.T) {
+	t.Parallel()
+
 	ok := publish.ValidateRegistryAuth(publish.RegistryAuthInput{
 		UseCIToken:       true,
 		Registry:         "custom.registry.io", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.

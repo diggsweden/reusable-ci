@@ -28,8 +28,21 @@ func TestRegistryAuth_MatchesRegistry(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		if got := auth.MatchesRegistry(tc.target); got != tc.want {
-			t.Errorf("MatchesRegistry(%q) = %v, want %v", tc.target, got, tc.want)
-		}
+		t.Run(tc.target, func(t *testing.T) {
+			t.Parallel()
+
+			if got := auth.MatchesRegistry(tc.target); got != tc.want {
+				t.Errorf("MatchesRegistry(%q) = %v, want %v", tc.target, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRegistryAuth_InvalidRegistriesNeverMatch(t *testing.T) {
+	t.Parallel()
+
+	auth := provider.RegistryAuth{Registry: "https://"}
+	if auth.MatchesRegistry("not a registry") {
+		t.Fatal("two invalid registry values matched")
 	}
 }

@@ -12,33 +12,31 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/dryrun"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
 )
 
 func ledgerRollbackCmd() *cli.Command {
 	return &cli.Command{
 		Name:  subCmdRollback,
-		Usage: "undo a stage's promotion: delete that stage's pointer tag(s) (e.g. :dev/:staging/:release) that still serve the entry's digest; the immutable :<version> tag is never touched",
+		Usage: "undo a release-tag promotion from its pre-promotion rollback journal",
 		Description: `EXAMPLE:
-   reusable-ci container ledger rollback --ledger release-images.json --tag v1.2.3 --stage release`,
+	   reusable-ci container ledger rollback --journal image-promotions.jsonl --tag v1.2.3`,
 		Flags: []cli.Flag{
-			ledgerPathFlag(),
 			releaseTagFlag(),
 			ledgerAuthFileFlag("registry auth file for the digest checks the rollback makes before deleting"),
-			stageFlag(),
-			stageRepoFlag(),
-			releaseTagsFromLedgerFlag(),
 			expectedImageRepositoryFlag(),
 			promotionJournalFlag(),
 			dryRunFlag(),
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return deps.FromCmd(ctx, cmd, func(dep *deps.Deps) error {
-				if journal := cmd.String("journal"); journal != "" {
-					return ledgerRollbackFromJournal(ctx, cmd, dep, journal)
-				}
+			journal := cmd.String("journal")
+			if journal == "" {
+				return fmt.Errorf("ledger rollback: --journal is required because rollback without pre-promotion state cannot prove tag ownership: %w", errs.ErrUsage)
+			}
 
-				return ledgerRollbackFromLedger(ctx, cmd, dep)
+			return deps.FromCmd(ctx, cmd, func(dep *deps.Deps) error {
+				return ledgerRollbackFromJournal(ctx, cmd, dep, journal)
 			})
 		},
 	}
@@ -58,33 +56,6 @@ func ledgerRollbackFromJournal(ctx context.Context, cmd *cli.Command, dep *deps.
 	}
 
 	return runPromotionJournalRollback(ctx, reg, records, cmd.String(flagTag), "ledger")
-}
-
-// ledgerRollbackFromLedger undoes a stage's promotion from the ledger
-// itself when no promotion journal is available.
-func ledgerRollbackFromLedger(ctx context.Context, cmd *cli.Command, dep *deps.Deps) error {
-	entries, err := ledgerEntriesFromCmd(cmd)
-	if err != nil {
-		return err
-	}
-
-	reg, err := cleanupReg(dep, dryrun.Enabled(cmd), ledgerRegistry(cmd))
-	if err != nil {
-		return err
-	}
-
-	stage := imageledger.Stage{
-		Name:                cmd.String("stage"),
-		TargetRepo:          cmd.String("stage-repo"),
-		UseEntryReleaseTags: cmd.Bool("release-tags-from-ledger"),
-	}
-	if err := imageledger.RollbackStage(ctx, reg, entries, cmd.String(flagTag), stage); err != nil {
-		return err
-	}
-
-	_, _ = fmt.Fprintf(os.Stderr, "ledger: rolled back %d entr(y/ies) for stage %q\n", len(entries), stage.Name)
-
-	return nil
 }
 
 // runPromotionJournalRollback is the shared rollback body for `ledger

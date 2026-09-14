@@ -8,12 +8,20 @@ import (
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/github"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
+
+// noEnv is a fixed, empty environment. github.New() reads os.Getenv, and a
+// Forgejo runner sets GITHUB_SERVER_URL for compatibility -- measured: with
+// GITHUB_SERVER_URL=https://codeberg.org the two tests below failed, one on the
+// issuer and one on PublicFulcioTrusted. The suite's expectations about
+// github.com must not depend on which forge happens to run it.
+func noEnv(string) string { return "" }
 
 func TestDescribe_GitHub(t *testing.T) {
 	t.Parallel()
 
-	info := github.New().Describe()
+	info := (&github.Provider{Env: noEnv}).Describe()
 	if info.DisplayName != "GitHub" {
 		t.Errorf("DisplayName = %q, want GitHub", info.DisplayName)
 	}
@@ -31,12 +39,53 @@ func TestDescribe_GitHub(t *testing.T) {
 	}
 }
 
+// TestCapabilities_GitHub compares the whole struct from a fixed environment.
+// The previous check read five fields and said "want all true", which was
+// neither what it checked nor true: ContainerTagDeletion and
+// ContainerPackageListing are false for this adapter, and a capability added
+// later would default to false with nothing noticing.
 func TestCapabilities_GitHub(t *testing.T) {
 	t.Parallel()
 
-	caps := github.New().Capabilities()
-	if !caps.SARIFUpload || !caps.Attestation || !caps.PublicFulcioTrusted || !caps.ReleaseAssets || !caps.RunArtifacts {
-		t.Errorf("Capabilities = %+v, want all true", caps)
+	want := provider.Capabilities{
+		SARIFUpload:         true,
+		Attestation:         true,
+		ReleaseAssets:       true,
+		RunArtifacts:        true,
+		MintsOIDCToken:      true,
+		PublicFulcioTrusted: true,
+		// GitHub's package API is not wired to the tag-deletion and listing
+		// roles, so base-image staging cleanup is not offered here.
+		ContainerTagDeletion:    false,
+		ContainerPackageListing: false,
+	}
+	if got := (&github.Provider{Env: noEnv}).Capabilities(); got != want {
+		t.Errorf("Capabilities = %+v\nwant                %+v", got, want)
+	}
+}
+
+func TestDescribe_GHESUsesInstanceIssuer(t *testing.T) {
+	t.Parallel()
+
+	p := github.New()
+	p.Env = func(key string) string {
+		if key == "GITHUB_SERVER_URL" {
+			return "https://github.acme.example"
+		}
+
+		return ""
+	}
+
+	if got, want := p.Describe().OIDCIssuer, "https://github.acme.example/_services/token"; got != want {
+		t.Fatalf("OIDCIssuer = %q, want %q", got, want)
+	}
+
+	if p.Capabilities().PublicFulcioTrusted {
+		t.Fatal("GHES issuer must not be reported as trusted by public Fulcio")
+	}
+
+	if !p.Capabilities().MintsOIDCToken {
+		t.Fatal("GHES still mints OIDC tokens for an explicitly configured Fulcio")
 	}
 }
 

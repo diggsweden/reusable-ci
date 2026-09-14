@@ -28,13 +28,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/urfave/cli/v3"
 
+	gitadapter "github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/cmdmeta"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
@@ -42,6 +45,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
@@ -107,28 +111,18 @@ EXAMPLES:
 					return err
 				}
 
-				password, err := regflags.FileOrEnv(cmd.String(regflags.FlagPasswordFile), "REGISTRY_TOKEN", "REGISTRY_PASSWORD")
+				password, err := regflags.FileOrEnv(cmd.String(regflags.FlagPasswordFile), releaseImagesDefaultEnvVar, "REGISTRY_PASSWORD")
 				if err != nil {
 					return err
 				}
 
-				// When the operator supplied no password, fall back to the forge's
-				// runner-injected registry credentials (GitHub $GITHUB_TOKEN, GitLab
-				// $CI_REGISTRY_PASSWORD, Forgejo token) — shrinking standing secrets.
-				// Only applied when logging in to that forge's own registry; explicit
-				// --username / --password always win.
-				if password == "" {
-					if forgeUser, forgeToken := forgeRegistryCreds(registry); forgeToken != "" {
-						password = forgeToken
-
-						if username == "" {
-							username = forgeUser
-						}
-					}
+				username, password, err = registryLoginCredentials(registry, username, password)
+				if err != nil {
+					return err
 				}
 
 				if password == "" {
-					return errs.CredentialRequired(errs.Credential{What: regflags.CredPassword, Flag: regflags.FlagPasswordFile, Env: "REGISTRY_TOKEN"})
+					return errs.CredentialRequired(errs.Credential{What: regflags.CredPassword, Flag: regflags.FlagPasswordFile, Env: releaseImagesDefaultEnvVar})
 				}
 
 				if err := appcontainer.RegistryLogin(os.Stderr, appcontainer.RegistryLoginInput{
@@ -196,22 +190,9 @@ func registryForLogin(registry, serverURL string, registrySet bool) (string, err
 }
 
 func registryHostFromServerURL(raw string) (string, error) {
-	value := strings.TrimSpace(raw)
-	value = strings.TrimPrefix(value, "https://")
-	value = strings.TrimPrefix(value, "http://")
-
-	value = strings.Trim(value, "/")
-	if value == "" {
-		return "", fmt.Errorf("container login: --server-url must include a host: %w", errs.ErrUsage)
-	}
-
-	if strings.ContainsAny(value, " \t\n\r") {
-		return "", fmt.Errorf("container login: --server-url contains whitespace: %w", errs.ErrUsage)
-	}
-
-	host, _, _ := strings.Cut(value, "/")
-	if host == "" {
-		return "", fmt.Errorf("container login: --server-url must include a host: %w", errs.ErrUsage)
+	host, err := domaincontainer.RegistryHost(raw)
+	if err != nil {
+		return "", fmt.Errorf("container login: --server-url: %w", err)
 	}
 
 	return host, nil
@@ -257,15 +238,8 @@ func maybeExportRegistryAuthFile(export bool, envFile, authFile string) error {
 		return fmt.Errorf("container login: --export-env requires --env-file or $FORGEJO_ENV/$GITHUB_ENV: %w", errs.ErrUsage)
 	}
 
-	file, err := os.OpenFile(envFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // CI runner env file chosen by the caller.
-	if err != nil {
-		return fmt.Errorf("container login: open env file %s: %w", envFile, err)
-	}
-
-	defer func() { _ = file.Close() }()
-
-	if _, err := io.WriteString(file, "REGISTRY_AUTH_FILE="+authFile+"\n"); err != nil {
-		return fmt.Errorf("container login: write REGISTRY_AUTH_FILE to %s: %w", envFile, err)
+	if err := cliio.AppendLines(envFile, "REGISTRY_AUTH_FILE="+authFile); err != nil {
+		return fmt.Errorf("container login: write REGISTRY_AUTH_FILE: %w", err)
 	}
 
 	return nil
@@ -273,21 +247,45 @@ func maybeExportRegistryAuthFile(export bool, envFile, authFile string) error {
 
 // forgeRegistryCreds returns the detected forge's runner-injected registry
 // username and token when a resolver exists and the login target is that
-// forge's own registry; otherwise ("", ""). The token is the second return —
-// callers gate on it being non-empty. Kept separate so the login Action stays
-// flat.
-func forgeRegistryCreds(registry string) (string, string) {
+// forge's own registry; otherwise empty credentials. Resolver failures are
+// returned so a broken runtime context cannot silently fall back to a less
+// specific credential source.
+func forgeRegistryCreds(registry string) (string, string, error) {
 	resolver, ok := deps.RegistryAuthForDetected()
 	if !ok {
-		return "", ""
+		return "", "", nil
 	}
 
 	auth, err := resolver.ResolveRegistryAuth()
-	if err != nil || !auth.MatchesRegistry(registry) {
-		return "", ""
+	if err != nil {
+		return "", "", fmt.Errorf("resolve detected forge registry credentials: %w", err)
 	}
 
-	return auth.Username, auth.Token
+	if !auth.MatchesRegistry(registry) {
+		return "", "", nil
+	}
+
+	return auth.Username, auth.Token, nil
+}
+
+// registryLoginCredentials falls back to runner-injected forge credentials only
+// when no explicit password was supplied and the target is that forge's own
+// registry. Explicit username/password values always win.
+func registryLoginCredentials(registry, username, password string) (string, string, error) {
+	if password != "" {
+		return username, password, nil
+	}
+
+	forgeUser, forgeToken, err := forgeRegistryCreds(registry)
+	if err != nil || forgeToken == "" {
+		return username, "", err
+	}
+
+	if username == "" {
+		username = forgeUser
+	}
+
+	return username, forgeToken, nil
 }
 
 func logoutCmd() *cli.Command {
@@ -355,8 +353,8 @@ func platformPlanCmd() *cli.Command {
 			&cli.StringFlag{Name: flagPlatform, Sources: cli.EnvVars("PLATFORM"), Usage: "single build platform; falls back to the first entry of --platforms"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
-				_, err := appcontainer.PlatformPlan(ctx, d.OutputSink, os.Stderr, appcontainer.PlatformPlanInput{
+			return deps.FromCmd(ctx, cmd, func(dep *deps.Deps) error {
+				_, err := appcontainer.PlatformPlan(ctx, dep.OutputSink, os.Stderr, appcontainer.PlatformPlanInput{
 					Platforms: cmd.String("platforms"),
 					Platform:  cmd.String(flagPlatform),
 				})
@@ -397,20 +395,55 @@ func metadataCmd() *cli.Command {
 				Usage: "override for org.opencontainers.image.description"},
 			&cli.StringFlag{Name: "oci-license", Sources: planfile.Vars(planScopeMetadata, "oci-license", "OCI_LICENSE"),
 				Usage: "override for org.opencontainers.image.licenses (SPDX id)"},
+			&cli.StringFlag{Name: "source-ref-name", Sources: planfile.Vars(planScopeMetadata, "source-ref-name", "SOURCE_REF_NAME"), Usage: "explicit source ref name for release metadata"},
+			&cli.StringFlag{Name: "source-ref-type", Sources: planfile.Vars(planScopeMetadata, "source-ref-type", "SOURCE_REF_TYPE"), Usage: "explicit source ref type (tag, branch, pr, other)"},
+			&cli.StringFlag{Name: "source-revision", Sources: planfile.Vars(planScopeMetadata, "source-revision", "SOURCE_REVISION"), Usage: "explicit released commit SHA"},
+			&cli.StringFlag{Name: "source-date-epoch", Sources: planfile.Vars(planScopeMetadata, "source-date-epoch", "SOURCE_DATE_EPOCH"), Usage: "Unix timestamp for deterministic OCI created labels; defaults to HEAD commit time"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
-				_, err := appcontainer.ComputeMetadata(ctx, d.Provider, d.RepoMetadataFetcher(), d.OutputSink, d.ManifestSink, appcontainer.ComputeMetadataInput{
-					ImageName:   cmd.String(flagImageName),
-					TagRules:    cmd.String("tag-rules"),
-					Flavor:      cmd.String(flagFlavor),
-					EmitLabels:  cmd.Bool("emit-labels"),
-					Description: cmd.String("oci-description"),
-					License:     cmd.String("oci-license"),
+			return deps.FromCmd(ctx, cmd, func(dep *deps.Deps) error {
+				createdAt, err := metadataCreatedAt(ctx, cmd.String("source-date-epoch"), cmd.Bool("emit-labels"))
+				if err != nil {
+					return err
+				}
+
+				_, err = appcontainer.ComputeMetadata(ctx, dep.Provider, dep.RepoMetadataFetcher(), dep.OutputSink, dep.ManifestSink, appcontainer.ComputeMetadataInput{
+					ImageName:      cmd.String(flagImageName),
+					TagRules:       cmd.String("tag-rules"),
+					Flavor:         cmd.String(flagFlavor),
+					EmitLabels:     cmd.Bool("emit-labels"),
+					Description:    cmd.String("oci-description"),
+					License:        cmd.String("oci-license"),
+					SourceRefName:  cmd.String("source-ref-name"),
+					SourceRefType:  provider.RefType(cmd.String("source-ref-type")),
+					SourceRevision: cmd.String("source-revision"),
+					Now:            createdAt,
 				})
 
 				return err
 			})
 		},
 	}
+}
+
+func metadataCreatedAt(ctx context.Context, raw string, needed bool) (time.Time, error) {
+	if !needed {
+		return time.Time{}, nil
+	}
+
+	if strings.TrimSpace(raw) == "" {
+		var err error
+
+		raw, err = gitadapter.New().CommitUnixTime(ctx, "HEAD")
+		if err != nil {
+			return time.Time{}, fmt.Errorf("derive OCI creation time from HEAD: %w", err)
+		}
+	}
+
+	epoch, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || epoch < 0 {
+		return time.Time{}, fmt.Errorf("source-date-epoch must be non-negative Unix seconds (got %q): %w", raw, errs.ErrUsage)
+	}
+
+	return time.Unix(epoch, 0).UTC(), nil
 }

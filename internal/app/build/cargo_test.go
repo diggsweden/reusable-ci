@@ -6,14 +6,16 @@ package build_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
@@ -27,6 +29,8 @@ type fakeCargoTool struct {
 	calls       []appbuild.CargoRunInput
 	metadata    string   // JSON to write on `metadata` calls
 	binaryNames []string // candidates to write into target/release/ on `build` calls
+	failOn      string
+	runErr      error
 }
 
 func (f *fakeCargoTool) Run(_ context.Context, in appbuild.CargoRunInput) error {
@@ -38,6 +42,10 @@ func (f *fakeCargoTool) Run(_ context.Context, in appbuild.CargoRunInput) error 
 		}
 
 		return nil
+	}
+
+	if len(in.Args) > 0 && in.Args[0] == f.failOn {
+		return f.runErr
 	}
 
 	if len(in.Args) >= 5 && in.Args[0] == "build" {
@@ -60,7 +68,7 @@ func (f *fakeCargoTool) Run(_ context.Context, in appbuild.CargoRunInput) error 
 
 		for _, name := range f.binaryNames {
 			path := filepath.Join(releaseDir, name)
-			if err := os.WriteFile(path, []byte("ELFish"), 0o755); err != nil { //nolint:gosec // test fixture
+			if err := os.WriteFile(path, []byte("ELFish:"+triple+":"+name), 0o755); err != nil { //nolint:gosec // test fixture
 				return err
 			}
 		}
@@ -100,6 +108,10 @@ func TestCargoMetadata_EmitsOutputs(t *testing.T) {
 
 	if got := sink.Single("package"); got != "hello" {
 		t.Errorf("package = %q", got)
+	}
+
+	if out.String() != "Binary: hello\nPackage: hello\nVersion: 9.9.9\n" || !slices.Equal(sink.Order(), []string{"binary-name", "version", "package"}) {
+		t.Fatalf("order=%v output=%s", sink.Order(), &out)
 	}
 }
 
@@ -174,6 +186,28 @@ func TestCargoBuildBinaries_BuildsPlatforms(t *testing.T) {
 		}
 	}
 
+	for platform, triple := range map[string]string{"linux-amd64": "x86_64-unknown-linux-gnu", "linux-arm64": "aarch64-unknown-linux-gnu"} {
+		path := filepath.Join(fsys.Root, "dist", platform, "hello-"+platform)
+
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if string(body) != "ELFish:"+triple+":hello" {
+			t.Errorf("%s has incorrect binary bytes", platform)
+		}
+
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if info.Mode().Perm() != 0o755 {
+			t.Errorf("binary mode=%o", info.Mode().Perm())
+		}
+	}
+
 	// Each platform is built for its own triple, in the declared order.
 	// Collecting the triples into a "seen somewhere" set could not tell that
 	// apart from building both platforms for one triple, or from swapping
@@ -186,7 +220,7 @@ func TestCargoBuildBinaries_BuildsPlatforms(t *testing.T) {
 		gotTriples = append(gotTriples, cargoTargetTriple(t, call.Args))
 	}
 
-	if !reflect.DeepEqual(gotTriples, wantTriples) {
+	if !slices.Equal(gotTriples, wantTriples) {
 		t.Errorf("build triples = %v, want %v (amd64 then arm64, as declared)", gotTriples, wantTriples)
 	}
 }
@@ -217,8 +251,8 @@ func TestCargoBuildBinaries_RejectsUnknownPlatform(t *testing.T) {
 		Platforms: "plan9/amd64",
 		Version:   "1.2.3",
 	})
-	if err == nil || !strings.Contains(err.Error(), "unsupported platform") {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "unsupported platform") {
+		t.Fatalf("err = %v, want ErrUsage naming the unsupported platform", err)
 	}
 }
 
@@ -232,7 +266,68 @@ func TestCargoBuildBinaries_RequiresVersion(t *testing.T) {
 		Dir:       fsys.Root,
 		Platforms: "linux/amd64",
 	})
-	if err == nil || !strings.Contains(err.Error(), "version is required") {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "version is required") {
+		t.Fatalf("err = %v, want ErrUsage naming the missing version", err)
+	}
+}
+
+func TestCargoBuildBinaries_BinaryNameOverrideLocatesTheCrateBinary(t *testing.T) {
+	t.Parallel()
+	fsys := testfs.NewReal(t)
+
+	// cargo always writes target/<triple>/release/<crate bin>; --binary-name
+	// only renames the copy under dist/, so the crate's own name is what has
+	// to be located.
+	tool := &fakeCargoTool{metadata: sampleCargoMetadata, binaryNames: []string{"hello"}}
+
+	if err := appbuild.CargoBuildBinaries(context.Background(), tool, &bytes.Buffer{}, &bytes.Buffer{}, appbuild.CargoBuildBinariesInput{
+		Dir:        fsys.Root,
+		BinaryName: "my-cli",
+		Platforms:  "linux/amd64",
+		Version:    "1.0.0",
+	}); err != nil {
+		t.Fatalf("build with --binary-name override: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(fsys.Root, "dist/linux-amd64/my-cli-linux-amd64")); err != nil {
+		t.Fatalf("renamed dist binary missing: %v", err)
+	}
+}
+
+// workspaceCargoMetadata mirrors what cargo 1.98 emits for a workspace whose
+// root [package] ("zeta") sorts after a member ("alpha"): packages are
+// ordered by id, resolve is null under --no-deps, and only manifest_path
+// tells the root apart.
+const workspaceCargoMetadata = `{
+  "packages": [
+    {"name": "alpha", "version": "0.2.0", "manifest_path": "/ws/alpha/Cargo.toml", "targets": [{"name": "alpha", "kind": ["bin"]}]},
+    {"name": "zeta", "version": "0.1.0", "manifest_path": "/ws/Cargo.toml", "targets": [{"name": "zeta-cli", "kind": ["bin"]}]}
+  ],
+  "workspace_members": ["alpha 0.2.0", "zeta 0.1.0"],
+  "workspace_root": "/ws",
+  "resolve": null
+}`
+
+func TestCargoMetadata_PicksTheWorkspaceRootPackage(t *testing.T) {
+	t.Parallel()
+	fsys := testfs.NewReal(t)
+
+	tool := &fakeCargoTool{metadata: workspaceCargoMetadata}
+	sink := fakeoutputsink.New(t)
+
+	if err := appbuild.CargoMetadata(context.Background(), tool, sink, &bytes.Buffer{}, appbuild.CargoMetadataInput{Dir: fsys.Root}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := sink.Single("package"); got != "zeta" {
+		t.Errorf("package = %q, want the root package zeta", got)
+	}
+
+	if got := sink.Single("binary-name"); got != "zeta-cli" {
+		t.Errorf("binary-name = %q, want the root package's [[bin]] zeta-cli", got)
+	}
+
+	if got := sink.Single("version"); got != "0.1.0" {
+		t.Errorf("version = %q, want the root package's 0.1.0", got)
 	}
 }

@@ -22,9 +22,12 @@ package conformance_test
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -92,6 +95,12 @@ func TestSign_LedgerImages_ProducesAVerifiableSignature(t *testing.T) {
 			// the ledger recorded.
 			verifyCosignSignature(t, target, imagePath+"@"+pushed.Digest, publicKey, authDir)
 
+			// The attestations are the other half of what `ledger sign`
+			// leaves behind, and the half a signature check says nothing
+			// about: an independent verifier must find the CycloneDX and the
+			// SLSA statement, each bound to this exact digest.
+			verifyCosignAttestations(t, target, imagePath+"@"+pushed.Digest, publicKey, authDir, pushed.Digest)
+
 			// And that the containment held. Publishing to Rekor is
 			// irreversible, so this is asserted every run rather than trusted
 			// to the environment variable that implements it.
@@ -152,5 +161,88 @@ func verifyCosignSignature(t *testing.T, target livetest.Target, digestRef, publ
 		t.Fatalf("%s: cosign could not verify the signature reusable-ci wrote for %s: %v\n%s",
 			target.Forge, digestRef, err, out)
 	}
+}
 
+// verifyCosignAttestations runs the real `cosign verify-attestation` for both
+// predicate types `ledger sign` attaches and reads the statements back from
+// the DSSE envelopes cosign prints, one per line. The subject digest of every
+// statement has to be the image digest the ledger recorded: an attestation
+// bound to a tag, a different manifest or nothing at all would verify as a
+// signature and still describe the wrong image.
+func verifyCosignAttestations(t *testing.T, target livetest.Target, digestRef, publicKey, authDir, digest string) {
+	t.Helper()
+
+	wantDigest := strings.TrimPrefix(digest, "sha256:")
+
+	for cosignType, predicateType := range map[string]string{
+		"cyclonedx":       "https://cyclonedx.org/bom",
+		"slsaprovenance1": "https://slsa.dev/provenance/v1",
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+
+		// G204: every argument is scenario-authored, as in verifyCosignSignature.
+		cmd := exec.CommandContext(ctx, "cosign", "verify-attestation", //nolint:gosec
+			"--key", publicKey,
+			"--type", cosignType,
+			"--insecure-ignore-tlog=true",
+			digestRef,
+		)
+		cmd.Env = livetest.ToolEnvironment(t, target, livetest.CredentialScopeRegistry, map[string]string{
+			"DOCKER_CONFIG":   authDir,
+			"COSIGN_PASSWORD": "",
+		})
+
+		out, err := cmd.Output()
+
+		cancel()
+
+		if err != nil {
+			t.Fatalf("%s: cosign could not verify the %s attestation reusable-ci wrote for %s: %v",
+				target.Forge, cosignType, digestRef, err)
+		}
+
+		statements := 0
+
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line == "" {
+				continue
+			}
+
+			statements++
+
+			var envelope struct {
+				Payload string `json:"payload"`
+			}
+			if err := json.Unmarshal([]byte(line), &envelope); err != nil {
+				t.Fatalf("%s: %s envelope is not JSON: %v\n%s", target.Forge, cosignType, err, line)
+			}
+
+			decoded, err := base64.StdEncoding.DecodeString(envelope.Payload)
+			if err != nil {
+				t.Fatalf("%s: %s payload is not base64: %v", target.Forge, cosignType, err)
+			}
+
+			var statement struct {
+				PredicateType string `json:"predicateType"`
+				Subject       []struct {
+					Digest map[string]string `json:"digest"`
+				} `json:"subject"`
+			}
+			if err := json.Unmarshal(decoded, &statement); err != nil {
+				t.Fatalf("%s: %s statement is not JSON: %v", target.Forge, cosignType, err)
+			}
+
+			if statement.PredicateType != predicateType {
+				t.Errorf("%s: %s attestation carries predicateType %q, want %q", target.Forge, cosignType, statement.PredicateType, predicateType)
+			}
+
+			if len(statement.Subject) != 1 || statement.Subject[0].Digest["sha256"] != wantDigest {
+				t.Errorf("%s: %s attestation subjects = %+v, want exactly the image digest %s", target.Forge, cosignType, statement.Subject, wantDigest)
+			}
+		}
+
+		if statements == 0 {
+			t.Errorf("%s: cosign verified no %s attestation for %s", target.Forge, cosignType, digestRef)
+		}
+	}
 }

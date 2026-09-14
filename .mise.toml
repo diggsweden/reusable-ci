@@ -29,6 +29,9 @@ no_proxy = "{{ get_env(name='no_proxy', default='') }}"
 PIP_INDEX_URL = "{{ get_env(name='PIP_INDEX_URL', default='') }}"
 
 [tools]
+# Pin the compiler patch because release binaries include its standard library.
+go = "1.26.6"
+
 # Lint/security orchestrator — derives a verify plan from the repo and
 # runs the configured checks. See nanolinter.toml for the plan.
 "forgejo:itiquette/nanolinter" = "0.8.5"

@@ -4,9 +4,13 @@
 package config_test
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -132,6 +136,16 @@ func TestValidate_AcceptsAllKnownTypes(t *testing.T) {
 	}
 }
 
+func TestValidate_PythonRemainsUnsupported(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := config.Parse([]byte("artifacts:\n  - name: future\n    project-type: python\n    config: {}\n"))
+	require.NoError(t, err)
+	err = config.Validate(cfg)
+	require.ErrorIs(t, err, errs.ErrInvalidConfig)
+	require.Contains(t, err.Error(), `invalid projectType "python" for artifact "future"`)
+}
+
 func TestValidate_GoBuildModeDefaultsToArtifactFirst(t *testing.T) {
 	t.Parallel()
 
@@ -198,6 +212,28 @@ func TestValidate_CargoRejectsInvalidBuildMode(t *testing.T) {
 
 	if !strings.Contains(err.Error(), "invalid config.build-mode") {
 		t.Errorf("err message: %v", err)
+	}
+}
+
+func TestValidate_AndroidBuildTypesUseExactTokens(t *testing.T) {
+	t.Parallel()
+
+	invalid := &config.Config{Artifacts: []config.Artifact{{
+		Name: "android-app", ProjectType: projecttype.GradleAndroid,
+		GradleAndroid: &config.GradleAndroidConfig{BuildTypes: "debug,notrelease"},
+	}}}
+
+	err := config.Validate(invalid)
+	if !isValidationError(err) || !strings.Contains(err.Error(), `unsupported Android build type "notrelease"`) {
+		t.Fatalf("invalid Android build types error = %v", err)
+	}
+
+	valid := &config.Config{Artifacts: []config.Artifact{{
+		Name: "android-app", ProjectType: projecttype.GradleAndroid,
+		GradleAndroid: &config.GradleAndroidConfig{BuildTypes: "debug release"},
+	}}}
+	if err := config.Validate(valid); err != nil {
+		t.Fatalf("exact Android build types rejected: %v", err)
 	}
 }
 
@@ -531,19 +567,24 @@ func TestValidate_ReportsAllViolations(t *testing.T) {
 	}
 
 	err := config.Validate(c)
-	if err == nil {
-		t.Fatal("expected error")
+
+	var ve *config.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v, want a *config.ValidationError", err)
 	}
 
-	ve := func() *config.ValidationError {
-		target := &config.ValidationError{}
-		_ = errors.As(err, &target)
+	require.ErrorIs(t, err, errs.ErrInvalidConfig)
 
-		return target
-	}()
-	if len(ve.Violations) < 3 {
-		t.Errorf("expected ≥3 violations, got %d: %v", len(ve.Violations), ve.Violations)
-	}
+	require.ElementsMatch(t, []string{
+		`invalid projectType "rust" for artifact "x" (must be one of: [maven npm gradle gradle-android xcode-ios go cargo meta])`,
+		`duplicate artifact name "x"`,
+		`container "ct" references unknown artifact "missing"`,
+	}, ve.Violations)
+
+	c.Artifacts[0].ProjectType = projecttype.Cargo
+	c.Artifacts[1].Name = "y"
+	c.Containers[0].From = []string{"x"}
+	require.NoError(t, config.Validate(c))
 }
 
 func TestWarnings_MavenAppToForgePackages(t *testing.T) {
@@ -586,4 +627,193 @@ func isValidationError(err error) bool {
 	var ve *config.ValidationError
 
 	return errors.As(err, &ve)
+}
+
+func TestValidate_RejectsDuplicateContainerNames(t *testing.T) {
+	t.Parallel()
+
+	c := &config.Config{
+		Artifacts: []config.Artifact{{Name: "api", ProjectType: projecttype.Go}},
+		Containers: []config.Container{
+			{Name: "svc", From: []string{"api"}},
+			{Name: "svc", From: []string{"api"}},
+		},
+	}
+
+	err := config.Validate(c)
+	if err == nil {
+		t.Fatal("expected duplicate container names to be rejected")
+	}
+
+	if !errors.Is(err, errs.ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
+	}
+
+	if !strings.Contains(err.Error(), `duplicate container name "svc"`) {
+		t.Errorf("err = %v, want duplicate container name violation", err)
+	}
+}
+
+func TestValidateAndDerive_RejectBuildArgsDelimiters(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{"key equals", "VALUE=OTHER", "one"},
+		{"key CR", "VALUE\rOTHER", "one"},
+		{"key LF", "VALUE\nOTHER", "one"},
+		{"value CR", "VALUE", "one\rOTHER=two"},
+		{"value LF", "VALUE", "one\nOTHER=two"},
+		{"value CRLF", "VALUE", "one\r\nOTHER=two"},
+		{"trailing LF", "VALUE", "one\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			args, err := json.Marshal(map[string]string{tc.key: tc.value})
+			require.NoError(t, err)
+
+			for name, check := range map[string]func(*config.Config) error{
+				"Validate": config.Validate,
+				"Derive":   config.Derive,
+			} {
+				t.Run(name, func(t *testing.T) {
+					t.Parallel()
+
+					cfg, parseErr := config.Parse([]byte(fmt.Sprintf(`artifacts:
+  - name: app
+    project-type: maven
+containers:
+  - name: first
+    from: [app]
+    build-args: {SAFE: yes}
+  - name: image
+    from: [app]
+    build-args: %s
+`, args)))
+					require.NoError(t, parseErr)
+					require.Equal(t, map[string]string{tc.key: tc.value}, cfg.Containers[1].BuildArgs)
+
+					checkErr := check(cfg)
+					require.ErrorIs(t, checkErr, errs.ErrInvalidConfig)
+
+					var validationErr *config.ValidationError
+					require.ErrorAs(t, checkErr, &validationErr)
+					require.Equal(t, []string{`container "image" build-args require keys without '=', CR or LF and values without CR or LF`}, validationErr.Violations)
+
+					for _, container := range cfg.Containers {
+						require.Empty(t, container.BuildArgsString)
+						require.Nil(t, container.ArtifactTypes)
+					}
+
+					require.Empty(t, cfg.Artifacts[0].SBOMs)
+					require.Nil(t, cfg.Artifacts[0].EffectiveSBOMs)
+				})
+			}
+		})
+	}
+}
+
+// TestValidate_EveryReservedSecretNameIsRefused exercises the whole reserved
+// namespace, not the three names that happened to get cases.
+//
+// The list has twenty-three entries and three were covered, so dropping any of
+// the other twenty — MAVEN_CENTRAL_PASSWORD, the Android keystore credentials,
+// the App Store Connect key — left every test passing. A dropped entry is not a
+// cosmetic gap: build-secrets are materialised into the same envelope
+// reusable-ci passes its own credentials through, so an adopter naming a
+// build-secret MAVEN_CENTRAL_PASSWORD shadows the publishing credential, and
+// the collision surfaces as a failed publish, or one signed with the wrong
+// credential, rather than as a config error.
+//
+// The names are written out here rather than iterated from the map under test.
+// A loop over reusableCIReservedSecretNames would pass whatever the map says,
+// including after an entry is deleted, which is precisely the change this is
+// meant to catch. Each name below is one this repository actually consumes.
+func TestValidate_EveryReservedSecretNameIsRefused(t *testing.T) {
+	t.Parallel()
+
+	reserved := []string{
+		// The envelope the others travel in.
+		"REUSABLE_CI_BUILD_SECRETS_JSON",
+		// Release signing and forge access.
+		"RELEASE_GPG_PRIVATE_KEY",
+		"RELEASE_GPG_PASSPHRASE",
+		"RELEASE_GPG_PUBLIC_KEY",
+		"RELEASE_TOKEN",
+		"CODE_SCANNING_TOKEN",
+		// Registry publishing.
+		"MAVEN_CENTRAL_USERNAME",
+		"MAVEN_CENTRAL_PASSWORD",
+		"NPM_TOKEN",
+		// Android signing.
+		"ANDROID_KEYSTORE",
+		"ANDROID_KEYSTORE_PASSWORD",
+		"ANDROID_KEY_ALIAS",
+		"ANDROID_KEY_PASSWORD",
+		"SECRETS_PROPERTIES_BASE64",
+		"GOOGLE_PLAY_SERVICE_ACCOUNT_JSON",
+		// iOS signing and App Store Connect.
+		"IOS_SIGNING_CERTIFICATE_BASE64",
+		"IOS_SIGNING_CERTIFICATE_PASSPHRASE",
+		"PROVISIONING_PROFILE_BASE64",
+		"KEYCHAIN_PASSWORD",
+		"XCCONFIG_BASE64",
+		"APP_STORE_CONNECT_API_KEY_ID",
+		"APP_STORE_CONNECT_ISSUER_ID",
+		"APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64",
+	}
+
+	for _, name := range reserved {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			err := config.Validate(buildSecretConfig(name))
+			if !isValidationError(err) {
+				t.Fatalf("build-secret %q was accepted; it shadows a reusable-ci secret slot", name)
+			}
+
+			if !strings.Contains(err.Error(), "reusable-ci-reserved secret name") {
+				t.Errorf("err = %v, want the reserved-name diagnostic", err)
+			}
+		})
+	}
+}
+
+// TestValidate_ReservedNamesAreMatchedExactly keeps the policy from widening
+// into a prefix or substring rule, which would refuse legitimate adopter names
+// that merely resemble a reserved one.
+func TestValidate_ReservedNamesAreMatchedExactly(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{
+		"MAVEN_CENTRAL_PASSWORD_STAGING",
+		"MY_RELEASE_TOKEN",
+		"NPM_TOKEN_2",
+		"ANDROID_KEYSTORE_FOR_TESTS",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := config.Validate(buildSecretConfig(name)); err != nil {
+				t.Errorf("build-secret %q was refused: %v", name, err)
+			}
+		})
+	}
+}
+
+// buildSecretConfig is a minimal valid config carrying one build-secret.
+func buildSecretConfig(secret string) *config.Config {
+	return &config.Config{
+		Artifacts: []config.Artifact{{
+			Name: "app", ProjectType: projecttype.Go,
+			Go: &config.GoConfig{BuildMode: config.GoBuildModeArtifactFirst},
+		}},
+		Containers: []config.Container{{
+			Name: "img", From: []string{"app"}, BuildSecrets: []string{secret},
+		}},
+	}
 }

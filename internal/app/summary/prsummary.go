@@ -40,7 +40,7 @@ func PRSummary(ctx context.Context, sink ci.SummarySink, in PRSummaryInput) erro
 		short = short[:7]
 	}
 
-	quality, err := domainsummary.ParseStageResultEnvelope(in.QualityStageResultJSON)
+	quality, err := stageResultFor(in.QualityStageResultJSON, "pr-quality")
 	if err != nil {
 		return fmt.Errorf("quality-stage result-json: %w", err)
 	}
@@ -80,7 +80,7 @@ func PRSummary(ctx context.Context, sink ci.SummarySink, in PRSummaryInput) erro
 	_, _ = fmt.Fprintf(&b, "| %s | %s |\n", lintLabel, domainsummary.StatusIcon(lintResult))
 	_, _ = fmt.Fprintf(&b, "| Swift Lint | %s |\n", domainsummary.StatusIcon(swift))
 	_, _ = fmt.Fprintf(&b, "\n## Resources\n")
-	_, _ = fmt.Fprintf(&b, "- [Workflow Run](%s)\n", in.RunURL)
+	b.WriteString(resourceLine("Workflow Run", in.RunURL))
 
 	return sink.Append(ctx, b.String())
 }
@@ -88,5 +88,5 @@ func PRSummary(ctx context.Context, sink ci.SummarySink, in PRSummaryInput) erro
 // lintEngineRan reports whether a lint-engine target actually executed (vs.
 // being skipped because it was not the selected engine).
 func lintEngineRan(result string) bool {
-	return result == string(domainsummary.ResultSuccess) || result == string(domainsummary.ResultFailure)
+	return result == string(domainsummary.ResultSuccess) || result == string(domainsummary.ResultFailure) || result == string(domainsummary.ResultCancelled)
 }

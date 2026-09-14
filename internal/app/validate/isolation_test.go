@@ -49,29 +49,10 @@ func runIsolation(t *testing.T, body string) (string, error) {
 	return out.String(), err
 }
 
-func runForgejoIsolation(t *testing.T, body string) (string, error) {
-	t.Helper()
-
-	mem := testfs.NewMemory(t)
-	mem.WriteFile(".forgejo/workflows/release.yml", []byte(body))
-
-	var out bytes.Buffer
-
-	err := appvalidate.Isolation(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.IsolationInput{
-		Workflow:         ".forgejo/workflows/release.yml",
-		BuildJob:         "build-and-release",
-		SignJob:          "sign-and-publish",
-		PrepareJob:       "prepare",
-		DistDigestOutput: "dist-digest",
-		SigningSecrets:   []string{"COSIGN_SIGNING_KEY", "GPG_SIGNING_KEY"},
-		SinglePinSubject: "itiquette/forgejo-ci",
-		FS:               mem.FS(),
-	})
-
-	return out.String(), err
-}
-
-func runForgejoIsolationInFS(t *testing.T, mem *testfs.Memory, workflow string) (string, error) {
+// forgejoIsolation runs the forgejo-shaped gate. The three wrappers below
+// vary exactly one field each; spelling the whole IsolationInput out once per
+// wrapper meant a change to the shape had to be made in three places.
+func forgejoIsolation(t *testing.T, mem *testfs.Memory, workflow, subject string) (string, error) {
 	t.Helper()
 
 	var out bytes.Buffer
@@ -83,11 +64,26 @@ func runForgejoIsolationInFS(t *testing.T, mem *testfs.Memory, workflow string) 
 		PrepareJob:       "prepare",
 		DistDigestOutput: "dist-digest",
 		SigningSecrets:   []string{"COSIGN_SIGNING_KEY", "GPG_SIGNING_KEY"},
-		SinglePinSubject: "itiquette/forgejo-ci",
+		SinglePinSubject: subject,
 		FS:               mem.FS(),
 	})
 
 	return out.String(), err
+}
+
+func runForgejoIsolation(t *testing.T, body string) (string, error) {
+	t.Helper()
+
+	mem := testfs.NewMemory(t)
+	mem.WriteFile(".forgejo/workflows/release.yml", []byte(body))
+
+	return forgejoIsolation(t, mem, ".forgejo/workflows/release.yml", "itiquette/forgejo-ci")
+}
+
+func runForgejoIsolationInFS(t *testing.T, mem *testfs.Memory, workflow string) (string, error) {
+	t.Helper()
+
+	return forgejoIsolation(t, mem, workflow, "itiquette/forgejo-ci")
 }
 
 const forgejoIsolationCleanWorkflow = `jobs:
@@ -123,7 +119,7 @@ func TestIsolation_CleanWorkflowPasses(t *testing.T) {
 		t.Fatalf("Isolation: %v", err)
 	}
 
-	if !strings.Contains(out, "SLSA Build L3 isolation invariants hold") {
+	if !strings.Contains(out, "Static release-isolation checks passed") {
 		t.Errorf("missing success line in:\n%s", out)
 	}
 }
@@ -183,13 +179,52 @@ jobs:
 	}
 }
 
+func TestIsolation_CheckoutExpressionsAndSecrets(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		value      string
+		wantErrors int
+	}{
+		{"clean_literal_false", "false", 0},
+		{"clean_quoted_false", "'false'", 0},
+		{"true_expression", "${{ true }}", 1},
+		{"false_expression", "${{ false }}", 1},
+		{"secret_expression", "${{ secrets.COSIGN_PRIVATE_KEY }}", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := strings.Replace(isolationCleanWorkflow, "persist-credentials: false", "persist-credentials: "+tc.value, 1)
+
+			out, err := runIsolation(t, body)
+			if tc.wantErrors == 0 {
+				if err != nil || !strings.Contains(out, "Static release-isolation checks passed") {
+					t.Fatalf("clean workflow refused: %s %v", out, err)
+				}
+
+				return
+			}
+
+			if !errors.Is(err, errs.ErrValidation) || strings.Contains(out, "Static release-isolation checks passed") || strings.Count(out, "::error ") != tc.wantErrors {
+				t.Fatalf("checkout refusal lost or masked by another rule: %s %v", out, err)
+			}
+
+			if !strings.Contains(out, `line=6::job "build": actions/checkout step must set persist-credentials: false`) {
+				t.Fatalf("missing checkout annotation: %s", out)
+			}
+
+			if tc.wantErrors == 2 && !strings.Contains(out, `line=8::build job "build" references signing secret "COSIGN_PRIVATE_KEY"`) {
+				t.Fatalf("checkout check suppressed the independent secret diagnostic: %s", out)
+			}
+		})
+	}
+}
+
 // TestIsolation_ReportsEveryViolatingJob covers the scan across jobs.
 // Every fixture here has a single job with a single problem, so a check
 // that reported the first violation and stopped, or that only inspected
 // the first job, would satisfy all of them -- while a workflow whose
 // second job persists checkout credentials passed as isolated.
 //
-// This is a SLSA Build L3 invariant: a credential left on disk in any job
+// This is a release-isolation invariant: a credential left on disk in any job
 // is reachable by anything that job runs, not only by the first one.
 func TestIsolation_ReportsEveryViolatingJob(t *testing.T) {
 	body := `name: release
@@ -260,7 +295,7 @@ func TestIsolation_ForgejoStrictWorkflowPasses(t *testing.T) {
 		t.Fatalf("Isolation: %v\n%s", err, out)
 	}
 
-	if !strings.Contains(out, "SLSA Build L3 isolation invariants hold") {
+	if !strings.Contains(out, "Static release-isolation checks passed") {
 		t.Errorf("missing success line in:\n%s", out)
 	}
 }
@@ -299,7 +334,7 @@ func TestIsolation_CalledPrepareJobPasses(t *testing.T) {
 		t.Fatalf("Isolation: %v\n%s", err, out)
 	}
 
-	if !strings.Contains(out, "SLSA Build L3 isolation invariants hold") {
+	if !strings.Contains(out, "Static release-isolation checks passed") {
 		t.Errorf("missing success line in:\n%s", out)
 	}
 }
@@ -352,24 +387,13 @@ func TestIsolation_UnmatchedSinglePinSubjectFails(t *testing.T) {
 	mem := testfs.NewMemory(t)
 	mem.WriteFile(".forgejo/workflows/release.yml", []byte(forgejoIsolationCleanWorkflow))
 
-	var out bytes.Buffer
-
-	err := appvalidate.Isolation(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.IsolationInput{
-		Workflow:         ".forgejo/workflows/release.yml",
-		BuildJob:         "build-and-release",
-		SignJob:          "sign-and-publish",
-		PrepareJob:       "prepare",
-		DistDigestOutput: "dist-digest",
-		SigningSecrets:   []string{"COSIGN_SIGNING_KEY", "GPG_SIGNING_KEY"},
-		SinglePinSubject: "itiquette/nowhere-ci",
-		FS:               mem.FS(),
-	})
+	out, err := runIsolationForSubject(t, mem, "itiquette/nowhere-ci")
 	if !errors.Is(err, errs.ErrValidation) {
-		t.Fatalf("err = %v, want ErrValidation\n%s", err, out.String())
+		t.Fatalf("err = %v, want ErrValidation\n%s", err, out)
 	}
 
-	if !strings.Contains(out.String(), "matches nothing") {
-		t.Errorf("missing unmatched-subject violation in:\n%s", out.String())
+	if !strings.Contains(out, "matches nothing") {
+		t.Errorf("missing unmatched-subject violation in:\n%s", out)
 	}
 }
 
@@ -407,20 +431,7 @@ const otherSubjectWorkflow = `jobs:
 func runIsolationForSubject(t *testing.T, mem *testfs.Memory, subject string) (string, error) {
 	t.Helper()
 
-	var out bytes.Buffer
-
-	err := appvalidate.Isolation(&out, output.NewAnnotator(&out, output.FormatGitHub), appvalidate.IsolationInput{
-		Workflow:         ".forgejo/workflows/release.yml",
-		BuildJob:         "build-and-release",
-		SignJob:          "sign-and-publish",
-		PrepareJob:       "prepare",
-		DistDigestOutput: "dist-digest",
-		SigningSecrets:   []string{"COSIGN_SIGNING_KEY", "GPG_SIGNING_KEY"},
-		SinglePinSubject: subject,
-		FS:               mem.FS(),
-	})
-
-	return out.String(), err
+	return forgejoIsolation(t, mem, ".forgejo/workflows/release.yml", subject)
 }
 
 // TestIsolation_HelpersPinKeyFollowsSubject proves the helpers input key
@@ -489,6 +500,22 @@ func TestIsolation_MixedPinsFail(t *testing.T) {
 	}
 }
 
+func TestIsolation_CommentedPinDoesNotCreateAConflict(t *testing.T) {
+	mem := testfs.NewMemory(t)
+	mem.WriteFile(".forgejo/workflows/release.yml", []byte(forgejoIsolationCleanWorkflow))
+	mem.WriteFile(".forgejo/workflows/other.yml", []byte(`# uses: https://codeberg.org/itiquette/forgejo-ci/actions/setup-buildah@2222222222222222222222222222222222222222
+jobs:
+  probe:
+    steps:
+      - run: echo no pin here
+`))
+
+	out, err := runForgejoIsolationInFS(t, mem, ".forgejo/workflows/release.yml")
+	if err != nil {
+		t.Fatalf("commented pin created a conflict: %v\n%s", err, out)
+	}
+}
+
 func TestIsolation_SiblingSignerContract(t *testing.T) {
 	signerWorkflow := `# workflow-call-secrets-contract: COSIGN_SIGNING_KEY GPG_SIGNING_KEY
 jobs:
@@ -518,5 +545,70 @@ jobs:
 
 	if !strings.Contains(out, "does not list it") {
 		t.Errorf("missing sibling contract violation in:\n%s", out)
+	}
+}
+
+func TestIsolation_SecretScalarAnnotations(t *testing.T) {
+	body := "jobs:\n  build:\n    steps:\n      - run: >-\n          ${{ secrets.COSIGN_PRIVATE_KEY }}\n          ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}\n      - env:\n          KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}\n"
+
+	out, err := runIsolation(t, body)
+	if !errors.Is(err, errs.ErrValidation) || strings.Contains(out, "Static release-isolation checks passed") {
+		t.Fatalf("unsafe expressions did not refuse cleanly: %s %v", out, err)
+	}
+
+	for _, annotation := range []string{
+		`::error file=.github/workflows/release.yml,line=4::build job "build" references signing secret "COSIGN_PRIVATE_KEY"`,
+		`::error file=.github/workflows/release.yml,line=4::build job "build" references signing secret "RELEASE_GPG_PRIVATE_KEY"`,
+		`::error file=.github/workflows/release.yml,line=8::build job "build" references signing secret "COSIGN_PRIVATE_KEY"`,
+	} {
+		if strings.Count(out, annotation) != 1 {
+			t.Fatalf("missing/duplicate scalar annotation %q: %s", annotation, out)
+		}
+	}
+}
+
+func TestIsolation_SiblingStaticScope(t *testing.T) {
+	const (
+		header  = "# workflow-call-secrets-contract: COSIGN_SIGNING_KEY GPG_SIGNING_KEY\n"
+		channel = "on:\n  workflow_call:\n    inputs:\n      dist-digest:\n        type: string\n"
+	)
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"absent_checkout", "", "Sibling signer static contract not checked"},
+		{"name_only", header + "name: validate-dist inputs.dist-digest\njobs: {}\n", "lexical only, not proof of input consumption"},
+		{"comment_only", header + "# validate-dist inputs.dist-digest\njobs: {}\n", "has no literal dist-digest input reference"},
+		{"description_only", header + "description: validate-dist inputs.dist-digest\njobs: {}\n", "lexical only, not proof of input consumption"},
+		{"wrong_input", header + strings.Replace(channel, "dist-digest:", "other-digest:", 1) + "name: validate-dist inputs.dist-digest\njobs: {}\n", "lexical only, not proof of input consumption"},
+		{"declaration_without_reference", header + channel + "jobs: {}\n", "has no literal dist-digest input reference"},
+		{"reference_without_verifier", header + channel + "name: inputs.dist-digest\njobs: {}\n", "lexical only, not proof of input consumption"},
+		{"late_verifier", header + channel + "jobs:\n  sign:\n    steps:\n      - run: sign-placeholder\n      - run: reusable-ci release validate-dist --expected-digest '${{ inputs.dist-digest }}'\n", "lexical only, not proof of input consumption"},
+		{"wrong_runtime_input", header + channel + "name: inputs.dist-digest\njobs:\n  sign:\n    steps:\n      - run: reusable-ci release validate-dist --expected-digest wrong\n", "lexical only, not proof of input consumption"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := testfs.NewMemory(t)
+			mem.WriteFile(".scratch/consumer/.forgejo/workflows/release.yml", []byte(forgejoIsolationCleanWorkflow))
+
+			if tc.body != "" {
+				mem.WriteFile(".scratch/forgejo-ci/.forgejo/workflows/sign-and-publish-release.yml", []byte(tc.body))
+			}
+
+			out, err := runForgejoIsolationInFS(t, mem, ".scratch/consumer/.forgejo/workflows/release.yml")
+
+			wantFailure := strings.Contains(tc.want, "has no literal")
+			if (err != nil) != wantFailure || (wantFailure && !errors.Is(err, errs.ErrValidation)) || !strings.Contains(out, tc.want) {
+				t.Fatalf("out=%s err=%v want=%s", out, err, tc.want)
+			}
+
+			if !strings.Contains(out, "Digest verification before signing is not checked; the owner of the pinned signing workflow must enforce the runtime verifier and ordering.") || strings.Contains(out, "release-ci") {
+				t.Fatalf("missing runtime ownership/scope notice: %s", out)
+			}
+
+			if wantFailure && strings.Contains(out, "Static release-isolation checks passed") {
+				t.Fatalf("failed static contract reported success: %s", out)
+			}
+		})
 	}
 }

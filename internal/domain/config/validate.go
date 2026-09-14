@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	domainbuild "github.com/diggsweden/reusable-ci/v3/internal/domain/build"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
@@ -164,7 +165,19 @@ func Validate(cfg *Config) error {
 
 	artifactNames, artifactByName := walkArtifacts(cfg.Artifacts, validTypes, validPublishTargets, &violations)
 
+	// Container names flow into image references and per-run upload names
+	// (<name>-binaries-<arch>, analyzed-container-sbom-…-<name>-…), so two
+	// containers sharing a name collide at publish time; refuse them here,
+	// the way duplicate artifact names are refused.
+	containerNames := make(map[string]bool, len(cfg.Containers))
+
 	for _, container := range cfg.Containers {
+		if container.Name != "" && containerNames[container.Name] {
+			violations = append(violations, fmt.Sprintf("duplicate container name %q", container.Name))
+		}
+
+		containerNames[container.Name] = true
+
 		violations = append(violations, validateContainer(container, artifactNames, artifactByName)...)
 	}
 
@@ -229,7 +242,7 @@ func walkArtifacts(artifacts []Artifact, validTypes map[projecttype.Type]bool, v
 // validateArtifact runs all per-artifact schema rules, mutating
 // artifactNames as a side-effect (to detect duplicates across the loop).
 // Returns the list of violations contributed by this artifact.
-func validateArtifact(a Artifact, idx int, artifactNames map[string]bool, validTypes map[projecttype.Type]bool, validPublishTargets map[PublishTarget]bool) []string { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func validateArtifact(a Artifact, idx int, artifactNames map[string]bool, validTypes map[projecttype.Type]bool, validPublishTargets map[PublishTarget]bool) []string { //nolint:cyclop,varnamelen // each independent artifact schema rule contributes its own diagnostic.
 	var v []string //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 
 	switch {
@@ -246,6 +259,16 @@ func validateArtifact(a Artifact, idx int, artifactNames map[string]bool, validT
 			"invalid projectType %q for artifact %q (must be one of: %v)",
 			a.ProjectType, a.Name, projectTypesAsStrings(),
 		))
+	}
+
+	if a.BuildType != "" && !slices.Contains(ValidBuildTypes, a.BuildType) {
+		v = append(v, fmt.Sprintf("artifact %q has invalid build-type %q", a.Name, a.BuildType))
+	}
+
+	if a.SBOMs != "" {
+		if _, err := ExpandSBOMs(a.SBOMs); err != nil {
+			v = append(v, fmt.Sprintf("artifact %q: %v", a.Name, err))
+		}
 	}
 
 	for _, target := range a.PublishTo {
@@ -271,10 +294,24 @@ func validateArtifact(a Artifact, idx int, artifactNames map[string]bool, validT
 		v = append(v, validateCargoBuildMode(a)...)
 	}
 
+	v = append(v, validateAndroidBuildTypes(a)...)
+
 	v = append(v, validateWorkingDirectory(a)...)
 	v = append(v, validateArtifactFileNames(a)...)
 
 	return v
+}
+
+func validateAndroidBuildTypes(a Artifact) []string { //nolint:varnamelen // matches sibling per-artifact validators.
+	if a.ProjectType != projecttype.GradleAndroid {
+		return nil
+	}
+
+	if _, err := domainbuild.ParseAndroidBuildTypes(a.AndroidBuildTypes()); err != nil {
+		return []string{fmt.Sprintf("artifact %q has invalid config.build-types %q: %v", a.Name, a.AndroidBuildTypes(), err)}
+	}
+
+	return nil
 }
 
 // validateArtifactFileNames rejects scalar fields that flow into
@@ -464,9 +501,22 @@ func validateContainer(ct Container, artifactNames map[string]bool, artifactByNa
 		))
 	}
 
+	v = append(v, validateBuildArgs(ct)...)
 	v = append(v, validateBuildSecrets(ct)...)
 
 	return v
+}
+
+// validateBuildArgs enforces the CLI's newline-separated KEY=VALUE framing.
+// Equals signs belong in values, never keys; neither may contain CR or LF.
+func validateBuildArgs(ct Container) []string {
+	for key, value := range ct.BuildArgs {
+		if strings.ContainsAny(key, "=\r\n") || strings.ContainsAny(value, "\r\n") {
+			return []string{fmt.Sprintf("container %q build-args require keys without '=', CR or LF and values without CR or LF", ct.Name)}
+		}
+	}
+
+	return nil
 }
 
 // Warnings returns non-fatal observations about a Config: e.g. Maven

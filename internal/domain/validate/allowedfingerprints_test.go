@@ -15,6 +15,8 @@ import (
 const canonicalFP = "ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD"
 
 func TestAllowedFingerprintSet_AddAndHas(t *testing.T) {
+	t.Parallel()
+
 	set := validate.NewAllowedFingerprintSet()
 
 	if !set.Add(canonicalFP) {
@@ -31,6 +33,8 @@ func TestAllowedFingerprintSet_AddAndHas(t *testing.T) {
 }
 
 func TestAllowedFingerprintSet_AddNormalisesSpacedAndLowercase(t *testing.T) {
+	t.Parallel()
+
 	set := validate.NewAllowedFingerprintSet()
 
 	// The GPG-rendered spaced form must be accepted and normalised.
@@ -38,10 +42,20 @@ func TestAllowedFingerprintSet_AddNormalisesSpacedAndLowercase(t *testing.T) {
 		t.Fatal("Add of spaced/lowercase fingerprint rejected")
 	}
 
+	// A tab-separated rendering, as a pasted table cell carries it.
+	if !set.Add("ABCD\tEFAB\tCDEF\tABCD\tEFAB\tCDEF\tABCD\tEFAB\tCDEF\tDCBA") {
+		t.Fatal("Add of tab-separated fingerprint rejected")
+	}
+
+	if set.Len() != 1 {
+		t.Fatalf("Len = %d, want 1: the tab-separated form did not normalise to the same entry", set.Len())
+	}
+
 	for _, query := range []string{
 		"ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFDCBA",
 		"abcdefabcdefabcdefabcdefabcdefabcdefdcba",
 		"ABCD EFAB CDEF ABCD EFAB CDEF ABCD EFAB CDEF DCBA",
+		"abcd\tefab\tcdef\tabcd\tefab\tcdef\tabcd\tefab\tcdef\tdcba",
 	} {
 		if !set.Has(query) {
 			t.Errorf("Has(%q) = false, want true (case/whitespace tolerant)", query)
@@ -50,6 +64,8 @@ func TestAllowedFingerprintSet_AddNormalisesSpacedAndLowercase(t *testing.T) {
 }
 
 func TestAllowedFingerprintSet_AddRejectsShortKeyID(t *testing.T) {
+	t.Parallel()
+
 	set := validate.NewAllowedFingerprintSet()
 
 	if set.Add("ABCDEF1234567890") { // 16-hex short key ID
@@ -62,6 +78,8 @@ func TestAllowedFingerprintSet_AddRejectsShortKeyID(t *testing.T) {
 }
 
 func TestAllowedFingerprintSet_AddRejectsNonHex(t *testing.T) {
+	t.Parallel()
+
 	set := validate.NewAllowedFingerprintSet()
 
 	if set.Add("ZZZZEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD") {
@@ -74,6 +92,8 @@ func TestAllowedFingerprintSet_AddRejectsNonHex(t *testing.T) {
 }
 
 func TestAllowedFingerprintSet_AddIsIdempotent(t *testing.T) {
+	t.Parallel()
+
 	set := validate.NewAllowedFingerprintSet()
 
 	set.Add(canonicalFP)
@@ -85,6 +105,8 @@ func TestAllowedFingerprintSet_AddIsIdempotent(t *testing.T) {
 }
 
 func TestAllowedFingerprintSet_HasOnZeroValueReturnsFalse(t *testing.T) {
+	t.Parallel()
+
 	var s validate.AllowedFingerprintSet
 	if s.Has(canonicalFP) {
 		t.Errorf("zero-value set must report Has=false (no nil panic)")
@@ -92,6 +114,8 @@ func TestAllowedFingerprintSet_HasOnZeroValueReturnsFalse(t *testing.T) {
 }
 
 func TestNewAllowedFingerprintSet_IsEmpty(t *testing.T) {
+	t.Parallel()
+
 	set := validate.NewAllowedFingerprintSet()
 
 	if set.Len() != 0 {

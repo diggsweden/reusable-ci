@@ -27,6 +27,7 @@ const glTagsEndpoint = glRegistryRepos + "/42/tags"
 func newPackagesProvider(srv *fakegitlabserver.Server) *gitlab.Provider {
 	return &gitlab.Provider{
 		APIBaseOverride: srv.URL(),
+		HTTPClient:      srv.Client(),
 		Env:             envFunc(map[string]string{"GITLAB_TOKEN": "t"}),
 	}
 }
@@ -51,6 +52,8 @@ func tagPage(names ...string) string {
 }
 
 func TestListContainerPackageVersions_ReturnsEveryTag(t *testing.T) {
+	t.Parallel()
+
 	srv := fakegitlabserver.New(t)
 
 	srv.OnGet(glRegistryRepos, func(fakegitlabserver.Request) fakegitlabserver.Response {
@@ -76,6 +79,8 @@ func TestListContainerPackageVersions_ReturnsEveryTag(t *testing.T) {
 // the first page would leave every snapshot beyond it behind, and the
 // repository would grow without bound while the run reported success.
 func TestListContainerPackageVersions_PagesUntilShort(t *testing.T) {
+	t.Parallel()
+
 	srv := fakegitlabserver.New(t)
 
 	srv.OnGet(glRegistryRepos, func(fakegitlabserver.Request) fakegitlabserver.Response {
@@ -127,6 +132,8 @@ func TestListContainerPackageVersions_PagesUntilShort(t *testing.T) {
 // the case cleanup meets most often: an image that was never pushed.
 // Treating that as a failure would abort a run that has nothing to do.
 func TestListContainerPackageVersions_NoSuchImageIsEmptyNotAnError(t *testing.T) {
+	t.Parallel()
+
 	srv := fakegitlabserver.New(t)
 
 	srv.OnGet(glRegistryRepos, func(fakegitlabserver.Request) fakegitlabserver.Response {
@@ -159,23 +166,39 @@ func TestListContainerPackageVersions_NoSuchImageIsEmptyNotAnError(t *testing.T)
 }
 
 func TestListContainerPackageVersions_Refusals(t *testing.T) {
-	srv := fakegitlabserver.New(t)
-	provider := newPackagesProvider(srv)
+	t.Parallel()
 
+	// Each case gets its OWN recorder, and the zero-request assertion lives
+	// inside the subtest.
+	//
+	// It used to be one shared recorder with the check after the loop, which
+	// could never observe anything: the subtests are parallel, so Go pauses
+	// them until the parent's body returns, and the parent's body is where the
+	// check was. It ran against a recorder that had not been used yet and
+	// passed unconditionally — including for a refusal that had already gone to
+	// the network. Only the ErrUsage assertions inside the subtests were doing
+	// any work.
 	for _, tc := range []struct{ name, owner, image string }{
 		{name: "no owner", owner: "", image: "repo"},
 		{name: "no name", owner: "itiquette", image: ""},
+		{name: "neither", owner: "", image: ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := fakegitlabserver.New(t)
+			provider := newPackagesProvider(srv)
+
 			_, err := provider.ListContainerPackageVersions(context.Background(), tc.owner, tc.image)
 			if !errors.Is(err, errs.ErrUsage) {
 				t.Fatalf("err = %v, want ErrUsage", err)
 			}
-		})
-	}
 
-	if len(srv.Requests()) != 0 {
-		t.Errorf("requests were sent despite both calls being refused: %d", len(srv.Requests()))
+			if requests := srv.Requests(); len(requests) != 0 {
+				t.Errorf("a refused call still reached the API: %d request(s), first %v",
+					len(requests), requests[0])
+			}
+		})
 	}
 }
 
@@ -183,6 +206,8 @@ func TestListContainerPackageVersions_Refusals(t *testing.T) {
 // garbled response from reading as "no tags", which cleanup would take
 // as nothing to do.
 func TestListContainerPackageVersions_MalformedBodyIsAnError(t *testing.T) {
+	t.Parallel()
+
 	srv := fakegitlabserver.New(t)
 
 	srv.OnGet(glRegistryRepos, func(fakegitlabserver.Request) fakegitlabserver.Response {

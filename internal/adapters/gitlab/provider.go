@@ -47,6 +47,9 @@ type Provider struct {
 	APIBaseOverride string
 }
 
+// headerPrivateToken is the GitLab API auth header this adapter sets.
+const headerPrivateToken = "PRIVATE-TOKEN"
+
 // New returns a Provider that reads from os.Getenv.
 func New() *Provider {
 	return &Provider{Env: os.Getenv}
@@ -83,8 +86,9 @@ var (
 
 // apiContext resolves the API root and auth headers every GitLab call needs:
 // an explicit override (tests, and the live tier's lab instance) wins, then
-// $CI_SERVER_URL, then gitlab.com; the token is $GITLAB_TOKEN falling back to
-// the pipeline-scoped $CI_JOB_TOKEN. Single-sourced because six call sites had
+// $CI_SERVER_URL, then gitlab.com. A $GITLAB_TOKEN/PAT uses PRIVATE-TOKEN;
+// the pipeline-scoped $CI_JOB_TOKEN fallback uses JOB-TOKEN. Single-sourced
+// because six call sites had
 // grown their own identical copy, and a divergence here is an adapter that
 // authenticates against the wrong instance.
 func (p *Provider) apiContext() (string, map[string]string) {
@@ -100,11 +104,11 @@ func (p *Provider) apiContext() (string, map[string]string) {
 	}
 
 	token := get("GITLAB_TOKEN")
-	if token == "" {
-		token = get("CI_JOB_TOKEN")
+	if token != "" {
+		return apiBase, map[string]string{headerPrivateToken: token}
 	}
 
-	return apiBase, map[string]string{"PRIVATE-TOKEN": token}
+	return apiBase, map[string]string{"JOB-TOKEN": get("CI_JOB_TOKEN")}
 }
 
 // projectEndpoint builds the /api/v4/projects/<url-encoded path> root that

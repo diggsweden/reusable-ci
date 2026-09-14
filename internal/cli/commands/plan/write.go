@@ -18,6 +18,7 @@ import (
 
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/planfile"
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
@@ -53,7 +54,7 @@ EXAMPLE:
 }
 
 func runPlanWrite(ctx context.Context, cmd *cli.Command, dep *deps.Deps) error {
-	scope := cmd.String("scope")
+	scope := strings.Join(strings.Fields(cmd.String("scope")), " ")
 
 	target, err := resolveScopeCommand(cmd.Root(), scope)
 	if err != nil {
@@ -192,12 +193,7 @@ func loadPlanForMerge(path string) (map[string]map[string]any, error) {
 		return nil, fmt.Errorf("plan: read %s: %w", path, err)
 	}
 
-	var plan map[string]map[string]any
-	if err := json.Unmarshal(raw, &plan); err != nil {
-		return nil, fmt.Errorf("plan: %s is not a {scope: {flag: value}} JSON object: %w: %w", path, err, errs.ErrMalformedInput)
-	}
-
-	return plan, nil
+	return planfile.Decode(raw)
 }
 
 func writePlanFile(path string, plan map[string]map[string]any) (string, error) {
@@ -214,7 +210,19 @@ func writePlanFile(path string, plan map[string]map[string]any) (string, error) 
 		}
 	}
 
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
+	// cliio.WriteFile rather than os.WriteFile, for two reasons this path
+	// needs and the bare call did not give it.
+	//
+	// It renames a sibling temporary file into place, so a symlink sitting at
+	// the plan path is REPLACED rather than followed. os.WriteFile follows it,
+	// and a plan carries whatever `--set` values the caller passed — which can
+	// come from a secret store — to a destination the operator never named.
+	//
+	// And the rename means the mode applies. os.WriteFile leaves an existing
+	// file's permissions alone, so a plan overwritten at a path that was once
+	// 0644 stayed world-readable no matter what perm was requested; the file
+	// this writes is new, so 0600 is what it gets.
+	if err := cliio.WriteFile(path, raw, 0o600); err != nil {
 		return "", fmt.Errorf("plan: write %s: %w", path, err)
 	}
 

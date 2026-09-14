@@ -7,15 +7,20 @@ import "regexp"
 
 // RebuildPatterns detects "Containerfile rebuilds from source" warnings. Any
 // match triggers an advisory warning that pre-built artifacts will be ignored.
-// (`mvn package`, `mvn install`, `mvnw package/install`, `gradle build`,
-// `gradle assemble`, `npm run build`, `npm ... build run`, `go build`).
+// (`mvn package`, `mvn install` -- which also cover `./mvnw` -- `gradle build`,
+// `gradle assemble`, `npm run build`, an npm build step followed by an npm run
+// such as `npm --workspace web build && npm run start`, `go build`).
+//
+// The list used to carry separate mvnw entries. They could never match
+// anything the mvn entries did not, since every "mvnw" contains "mvn", so they
+// were dead and are gone. This is a substring heuristic over the whole file,
+// comments included; a match does not prove the Containerfile executes a
+// build, only that it mentions one.
 //
 //nolint:gochecknoglobals // precompiled regex table — read-only.
 var RebuildPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`mvn.*package`),
 	regexp.MustCompile(`mvn.*install`),
-	regexp.MustCompile(`mvnw.*package`),
-	regexp.MustCompile(`mvnw.*install`),
 	regexp.MustCompile(`gradle.*build`),
 	regexp.MustCompile(`gradle.*assemble`),
 	regexp.MustCompile(`npm run build`),

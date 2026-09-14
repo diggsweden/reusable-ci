@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -51,10 +50,10 @@ type PinReachabilityInput struct {
 	TempDir   string
 }
 
-// PinReachability fails when any pinned forgejo-ci SHA in the workflow files is
-// not reachable from the configured main branch and is not the commit pointed to
-// by any tag. This catches history-rewrite/orphaned-pin failures while the git
-// object may still be resolvable before server-side GC.
+// PinReachability fails when any pinned reusable-workflow SHA is not reachable
+// from the configured main branch and is not the commit pointed to by any tag.
+// This catches history-rewrite/orphaned-pin failures while the git object may
+// still be resolvable before server-side GC.
 //
 //nolint:cyclop // linear validate→collect→clone→check flow; splitting it would obscure the sequence.
 func PinReachability(ctx context.Context, gitrepo PinGit, out io.Writer, in PinReachabilityInput) error {
@@ -66,7 +65,7 @@ func PinReachability(ctx context.Context, gitrepo PinGit, out io.Writer, in PinR
 
 	subject := in.Subject
 	if subject == "" {
-		return fmt.Errorf("validate pin-reachability: --subject is required (the pin slug to scan for, e.g. forgejo-ci): %w", errs.ErrUsage)
+		return fmt.Errorf("validate pin-reachability: --subject is required (the reusable-workflow pin slug to scan for): %w", errs.ErrUsage)
 	}
 
 	pins, err := collectPinReachabilitySHAs(in.Workflows, subject)
@@ -91,6 +90,8 @@ func PinReachability(ctx context.Context, gitrepo PinGit, out io.Writer, in PinR
 		if err != nil {
 			return err
 		}
+
+		defer func() { _ = os.RemoveAll(repoDir) }() //nolint:gosec // the clone dir this call created under the temp root.
 	}
 
 	repo := gitrepo.Open(repoDir)
@@ -149,7 +150,6 @@ func defaultString(value, fallback string) string {
 }
 
 func collectPinReachabilitySHAs(files []string, subject string) ([]string, error) {
-	pattern := regexp.MustCompile(regexp.QuoteMeta(subject) + `[^@ "'\t\r\n]*@([0-9a-f]{40})`)
 	seen := map[string]bool{}
 
 	for _, file := range files {
@@ -158,9 +158,14 @@ func collectPinReachabilitySHAs(files []string, subject string) ([]string, error
 			return nil, fmt.Errorf("read %s: %w", file, err)
 		}
 
-		for _, match := range pattern.FindAllStringSubmatch(string(data), -1) {
-			if len(match) == 2 {
-				seen[match[1]] = true
+		usesValues, err := yamlMappingScalarValues(data, "uses")
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", file, err)
+		}
+
+		for _, uses := range usesValues {
+			if sha := pinnedSubjectSHA(uses, subject); sha != "" {
+				seen[sha] = true
 			}
 		}
 	}
@@ -190,6 +195,8 @@ func clonePinReachabilityRepo(ctx context.Context, gitrepo PinGit, remote, tempD
 	}
 
 	if err := gitrepo.Clone(ctx, remote, dir); err != nil {
+		_ = os.RemoveAll(dir)
+
 		return "", fmt.Errorf("clone %s to check pin reachability: %w", remote, err)
 	}
 

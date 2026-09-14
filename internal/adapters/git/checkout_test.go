@@ -16,16 +16,17 @@ import (
 	adaptergit "github.com/diggsweden/reusable-ci/v3/internal/adapters/git"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/isolatedenv"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/isolatedgit"
 )
 
-func TestInitWithObjectFormat(t *testing.T) {
-	ctx := context.Background()
+func TestInitWithObjectFormat_SetsTheFormatOrRejectsItBeforeRunningGit(t *testing.T) {
+	isolatedenv.Isolate(t)
 
 	t.Run("sha1", func(t *testing.T) {
 		dir := t.TempDir()
 		r := &adaptergit.Repo{Dir: dir}
-		if err := r.InitWithObjectFormat(ctx, "sha1"); err != nil {
+		if err := r.InitWithObjectFormat(t.Context(), "sha1"); err != nil {
 			t.Fatal(err)
 		}
 		if got := gitIn(t, dir, "rev-parse", "--show-object-format"); got != "sha1" {
@@ -36,7 +37,7 @@ func TestInitWithObjectFormat(t *testing.T) {
 	t.Run("sha256", func(t *testing.T) {
 		dir := t.TempDir()
 		r := &adaptergit.Repo{Dir: dir}
-		if err := r.InitWithObjectFormat(ctx, "sha256"); err != nil {
+		if err := r.InitWithObjectFormat(t.Context(), "sha256"); err != nil {
 			t.Fatal(err)
 		}
 		if got := gitIn(t, dir, "rev-parse", "--show-object-format"); got != "sha256" {
@@ -47,7 +48,7 @@ func TestInitWithObjectFormat(t *testing.T) {
 	t.Run("invalid is rejected before git runs", func(t *testing.T) {
 		dir := t.TempDir()
 		r := &adaptergit.Repo{Dir: dir}
-		err := r.InitWithObjectFormat(ctx, "sha512")
+		err := r.InitWithObjectFormat(t.Context(), "sha512")
 		if !errors.Is(err, errs.ErrValidation) {
 			t.Fatalf("err = %v, want ErrValidation", err)
 		}
@@ -57,7 +58,8 @@ func TestInitWithObjectFormat(t *testing.T) {
 	})
 }
 
-func TestRemoteAdd(t *testing.T) {
+func TestRemoteAdd_SetsTheOriginURL(t *testing.T) {
+	isolatedenv.Isolate(t)
 	ctx := context.Background()
 	dir := t.TempDir()
 	r := &adaptergit.Repo{Dir: dir}
@@ -309,13 +311,39 @@ func TestFetchDepth_Local(t *testing.T) {
 	if got := strings.TrimSpace(gitIn(t, target, "rev-list", "--count", "HEAD")); got != "1" {
 		t.Errorf("depth=1 fetch left %s commits, want 1 (shallow)", got)
 	}
+
+	// The other half of the contract: depth 0 means "no --depth", i.e. the
+	// whole history. Without this the test would still pass if Fetch always
+	// shallow-fetched.
+	full := t.TempDir()
+	rFull := &adaptergit.Repo{Dir: full}
+
+	if err := rFull.InitWithObjectFormat(ctx, "sha1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rFull.RemoteAdd(ctx, "origin", remote); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rFull.Fetch(ctx, remote, []string{"+refs/heads/main:refs/remotes/origin/main"}, runcontext.OperatorCredential(""), 0); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := rFull.CheckoutDetach(ctx, "refs/remotes/origin/main"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := strings.TrimSpace(gitIn(t, full, "rev-list", "--count", "HEAD")); got != "3" {
+		t.Errorf("depth=0 fetch left %s commits, want 3 (full history)", got)
+	}
 }
 
 // gitIn runs git in dir and returns trimmed stdout, failing the test on error.
 func gitIn(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	r := &adaptergit.Repo{Dir: dir}
-	out, err := r.Run(context.Background(), args...)
+	out, err := r.Run(t.Context(), args...)
 	if err != nil {
 		t.Fatalf("git %s: %v", strings.Join(args, " "), err)
 	}

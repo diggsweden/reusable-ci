@@ -144,6 +144,24 @@ func ledgerAuthFileFlag(usage string) cli.Flag {
 // ledgerRegistry builds the registry adapter for a ledger verb: an explicit
 // --auth-file (or $REUSABLE_CI_REGISTRY_AUTH_FILE) when given, otherwise the
 // ambient keychain, which is what a `docker login` in the job leaves behind.
+// ledgerRegistry constructs the registry adapter from the command's flags.
+//
+// It runs before the semantic validation of the entry or ledger the command
+// will act on, and that ordering is the supported shape rather than an
+// oversight worth reordering.
+//
+// Constructing an adapter reads a flag and records an auth-file path. It opens
+// no connection, reads no credential and contacts nothing; the first external
+// effect happens when a caller invokes a method on it. So there is nothing for
+// an earlier validation to protect: a command that refuses after construction
+// has still contacted nobody. The orderings that DO matter — validating what
+// the flags already decided before a registry round-trip, and preflighting
+// before any mutation — are enforced where they belong, in
+// Entry.ValidateBeforeCapture and in the flows themselves.
+//
+// Reordering this would mean threading validation through the composition root
+// so adapters could be built later, which buys nothing and costs the one place
+// that currently reads flags in one piece.
 func ledgerRegistry(cmd *cli.Command) *ociregistry.Adapter {
 	if authFile := cmd.String(flagAuthFile); authFile != "" {
 		return ociregistry.WithAuthFile(authFile)

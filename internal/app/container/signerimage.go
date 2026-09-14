@@ -19,6 +19,7 @@ import (
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/git"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 	"github.com/diggsweden/reusable-ci/v3/internal/retry"
 )
 
@@ -130,7 +131,11 @@ func BuildSignerImageArch(ctx context.Context, tool SignerImageTool, out io.Writ
 		return nil, err
 	}
 
-	digest := digestRawManifest(raw)
+	digest, err := digestRawManifest(raw, derived.ImageTag)
+	if err != nil {
+		return nil, err
+	}
+
 	meta := &SignerImageArchMetadata{
 		Arch:   in.Arch,
 		Tag:    derived.ImageTag,
@@ -149,10 +154,25 @@ func BuildSignerImageArch(ctx context.Context, tool SignerImageTool, out io.Writ
 
 // AssembleSignerImageManifest assembles the per-arch signer images into the
 // final multi-arch manifest, writes signer-image.json, and emits CI outputs.
-func AssembleSignerImageManifest(ctx context.Context, tool SignerImageTool, sink ci.OutputSink, summary ci.SummarySink, out io.Writer, in SignerImageAssembleInput) (*SignerImageMetadata, error) {
+func AssembleSignerImageManifest(ctx context.Context, tool SignerImageTool, sink ci.OutputSink, summary ci.SummarySink, out io.Writer, in SignerImageAssembleInput) (*SignerImageMetadata, error) { //nolint:cyclop // complete metadata preflight precedes the linear index/push/output phases.
 	derived, err := deriveSignerImageManifest(in)
 	if err != nil {
 		return nil, err
+	}
+
+	seen := make(map[string]bool, len(derived.Archs))
+	for _, arch := range derived.Archs {
+		ref, refErr := signerArchRef(arch, derived.ImageRepository, derived.Name, derived.ManifestTag+"-"+arch)
+		if refErr != nil {
+			return nil, refErr
+		}
+
+		if seen[ref] {
+			return nil, fmt.Errorf("signer architectures must identify distinct image digests: %w", errs.ErrValidation)
+		}
+
+		seen[ref] = true
+		derived.Refs = append(derived.Refs, ref)
 	}
 
 	if err = recreateSignerMetadataDir(derived.MetadataDir); err != nil {
@@ -182,7 +202,11 @@ func AssembleSignerImageManifest(ctx context.Context, tool SignerImageTool, sink
 		return nil, err
 	}
 
-	digest := digestRawManifest(raw)
+	digest, err := digestRawManifest(raw, derived.ManifestTag)
+	if err != nil {
+		return nil, err
+	}
+
 	meta := &SignerImageMetadata{
 		Tag:    derived.ManifestTag,
 		Digest: digest,
@@ -202,20 +226,14 @@ func AssembleSignerImageManifest(ctx context.Context, tool SignerImageTool, sink
 	return meta, nil
 }
 
-// addSignerArchManifests resolves each per-arch digest-pinned ref from its
-// metadata artifact and adds it to the local manifest list.
+// addSignerArchManifests adds the prevalidated per-architecture references.
 func addSignerArchManifests(ctx context.Context, tool SignerImageTool, out io.Writer, authFile string, derived signerImageManifestDerived) error {
-	for _, arch := range derived.Archs {
-		ref, err := signerArchRef(arch, derived.ImageRepository, derived.Name)
-		if err != nil {
-			return err
-		}
-
+	for index, arch := range derived.Archs {
 		if err := tool.AddManifest(ctx, domaincontainer.SignerImageManifestAddToolRequest{
 			AuthFile:      authFile,
 			Arch:          arch,
 			LocalManifest: derived.LocalManifest,
-			Ref:           ref,
+			Ref:           derived.Refs[index],
 		}, out); err != nil {
 			return err
 		}
@@ -242,7 +260,9 @@ func emitSignerImageManifestOutputs(ctx context.Context, sink ci.OutputSink, sum
 	}
 
 	if summary != nil {
-		_ = summary.Append(ctx, fmt.Sprintf("### Image\n\n* Tag: `%s`\n* Digest: `%s`\n* Ref: `%s`\n", meta.Tag, meta.Digest, meta.Ref))
+		if err := summary.Append(ctx, fmt.Sprintf("### Image\n\n* Tag: `%s`\n* Digest: `%s`\n* Ref: `%s`\n", meta.Tag, meta.Digest, meta.Ref)); err != nil {
+			return fmt.Errorf("append signer image summary: %w", err)
+		}
 	}
 
 	return nil
@@ -267,9 +287,14 @@ type signerImageManifestDerived struct {
 	LocalManifest   string
 	MetadataDir     string
 	Archs           []string
+	Refs            []string
 }
 
 func deriveSignerImageArch(in SignerImageBuildArchInput) (signerImageArchDerived, error) {
+	if err := validateSignerMetadataName(in.Name); err != nil {
+		return signerImageArchDerived{}, err
+	}
+
 	if err := validateSignerImageCommon(in.AuthFile, in.SourceSHA, in.ServerURL, in.Repository); err != nil {
 		return signerImageArchDerived{}, err
 	}
@@ -298,6 +323,10 @@ func deriveSignerImageArch(in SignerImageBuildArchInput) (signerImageArchDerived
 }
 
 func deriveSignerImageManifest(in SignerImageAssembleInput) (signerImageManifestDerived, error) {
+	if err := validateSignerMetadataName(in.Name); err != nil {
+		return signerImageManifestDerived{}, err
+	}
+
 	if err := validateSignerImageCommon(in.AuthFile, in.SourceSHA, in.ServerURL, in.Repository); err != nil {
 		return signerImageManifestDerived{}, err
 	}
@@ -346,6 +375,14 @@ func validateSignerImageCommon(authFile, sourceSHA, serverURL, repository string
 	return requireSingleLine(repository, "repository")
 }
 
+func validateSignerMetadataName(name string) error {
+	if name != "" && (name == "." || !pathsafe.Relative(name) || filepath.Base(name) != name || strings.ContainsAny(name, "\\\r\n")) {
+		return fmt.Errorf("metadata name must be a plain basename: %w", errs.ErrUsage)
+	}
+
+	return nil
+}
+
 func validateSignerArch(arch string) error {
 	switch arch {
 	case domaincontainer.ArchAMD64, domaincontainer.ArchARM64:
@@ -368,7 +405,7 @@ func localScratchImage(name string) string {
 	return "localhost/" + name
 }
 
-func signerArchRef(arch, imageRepository, name string) (string, error) {
+func signerArchRef(arch, imageRepository, name, expectedTag string) (string, error) {
 	metadataFile := filepath.Join(name+"-arch-"+arch, name+"-"+arch+".json")
 
 	body, err := os.ReadFile(metadataFile) //nolint:gosec // workspace-local metadata artifact downloaded by the workflow.
@@ -390,13 +427,26 @@ func signerArchRef(arch, imageRepository, name string) (string, error) {
 		return "", fmt.Errorf("image ref must be under %s: %s: %w", imageRepository, ref, errs.ErrValidation)
 	}
 
+	if meta.Arch != arch || meta.Tag != expectedTag || !domaincontainer.ValidDigest(meta.Digest) || ref != imageRepository+"@"+meta.Digest {
+		return "", fmt.Errorf("image metadata architecture, tag, digest and ref must agree: %w", errs.ErrValidation)
+	}
+
 	return ref, nil
 }
 
-func digestRawManifest(raw []byte) string {
+// digestRawManifest is the content digest of the manifest the registry
+// served. The digest names what every later step signs and verifies, so a
+// body that cannot be a manifest -- empty, or not a JSON object -- is refused
+// rather than hashed into a reference to nothing.
+func digestRawManifest(raw []byte, image string) (string, error) {
+	var manifest map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &manifest); err != nil || manifest == nil {
+		return "", fmt.Errorf("registry returned no manifest document for %s: %w", image, errs.ErrMalformedInput)
+	}
+
 	sum := sha256.Sum256(raw)
 
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func writeSignerJSON(path string, value any) error {
@@ -414,15 +464,26 @@ func writeSignerJSON(path string, value any) error {
 }
 
 func recreateSignerMetadataDir(path string) error {
-	if path == "" || path == "." || path == "/" || filepath.IsAbs(path) || strings.ContainsAny(path, "\n\r") || strings.Contains(path, "..") {
+	if !pathsafe.Relative(path) || filepath.Clean(path) == "." || strings.Contains(path, "\\") {
 		return fmt.Errorf("metadata-dir must be a safe relative directory: %s: %w", path, errs.ErrUsage)
 	}
 
-	if err := os.RemoveAll(path); err != nil {
+	root, err := pathsafe.MkdirRoot(filepath.Dir(path), 0o755)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
+	base := filepath.Base(path)
+	if info, err := root.Lstat(base); err == nil && !info.IsDir() {
+		return fmt.Errorf("metadata directory must be a real directory: %w", errs.ErrValidation)
+	}
+
+	if err := root.RemoveAll(base); err != nil {
 		return fmt.Errorf("remove signer image metadata dir %s: %w", path, err)
 	}
 
-	if err := os.MkdirAll(path, 0o755); err != nil { //nolint:gosec,mnd // public CI metadata artifact dir.
+	if err := root.Mkdir(base, 0o755); err != nil {
 		return fmt.Errorf("create signer image metadata dir %s: %w", path, err)
 	}
 

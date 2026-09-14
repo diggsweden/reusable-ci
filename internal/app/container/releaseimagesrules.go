@@ -4,9 +4,13 @@
 package container
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
+	"path/filepath"
 	"strings"
 
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
@@ -32,19 +36,39 @@ func ValidateReleaseImagesPath(path, distDir string) error {
 		return fmt.Errorf("release images: dist dir is required: %w", errs.ErrUsage)
 	}
 
-	if path == distDir || !strings.HasPrefix(path, distDir+"/") {
+	if !strings.HasPrefix(path, distDir+"/") {
 		return fmt.Errorf("release images: ledger path must stay under %s/: %s: %w", distDir, path, errs.ErrUsage)
 	}
 
 	// The suffix under dist answers to the one workspace-relative rule in
-	// internal/pathsafe rather than to a fourth hand-rolled '..' loop -- the
-	// convergence docs/open-questions.md tracks. Two spellings this refuses
-	// that the old loop accepted, both deliberate tightenings with no
-	// legitimate producer: control characters in the path (the flag value
-	// travels through line-oriented CI files), and a doubled slash directly
-	// after the dist dir ("dist//x"), whose suffix reads as absolute.
+	// internal/pathsafe rather than to a hand-rolled '..' loop. This also
+	// refuses control characters and a doubled slash after the dist directory.
 	if !pathsafe.Relative(strings.TrimPrefix(path, distDir+"/")) {
 		return fmt.Errorf("release images: ledger path must be a safe relative path under %s/ without '..': %s: %w", distDir, path, errs.ErrUsage)
+	}
+
+	root, err := pathsafe.OpenRoot(filepath.Dir(path))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = root.Close() }()
+
+	info, err := root.Lstat(filepath.Base(path))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("release images: ledger must be a regular file: %w", errs.ErrValidation)
 	}
 
 	return nil
@@ -59,9 +83,19 @@ func DefaultReleaseImageRepository(serverHost, repository string) string {
 // NormalizedServerURL trims a server URL flag and defaults its scheme to
 // https; a value that already carries a scheme is kept as written.
 func NormalizedServerURL(raw string) string {
-	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
-	if raw == "" || strings.Contains(raw, "://") {
-		return raw
+	raw = strings.TrimSpace(raw)
+
+	// Trailing slashes are trimmed from what follows the scheme, never from the
+	// scheme itself. Trimming the whole value turned "https://" into "https:",
+	// which has no "://" and so gained a second scheme -- "https://https:" --
+	// that the host parser accepted as the registry "https:" with no error.
+	if scheme, rest, found := strings.Cut(raw, "://"); found {
+		return scheme + "://" + strings.TrimRight(rest, "/")
+	}
+
+	raw = strings.TrimRight(raw, "/")
+	if raw == "" {
+		return ""
 	}
 
 	return "https://" + raw
@@ -79,18 +113,10 @@ func OptionalRegistryHost(raw string) (string, error) {
 // RegistryHost reduces a registry reference -- with or without scheme, with
 // or without a repository path -- to its bare host.
 func RegistryHost(raw string) (string, error) {
-	raw = strings.TrimSpace(raw)
-	raw = strings.TrimPrefix(raw, "https://")
-	raw = strings.TrimPrefix(raw, "http://")
-
-	raw = strings.Trim(raw, "/")
-	if slash := strings.Index(raw, "/"); slash >= 0 {
-		raw = raw[:slash]
+	host, err := domaincontainer.RegistryHost(raw)
+	if err != nil {
+		return "", fmt.Errorf("release images: %w", err)
 	}
 
-	if raw == "" {
-		return "", fmt.Errorf("release images: registry host is empty: %w", errs.ErrUsage)
-	}
-
-	return raw, nil
+	return host, nil
 }

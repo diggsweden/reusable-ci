@@ -10,7 +10,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
-func TestSanitizeCell(t *testing.T) {
+func TestSanitizeCell_EscapesEveryTableBreakoutCharacter(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {

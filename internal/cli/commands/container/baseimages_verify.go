@@ -16,6 +16,7 @@ import (
 	appbaseimages "github.com/diggsweden/reusable-ci/v3/internal/app/baseimages"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 func baseImagesVerifyCmd() *cli.Command {
@@ -84,7 +85,7 @@ func readBaseImagesFlavors(path string) ([]string, error) {
 		return nil, fmt.Errorf("base images: --flavors-file is required: %w", errs.ErrUsage)
 	}
 
-	if unsafeWorkflowPath(path) {
+	if !pathsafe.Relative(path) {
 		return nil, fmt.Errorf("base images: unsafe flavors-file path: %s: %w", path, errs.ErrUsage)
 	}
 
@@ -101,7 +102,7 @@ func readBaseImagesFlavors(path string) ([]string, error) {
 			continue
 		}
 
-		flavors = append(flavors, line)
+		flavors = append(flavors, trimmed)
 	}
 
 	if len(flavors) == 0 {

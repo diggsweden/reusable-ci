@@ -5,6 +5,7 @@ package container
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -12,7 +13,6 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
@@ -29,24 +29,9 @@ func ledgerMergeCmd() *cli.Command {
 			ledgerPathFlag(),
 		},
 		Action: func(_ context.Context, cmd *cli.Command) error {
-			docs, err := readLedgerDocs(cmd.Args().Slice())
+			out, sources, err := mergeLedgerDocs(cmd.Args().Slice())
 			if err != nil {
 				return err
-			}
-
-			out, err := imageledger.Merge(docs)
-			if err != nil {
-				return err
-			}
-
-			// A merge that yields no entries means no ledger was found where one
-			// was expected (e.g. the build's best-effort ledger upload didn't
-			// run). Promotion will be a safe no-op, but surface it as a
-			// forge-aware annotation (::warning:: on GitHub; a plain Warning:
-			// line elsewhere, incl. Forgejo) so it is visible rather than a
-			// silently green run.
-			if entries, perr := imageledger.Parse(out); perr == nil && len(entries) == 0 {
-				deps.Annotator(cmd).Warningf("ledger merge: no entries found under %v — promotion will be a no-op; check the build's ledger upload", cmd.Args().Slice())
 			}
 
 			path := cmd.String(flagLedger)
@@ -58,11 +43,38 @@ func ledgerMergeCmd() *cli.Command {
 				return err
 			}
 
-			_, _ = fmt.Fprintf(os.Stderr, "ledger: merged %d source(s) → %s\n", len(docs), path)
+			_, _ = fmt.Fprintf(os.Stderr, "ledger: merged %d source(s) → %s\n", sources, path)
 
 			return nil
 		},
 	}
+}
+
+func mergeLedgerDocs(paths []string) ([]byte, int, error) {
+	docs, err := readLedgerDocs(paths)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, 0, fmt.Errorf("ledger merge input: %w: %w", err, errs.ErrMissingInput)
+		}
+
+		return nil, 0, err
+	}
+
+	out, err := imageledger.Merge(docs)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	entries, err := imageledger.Parse(out)
+	if err != nil {
+		return nil, 0, fmt.Errorf("ledger merge: validate merged ledger: %w", err)
+	}
+
+	if len(entries) == 0 {
+		return nil, 0, fmt.Errorf("ledger merge: no release-image entries found under %v: %w", paths, errs.ErrMissingInput)
+	}
+
+	return out, len(docs), nil
 }
 
 // readLedgerDocs reads ledger JSON from each path: a file is read directly, a
@@ -79,17 +91,6 @@ func readLedgerDocs(paths []string) ([][]byte, error) {
 	for _, path := range paths {
 		info, err := os.Stat(path)
 		if err != nil {
-			if os.IsNotExist(err) {
-				// A missing input degrades to "no ledger here" rather than a hard
-				// failure: when the build's best-effort ledger upload didn't run,
-				// the promotion job finds no artifacts and must no-op (the image
-				// still ships with its build tags) instead of reddening a release
-				// whose signed artifacts already published.
-				_, _ = fmt.Fprintf(os.Stderr, "ledger merge: %s not found, skipping\n", path)
-
-				continue
-			}
-
 			return nil, fmt.Errorf("ledger merge: %s: %w", path, err)
 		}
 

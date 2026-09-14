@@ -139,12 +139,6 @@ func TestAssembleDist_AcceptsAnAbsolutePathInsideTheWorkspace(t *testing.T) {
 	}
 }
 
-// TestAssembleDist_MergesLedgersKeepingFirstSeenOrder covers the release image
-// ledger merge: several inputs, named individually or as a directory to search,
-// combined into the one file a release publishes.
-//
-// The images are c,b and b,a, which is deliberate. Merging keeps the order the
-// inputs were listed in and drops later duplicates, so the result is c,b,a --
 // TestAssembleDist_NoLedgerEntriesWritesAnEmptyLedger covers the other
 // side of the vanished-ledger case: with no images expected, a release
 // that genuinely has none writes a well-formed empty ledger rather than
@@ -178,6 +172,12 @@ func TestAssembleDist_NoLedgerEntriesWritesAnEmptyLedger(t *testing.T) {
 	}
 }
 
+// TestAssembleDist_MergesLedgersKeepingFirstSeenOrder covers the release image
+// ledger merge: several inputs, named individually or as a directory to search,
+// combined into the one file a release publishes.
+//
+// The images are c,b and b,a, which is deliberate. Merging keeps the order the
+// inputs were listed in and drops later duplicates, so the result is c,b,a --
 // a fixture of a,b and b,c would merge to a,b,c under that rule and also under
 // sorting, proving neither. The merged file is published, so its bytes being
 // determined by the input order rather than by chance is the point.

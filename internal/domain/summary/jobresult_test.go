@@ -4,9 +4,12 @@
 package summary_test
 
 import (
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
@@ -51,14 +54,20 @@ func TestParseJobResultEnvelope_Rejects(t *testing.T) {
 			t.Parallel()
 
 			_, err := summary.ParseJobResultEnvelope([]byte(tc.in))
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("err = %v, want %q", err, tc.want)
+			// Every rejection here is bad caller input, so they all exit
+			// EX_DATAERR rather than the unclassified internal-bug default.
+			if !errors.Is(err, errs.ErrMalformedInput) {
+				t.Fatalf("err = %v, want ErrMalformedInput", err)
+			}
+
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.want)
 			}
 		})
 	}
 }
 
-func TestParseJobResultsMap(t *testing.T) {
+func TestParseJobResultsMap_IgnoresExtraFieldsAndFailsClosed(t *testing.T) {
 	t.Parallel()
 
 	// The toJson(needs) shape: extra fields (outputs) are ignored, unknown
@@ -89,9 +98,13 @@ func TestParseJobResultsMap(t *testing.T) {
 func TestParseJobResultsMap_Invalid(t *testing.T) {
 	t.Parallel()
 
-	if _, err := summary.ParseJobResultsMap([]byte(`not-json`)); err == nil ||
-		!strings.Contains(err.Error(), "not a valid {job:{result}} object") {
-		t.Fatalf("err = %v", err)
+	_, err := summary.ParseJobResultsMap([]byte(`not-json`))
+	if !errors.Is(err, errs.ErrMalformedInput) {
+		t.Fatalf("err = %v, want ErrMalformedInput", err)
+	}
+
+	if !strings.Contains(err.Error(), "not a valid {job:{result}} object") {
+		t.Errorf("err = %v, want it to name the expected shape", err)
 	}
 }
 
@@ -120,5 +133,28 @@ func TestResolveTargetResults_MatchingAndKebabSnake(t *testing.T) {
 	// Unrelated record does not leak in.
 	if _, ok := got["unrelated-status"]; ok {
 		t.Errorf("unrelated-status should not appear")
+	}
+}
+
+// TestParseJobResultsMap_SortsByNameAndKeepsDuplicatesInOrder pins the
+// documented order: records come back sorted by job name whatever order the
+// forge serialised them in, and a repeated name keeps its records in input
+// order so aggregation sees every outcome.
+func TestParseJobResultsMap_SortsByNameAndKeepsDuplicatesInOrder(t *testing.T) {
+	t.Parallel()
+
+	records, err := summary.ParseJobResultsMap([]byte(`{"npm":{"result":"success"},"maven":{"result":"failure"},"npm":{"result":"cancelled"},"go":{"result":"skipped"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := make([]string, 0, len(records))
+	for _, record := range records {
+		got = append(got, record.Job+"="+string(record.Result))
+	}
+
+	want := []string{"go=skipped", "maven=failure", "npm=success", "npm=cancelled"}
+	if !slices.Equal(got, want) {
+		t.Errorf("records = %v, want %v", got, want)
 	}
 }

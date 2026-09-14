@@ -21,6 +21,14 @@ type CommitInput struct {
 	NoHooks     bool
 }
 
+// BranchPushInput publishes one captured commit to origin's literal branch,
+// only if that branch still points at ExpectedSHA. Both SHAs must be full OIDs.
+type BranchPushInput struct {
+	CommitSHA   string
+	Branch      string
+	ExpectedSHA string
+}
+
 // CommitInfo is the result of a CommitInfo lookup. Author is "Name <email>";
 // Date is YYYY-MM-DD; Message is the commit subject line; Body is the raw
 // `git cat-file commit` output (used by callers that need to detect GPG /

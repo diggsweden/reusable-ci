@@ -1,0 +1,12 @@
+__FORGE_TOKEN_URL_GUARD__
+if ! rc_token_response="$(curl -fsS --proto '=https' --location --max-redirs 0 \
+  -H "Authorization: bearer $rc_actions_id_token_request_token" \
+  "${rc_actions_id_token_request_url}&audience=sigstore")"; then
+  echo "FAIL: the validated forge token endpoint did not mint an id_token"
+  exit 1
+fi
+if ! rc_sigstore_id_token="$(printf '%s' "$rc_token_response" | ./probe-json id-token)"; then
+  echo "FAIL: the validated forge token endpoint returned no id_token"
+  exit 1
+fi
+unset rc_token_response rc_actions_id_token_request_url rc_actions_id_token_request_token

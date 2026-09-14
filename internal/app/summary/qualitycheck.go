@@ -23,6 +23,8 @@ type QualityCheck struct {
 // step summary. Always exits successfully — the underlying job is a
 // summary-only collector that surfaces the matrix outcome but never
 // fails the pipeline.
+// Empty input retains the historical vacuous pass. An enabled skipped or
+// unconfirmed check does not establish that all enabled checks passed.
 func QualityCheckStatus(ctx context.Context, sink ci.SummarySink, checks []QualityCheck) error {
 	var b strings.Builder //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	b.WriteString("## Pull Request Check Status\n\n")
@@ -31,9 +33,10 @@ func QualityCheckStatus(ctx context.Context, sink ci.SummarySink, checks []Quali
 	b.WriteString("|-------|--------|\n")
 
 	failed := false
+	unconfirmed := false
 
 	for _, c := range checks { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		name := domainsummary.SanitizeCell(c.Name)
+		name := domainsummary.LiteralText(c.Name)
 
 		switch {
 		case !c.Enabled:
@@ -42,6 +45,10 @@ func QualityCheckStatus(ctx context.Context, sink ci.SummarySink, checks []Quali
 			_, _ = fmt.Fprintf(&b, "| %s | ✓ Pass |\n", name)
 		case c.Result == domainsummary.ResultSkipped:
 			_, _ = fmt.Fprintf(&b, "| %s | − Skipped |\n", name)
+			unconfirmed = true
+		case !domainsummary.IsResult(c.Result):
+			_, _ = fmt.Fprintf(&b, "| %s | Unconfirmed |\n", name)
+			unconfirmed = true
 		default:
 			_, _ = fmt.Fprintf(&b, "| %s | ✗ Fail |\n", name)
 
@@ -51,11 +58,14 @@ func QualityCheckStatus(ctx context.Context, sink ci.SummarySink, checks []Quali
 
 	b.WriteString("\n")
 
-	if failed {
+	switch {
+	case failed:
 		b.WriteString("### ✗ Some checks failed\n")
 		b.WriteString("Please review the failures above and fix any issues.\n")
 		b.WriteString("Note: Individual linter failures are shown above. This status job always succeeds to provide summary.\n")
-	} else {
+	case unconfirmed:
+		b.WriteString("### Some enabled checks are skipped or unconfirmed\n")
+	default:
 		b.WriteString("### ✓ All enabled checks passed\n")
 	}
 
@@ -67,15 +77,17 @@ func QualityCheckStatus(ctx context.Context, sink ci.SummarySink, checks []Quali
 func ParseQualityChecks(args []string) []QualityCheck {
 	out := make([]QualityCheck, 0, len(args))
 	for _, raw := range args {
-		parts := strings.SplitN(raw, "|", 3)
-		if len(parts) < 3 {
+		parts := strings.Split(raw, "|")
+		if len(parts) != 3 || (parts[1] != "true" && parts[1] != "false") {
+			out = append(out, QualityCheck{Name: parts[0], Enabled: true})
+
 			continue
 		}
 
 		out = append(out, QualityCheck{
 			Name:    parts[0],
 			Enabled: parts[1] == "true",
-			Result:  domainsummary.NormalizeResult(parts[2]),
+			Result:  domainsummary.Result(parts[2]),
 		})
 	}
 

@@ -175,7 +175,12 @@ func presetPassphraseInAgent(ctx context.Context, gpg gpgImporter, fingerprint, 
 		return fmt.Errorf("list keygrips: %w", err)
 	}
 
-	for _, grip := range domaingpg.ParseKeygrips(gripsText) {
+	grips := domaingpg.ParseKeygrips(gripsText)
+	if len(grips) == 0 {
+		return fmt.Errorf("list keygrips: no keygrips returned for the imported key: %w", errs.ErrMalformedInput)
+	}
+
+	for _, grip := range grips {
 		if err := gpg.PresetPassphrase(ctx, grip, passphrase); err != nil {
 			return fmt.Errorf("preset passphrase for %s: %w", grip, err)
 		}

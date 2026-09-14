@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/httpretry"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -25,6 +26,58 @@ func defaultHTTPClient() *http.Client {
 	}
 }
 
+// doRequest applies the same authority boundary to injected and default clients
+// without modifying the caller's client or redirect policy.
+func doRequest(client *http.Client, req *http.Request) (*http.Response, error) {
+	if client == nil {
+		client = defaultHTTPClient()
+	}
+
+	guarded := *client
+	previous := client.CheckRedirect
+	guarded.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("GitLab redirect limit reached: %w", errs.ErrDependencyUnavailable)
+		}
+
+		if previous != nil {
+			if err := previous(next, via); err != nil {
+				return err
+			}
+		}
+
+		if next.URL.User != nil || !strings.EqualFold(next.URL.Scheme, req.URL.Scheme) || !strings.EqualFold(next.URL.Host, req.URL.Host) {
+			return fmt.Errorf("GitLab redirect changes authority: %w", errs.ErrValidation)
+		}
+
+		return nil
+	}
+	resp, err := guarded.Do(req)
+
+	return resp, privateRequestError(err)
+}
+
+type requestError struct{ cause error }
+
+func (e requestError) Error() string { return "GitLab request failed" }
+func (e requestError) Unwrap() error { return e.cause }
+func privateRequestError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	return requestError{cause: err}
+}
+
+func responseStatusError(status int) error {
+	cls := errs.FromHTTPStatus(status)
+	if cls == nil {
+		cls = errs.ErrDependencyUnavailable
+	}
+
+	return fmt.Errorf("HTTP %d: %w", status, cls)
+}
+
 // getJSON does a GET with the provided headers, returns the body bytes.
 // Empty PRIVATE-TOKEN is dropped. Caller is responsible for
 // unmarshalling.
@@ -35,7 +88,7 @@ func getJSON(ctx context.Context, client *http.Client, url string, headers map[s
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
+		return nil, privateRequestError(err)
 	}
 
 	for k, v := range headers {
@@ -46,7 +99,7 @@ func getJSON(ctx context.Context, client *http.Client, url string, headers map[s
 		req.Header.Set(k, v)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := doRequest(client, req)
 	if err != nil {
 		return nil, err
 	}
@@ -55,16 +108,11 @@ func getJSON(ctx context.Context, client *http.Client, url string, headers map[s
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
+		return nil, privateRequestError(err)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		cls := errs.FromHTTPStatus(resp.StatusCode)
-		if cls == nil {
-			cls = errs.ErrDependencyUnavailable
-		}
-
-		return nil, fmt.Errorf("HTTP %d: %s: %w", resp.StatusCode, string(body), cls)
+		return nil, responseStatusError(resp.StatusCode)
 	}
 
 	return body, nil
@@ -91,7 +139,7 @@ func sendJSON(ctx context.Context, client *http.Client, method, url string, head
 
 	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return privateRequestError(err)
 	}
 
 	for k, v := range headers {
@@ -102,21 +150,16 @@ func sendJSON(ctx context.Context, client *http.Client, method, url string, head
 		req.Header.Set(k, v)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := doRequest(client, req)
 	if err != nil {
 		return err
 	}
 
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		cls := errs.FromHTTPStatus(resp.StatusCode)
-		if cls == nil {
-			cls = errs.ErrDependencyUnavailable
-		}
-
-		return fmt.Errorf("HTTP %d: %s: %w", resp.StatusCode, string(respBody), cls)
+		return responseStatusError(resp.StatusCode)
 	}
 
 	return nil
@@ -131,7 +174,7 @@ func deleteJSON(ctx context.Context, client *http.Client, url string, headers ma
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return privateRequestError(err)
 	}
 
 	for k, v := range headers {
@@ -142,21 +185,16 @@ func deleteJSON(ctx context.Context, client *http.Client, url string, headers ma
 		req.Header.Set(k, v)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := doRequest(client, req)
 	if err != nil {
 		return err
 	}
 
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		cls := errs.FromHTTPStatus(resp.StatusCode)
-		if cls == nil {
-			cls = errs.ErrDependencyUnavailable
-		}
-
-		return fmt.Errorf("HTTP %d: %s: %w", resp.StatusCode, string(respBody), cls)
+		return responseStatusError(resp.StatusCode)
 	}
 
 	return nil

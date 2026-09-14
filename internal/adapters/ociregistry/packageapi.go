@@ -58,16 +58,11 @@ func (a *Adapter) listRepositoryTags(ctx context.Context, repository string) ([]
 // DeleteTag removes one tag, satisfying provider.TagDeleter against a plain OCI
 // distribution registry.
 //
-// The distribution spec has no delete-tag operation: DELETE takes a manifest
-// digest and removes the manifest, taking every tag that shares it. A forge
-// package API deletes the version and leaves siblings alone, so the same call
-// is safe there and destructive here.
-//
-// The gap is closed by refusing rather than by hoping: the tag's digest is
-// resolved, the repository's tags are checked for another pointing at it, and
-// a shared manifest aborts the delete. Base-image retention deletes a
-// content-addressed tag that by construction has no siblings, so the check
-// costs one listing and turns "usually fine" into "verified before the write".
+// crane.Delete preserves the tag identifier in the DELETE request; this adapter
+// must never replace it with the resolved digest. Registries that do not support
+// tag deletion must refuse the request; there is no digest-deletion fallback.
+// The shared-manifest preflight retains the conservative retention policy, but
+// is only a snapshot, not a lock against concurrent publication.
 func (a *Adapter) DeleteTag(ctx context.Context, ref string) error {
 	parsed, err := container.ParseTaggedRef(ref)
 	if err != nil {
@@ -101,10 +96,8 @@ func (a *Adapter) DeleteTag(ctx context.Context, ref string) error {
 
 // refuseSharedManifest fails when a tag other than tag resolves to digest.
 //
-// Deleting through this adapter removes the manifest, so a second tag on the
-// same digest would disappear with it. That is exactly the accident the forge
-// path is careful to avoid -- staging and final tags share a manifest, which is
-// why base-image cleanup deletes package versions and never digests.
+// This conservative preflight detects known shared release state. Actual
+// deletion still addresses the tag, including when a sibling appears later.
 func (a *Adapter) refuseSharedManifest(ctx context.Context, repository, tag, digest string) error {
 	tags, err := a.listRepositoryTags(ctx, repository)
 	if err != nil {

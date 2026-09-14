@@ -33,7 +33,6 @@ package conformance_test
 // $CI_JOB_TOKEN, which exists only while the job runs.
 
 import (
-	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -63,7 +62,7 @@ func TestInRunner_ForgePackages_NPMPublishReachesTheRegistry(t *testing.T) {
 	// prerelease because npm refuses to publish one without an explicit --tag,
 	// which would make this scenario fail on npm's release policy rather than on
 	// anything the forge did.
-	version := fmt.Sprintf("0.0.%d", time.Now().UnixMilli()%1_000_000)
+	version := forgePackageVersion(time.Now())
 
 	for _, forge := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "a package registry"), livetest.NeedsInRunner) {
 
@@ -199,7 +198,7 @@ func TestInRunner_ForgePackages_MavenDeployReachesTheRegistry(t *testing.T) {
 	)
 
 	// Unique and non-prerelease, for the reasons PAR-PKG-1 documents.
-	version := fmt.Sprintf("0.0.%d", time.Now().UnixMilli()%1_000_000)
+	version := forgePackageVersion(time.Now())
 
 	for _, forge := range livetest.ForgesMeeting(t, forgesClaiming(t, alwaysValidatesTokens, "a package registry"), livetest.NeedsInRunner) {
 

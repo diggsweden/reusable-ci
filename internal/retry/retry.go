@@ -15,7 +15,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"time"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // Backoff selects how the wait between attempts grows.
@@ -75,7 +78,8 @@ func Permanent(err error) error {
 
 // Do runs fn until it returns a nil error or attempts is exhausted, waiting
 // between tries per the selected backoff (attempt×delay by default) and
-// aborting immediately if ctx is cancelled. It returns fn's last error on
+// preventing later attempts if ctx is cancelled. The first attempt still runs
+// with a pre-cancelled context. It returns fn's last error on
 // exhaustion, the unwrapped error when fn returns a Permanent(err), or
 // ctx.Err() on cancellation. When out is non-nil and no OnRetry hook is set, a
 // generic progress line is written before each wait.
@@ -87,9 +91,34 @@ func Do[T any](ctx context.Context, out io.Writer, attempts int, delay time.Dura
 		opt(&cfg)
 	}
 
+	// A non-positive attempt count used to skip the loop entirely and return
+	// the zero value with a nil error — the operation never ran and the caller
+	// could not tell, because that is exactly what success looks like here.
+	//
+	// Callers are meant to clamp with Attempts(value, fallback), and most do,
+	// but Do is exported and takes a plain int: runMiseWithRetry, the raw
+	// container scan and the base-image evidence check all pass a caller-
+	// supplied count straight through. Any of them reaching zero would report
+	// a tool that installed, a scan that ran, or evidence that verified, none
+	// of which happened. Refusing is the fail-closed reading, and it names the
+	// caller's bug rather than absorbing it.
+	if attempts < 1 {
+		var zero T
+
+		return zero, fmt.Errorf("retry: attempts must be at least 1, got %d: %w", attempts, errs.ErrUsage)
+	}
+
 	var err error
 
 	for attempt := 1; attempt <= attempts; attempt++ {
+		// Preserve the initial-attempt policy, but never start another attempt
+		// after cancellation, even when the delay or retry hook is zero-time.
+		if attempt > 1 && ctx.Err() != nil {
+			var zero T
+
+			return zero, ctx.Err()
+		}
+
 		result, runErr := fn()
 		if runErr == nil {
 			return result, nil
@@ -138,10 +167,15 @@ func Do[T any](ctx context.Context, out io.Writer, attempts int, delay time.Dura
 	return zero, err
 }
 
-// backoffWait computes the wait before the retry that follows a failed attempt.
+// backoffWait computes the wait before the retry that follows a failed attempt,
+// saturating positive linear overflow at the largest representable duration.
 func backoffWait(b Backoff, attempt int, delay time.Duration) time.Duration {
 	if b == Constant {
 		return delay
+	}
+
+	if delay > 0 && attempt > 0 && int64(attempt) > math.MaxInt64/int64(delay) {
+		return time.Duration(math.MaxInt64)
 	}
 
 	return time.Duration(attempt) * delay

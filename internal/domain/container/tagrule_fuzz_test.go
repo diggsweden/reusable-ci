@@ -4,8 +4,8 @@
 package container_test
 
 import (
+	"strings"
 	"testing"
-	"unicode/utf8"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 )
@@ -28,6 +28,7 @@ func FuzzParseRules(f *testing.F) {
 		"value=oops,enable=true",
 		"type=ref,event=stable",
 		"type=raw,value=a\ntype=semver,pattern={{major}}.{{minor}}",
+		"type=raw,value=a\xffb",
 	}
 	for _, seed := range seeds {
 		f.Add(seed)
@@ -62,9 +63,16 @@ func FuzzParseRules(f *testing.F) {
 				}
 			}
 
+			// A value is one CSV field of one line, trimmed. That is the
+			// parser's actual contract. It used to assert valid UTF-8 here,
+			// which the parser never promised: it keeps bytes, and Apply
+			// refuses a tag that is not valid under the OCI grammar -- a seed
+			// containing 0xFF failed this property while Apply correctly
+			// rejected the resulting tag. The byte-level check belongs to Apply
+			// and is pinned there.
 			for _, value := range []string{rule.Value, rule.Pattern, rule.Prefix} {
-				if value != "" && !utf8.ValidString(value) {
-					t.Fatalf("rule contains invalid UTF-8 string %q", value)
+				if strings.ContainsAny(value, ",\n") || value != strings.TrimSpace(value) {
+					t.Fatalf("rules[%d] has a value that is not one trimmed field: %q", i, value)
 				}
 			}
 		}

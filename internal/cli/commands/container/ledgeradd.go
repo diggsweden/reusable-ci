@@ -19,7 +19,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provenance"
 )
 
-func ledgerAddCmd() *cli.Command {
+func ledgerAddCmd() *cli.Command { //nolint:cyclop // optional capture, entry preflight and locked update have separate failure boundaries.
 	return &cli.Command{
 		Name:  "add",
 		Usage: "validate one image entry and append it to the ledger",
@@ -90,12 +90,26 @@ func ledgerAddCmd() *cli.Command {
 				return err
 			}
 
+			// Everything that does not depend on the digest the registry is
+			// about to return is checked first, so a bad SBOM path or an
+			// out-of-scope tag fails here rather than after a round-trip whose
+			// own error would be the first thing the operator sees.
+			if cmd.Bool("capture-digest") {
+				if err := entry.ValidateBeforeCapture(releaseTag); err != nil {
+					return err
+				}
+			}
+
 			// Digest capture hits the registry — do it before taking the
 			// lock so we never hold the ledger lock across a network call.
 			if cmd.Bool("capture-digest") {
 				if err := captureEntryDigest(ctx, ledgerRegistry(cmd), &entry); err != nil {
 					return err
 				}
+			}
+
+			if err := entry.Validate(releaseTag); err != nil {
+				return err
 			}
 
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil { //nolint:gosec,mnd // dist dir; 0755 is conventional.
@@ -110,7 +124,10 @@ func ledgerAddCmd() *cli.Command {
 			var added bool
 
 			if err := cliio.WithLock(path, func() error {
-				existing, _ := os.ReadFile(path) //nolint:gosec,errcheck // operator-supplied ledger path; an absent file means an empty ledger.
+				existing, err := readLedgerForAppend(path)
+				if err != nil {
+					return err
+				}
 
 				out, wasNew, err := imageledger.Append(existing, entry, releaseTag)
 				if err != nil {
@@ -137,6 +154,18 @@ func ledgerAddCmd() *cli.Command {
 			return nil
 		},
 	}
+}
+
+// readLedgerForAppend reads the ledger an entry is appended to. Only an absent
+// ledger is an empty one: treating an unreadable ledger as empty rewrote it
+// with the new entry alone, silently dropping every image recorded before.
+func readLedgerForAppend(path string) ([]byte, error) {
+	existing, err := os.ReadFile(path) //nolint:gosec // operator-supplied ledger path.
+	if err != nil && !os.IsNotExist(err) {
+		return nil, fmt.Errorf("ledger: read %s: %w", path, err)
+	}
+
+	return existing, nil
 }
 
 // entryDescriptor renders the ledger entry's noun for the add message. --role
@@ -421,9 +450,17 @@ func captureEntryDigest(ctx context.Context, resolver imageledger.DigestResolver
 		return fmt.Errorf("ledger add --capture-digest needs a candidate or final tag to resolve: %w", errs.ErrUsage)
 	}
 
+	if !domaincontainer.ValidTaggedRef(src) {
+		return fmt.Errorf("ledger add: capture source must be a qualified tagged reference: %w", errs.ErrValidation)
+	}
+
 	digest, err := resolver.ResolveDigest(ctx, src)
 	if err != nil {
 		return fmt.Errorf("ledger add: capture digest from %s: %w", src, err)
+	}
+
+	if !domaincontainer.ValidDigest(digest) {
+		return fmt.Errorf("ledger add: resolver returned a noncanonical digest: %w", errs.ErrMalformedInput)
 	}
 
 	entry.PinDigest(digest)

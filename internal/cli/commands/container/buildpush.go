@@ -31,7 +31,7 @@ func buildPushOCIImageCmd() *cli.Command {
 		Description: `Builds every platform from a JSON plan into one buildah
 manifest, applies the standard OCI release labels, pushes the manifest list, and
 emits image and digest outputs. This is the reusable-ci implementation of the
-forgejo-ci public build-push-oci-image action contract. Every flag may also be
+public reusable-workflow build-push-oci-image contract. Every flag may also be
 fed from the $REUSABLE_CI_PLAN plan file under the "container build-push-oci-image"
 scope (flag > plan > env > default).`,
 		Flags: []cli.Flag{

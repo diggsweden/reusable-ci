@@ -60,12 +60,14 @@ func TestValidateSignFlags_GPGKeyFilesPerMethod(t *testing.T) {
 				return
 			}
 
-			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("err = %v, want substring %q", err, tc.wantErr)
+			// A method/flag combination that cannot work is configuration the
+			// operator has to change, so it classifies as ErrInvalidConfig.
+			if !errors.Is(err, errs.ErrInvalidConfig) {
+				t.Fatalf("err = %v, want ErrInvalidConfig", err)
 			}
 
-			if !errors.Is(err, errs.ErrInvalidConfig) {
-				t.Errorf("err should wrap ErrInvalidConfig, got %v", err)
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want substring %q", err, tc.wantErr)
 			}
 		})
 	}

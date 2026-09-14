@@ -4,9 +4,11 @@
 package version
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
@@ -19,11 +21,14 @@ import (
 // releaseContextOps is the slice of adapter/git.Repo this use case needs.
 type releaseContextOps interface {
 	TaggerInfo(ctx context.Context, tag string) (git.TaggerInfo, error)
+	TagsPointingAt(ctx context.Context, commit string) ([]string, error)
 }
 
 // ReleaseContextInput drives `reusable-ci version derive-release`.
 type ReleaseContextInput struct {
 	Ref                   string // the pushed ref, e.g. "release-request/v3.5.7"
+	ResolveReleaseRequest bool   // resolve the sole release-request/v* tag at Revision
+	Revision              string // defaults to HEAD only in ResolveReleaseRequest mode
 	RequireReleaseRequest bool   // reject refs outside release-request/
 	RequireStable         bool   // reject non-vMAJOR.MINOR.PATCH final tags
 	TrailerMode           string // default or coauthor-only
@@ -45,11 +50,16 @@ type ReleaseContextInput struct {
 // bot's release commit; the request tag itself remains the cryptographic
 // anchor.
 func ReleaseContext(ctx context.Context, repo releaseContextOps, in ReleaseContextInput, sink ci.OutputSink, manifest ci.ManifestSink, w io.Writer) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if in.Ref == "" {
+	ref, err := resolveReleaseContextRef(ctx, repo, in)
+	if err != nil {
+		return err
+	}
+
+	if ref == "" {
 		return fmt.Errorf("release-context: ref is required: %w", errs.ErrUsage)
 	}
 
-	if strings.ContainsAny(in.Ref, "\r\n") {
+	if strings.ContainsAny(ref, "\r\n") {
 		return fmt.Errorf("release-context: ref must be a single-line value: %w", errs.ErrValidation)
 	}
 
@@ -58,6 +68,8 @@ func ReleaseContext(ctx context.Context, repo releaseContextOps, in ReleaseConte
 		return err
 	}
 
+	in.Ref = ref
+
 	releaseTag, requestRef, err := deriveReleaseIdentity(in)
 	if err != nil {
 		return err
@@ -65,11 +77,55 @@ func ReleaseContext(ctx context.Context, repo releaseContextOps, in ReleaseConte
 
 	releaseVersion := version.StripVPrefix(releaseTag)
 
-	_, _ = fmt.Fprintf(w, "%s Release tag %s (version %s)\n", clicolor.Check(w), releaseTag, releaseVersion)
-
 	trailers := buildReleaseTrailers(ctx, repo, requestRef, trailerMode)
 
-	return emitReleaseContextOutputs(ctx, sink, manifest, releaseTag, releaseVersion, requestRef, trailers)
+	if err := emitReleaseContextOutputs(ctx, sink, manifest, releaseTag, releaseVersion, requestRef, trailers); err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(w, "%s Release tag %s (version %s)\n", clicolor.Check(w), releaseTag, releaseVersion)
+
+	return nil
+}
+
+// resolveReleaseContextRef keeps ordinary explicit-ref derivation unchanged.
+// Only the opt-in mode consults git, and only that mode supplies HEAD as a
+// default revision.
+func resolveReleaseContextRef(ctx context.Context, repo releaseContextOps, in ReleaseContextInput) (string, error) {
+	if !in.ResolveReleaseRequest {
+		if in.Revision != "" {
+			return "", fmt.Errorf("release-context: --revision requires --resolve-release-request: %w", errs.ErrUsage)
+		}
+
+		return in.Ref, nil
+	}
+
+	revision := cmp.Or(in.Revision, "HEAD")
+	if strings.ContainsAny(revision, "\r\n") {
+		return "", fmt.Errorf("release-context: revision must be a single-line value: %w", errs.ErrValidation)
+	}
+
+	tags, err := repo.TagsPointingAt(ctx, revision)
+	if err != nil {
+		return "", fmt.Errorf("release-context: list tags pointing at %q: %w", revision, err)
+	}
+
+	requests := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		finalTag, ok := version.ReleaseRequestVersion(tag)
+		if ok && strings.HasPrefix(finalTag, "v") {
+			requests = append(requests, strings.TrimPrefix(tag, "refs/tags/"))
+		}
+	}
+
+	sort.Strings(requests)
+
+	if len(requests) != 1 {
+		return "", fmt.Errorf("release-context: expected exactly one %sv* tag pointing at %q, found %d (%s): %w",
+			version.ReleaseRequestPrefix, revision, len(requests), strings.Join(requests, ", "), errs.ErrValidation)
+	}
+
+	return requests[0], nil
 }
 
 // trailerModeDefault and trailerModeCoauthorOnly are the accepted
@@ -156,22 +212,21 @@ func buildReleaseTrailers(ctx context.Context, repo releaseContextOps, requestRe
 
 	trailers := []string{"Release-Request: " + requestRef}
 
-	if info, err := repo.TaggerInfo(ctx, requestRef); err == nil && info.Tagger != "" {
-		if mode == trailerModeCoauthorOnly {
-			if completeTaggerIdentity(info.Tagger) {
-				trailers = append(trailers, "Co-authored-by: "+info.Tagger)
-			}
-
-			return trailers
-		}
-
-		trailers = append(trailers,
-			"Release-Authorized-By: "+info.Tagger,
-			"Co-authored-by: "+info.Tagger,
-		)
+	// An identity without both a name and an address names nobody, in
+	// either mode: "Co-authored-by: Ada <>" is not attribution.
+	info, err := repo.TaggerInfo(ctx, requestRef)
+	if err != nil || !completeTaggerIdentity(info.Tagger) {
+		return trailers
 	}
 
-	return trailers
+	if mode == trailerModeCoauthorOnly {
+		return append(trailers, "Co-authored-by: "+info.Tagger)
+	}
+
+	return append(trailers,
+		"Release-Authorized-By: "+info.Tagger,
+		"Co-authored-by: "+info.Tagger,
+	)
 }
 
 func completeTaggerIdentity(identity string) bool {

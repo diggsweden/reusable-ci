@@ -14,6 +14,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/syft"
 	appcontainer "github.com/diggsweden/reusable-ci/v3/internal/app/container"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/secretenv"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/signflags"
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
@@ -29,8 +30,8 @@ resolves each image by candidate_tag or digest ref, cosign-signs the immutable
 digest, generates a CycloneDX image SBOM with syft, attests that SBOM, enriches
 the release SLSA predicate with per-image/base-lineage fields, and attests it.
 
-This is the reusable-ci replacement for forgejo-ci's sign-promote-images.sh sign
-step; promotion remains a separate ledger promote operation.`,
+This is the reusable-workflow signer boundary; promotion remains a separate
+ledger promote operation.`,
 		Flags: append(
 			[]cli.Flag{
 				ledgerPathFlag(),
@@ -38,7 +39,7 @@ step; promotion remains a separate ledger promote operation.`,
 				ledgerAuthFileFlag("registry auth file for resolving each image before signing"),
 				&cli.StringFlag{Name: "provenance-predicate", Value: "dist/slsa-provenance.predicate.json", Sources: cli.EnvVars("SLSA_PROVENANCE_PREDICATE"), Usage: "base SLSA provenance predicate JSON enriched per image before attestation"},
 				&cli.StringFlag{Name: flagProvenanceEnvelope, Sources: cli.EnvVars("SLSA_PROVENANCE_ENVELOPE"), Usage: "in-toto statement JSON; its .predicate is enriched per image before attestation"},
-				&cli.BoolFlag{Name: flagRecursive, Sources: cli.EnvVars("LEDGER_SIGN_RECURSIVE"), Usage: "pass --recursive to cosign sign/attest for manifest-list children (default false to match forgejo-ci signer behavior)"},
+				&cli.BoolFlag{Name: flagRecursive, Sources: cli.EnvVars("LEDGER_SIGN_RECURSIVE"), Usage: "pass --recursive to cosign sign/attest for manifest-list children (default false)"},
 				&cli.StringFlag{Name: flagExpectedImageRepository, Sources: cli.EnvVars("LEDGER_SIGN_EXPECTED_IMAGE_REPOSITORY", "LEDGER_EXPECTED_IMAGE_REPOSITORY"), Usage: "optional exact image repository allowed for ref, final_tag, moving_tag, and candidate_tag (for forge-specific signer boundaries)"},
 				&cli.StringFlag{Name: flagExpectedBaseRepository, Sources: cli.EnvVars("LEDGER_SIGN_EXPECTED_BASE_REPOSITORY"), Usage: "optional exact base image repository allowed for base_ref"},
 				&cli.StringFlag{Name: flagSBOMPathPattern, Sources: cli.EnvVars("LEDGER_SIGN_SBOM_PATH_PATTERN"), Usage: "optional regular expression every ledger SBOM path must match"},
@@ -69,7 +70,7 @@ step; promotion remains a separate ledger promote operation.`,
 			}
 
 			return runLedgerSign(ctx,
-				cosign.New(),
+				cosign.ForKeyRef(cmd.String("key")),
 				ledgerRegistry(cmd),
 				appcontainer.SignLedgerImagesInput{
 					Entries:                 entries,
@@ -106,19 +107,6 @@ func runLedgerSign(ctx context.Context, signer *cosign.Adapter, resolver *ocireg
 		in)
 }
 
-func signerSecretEnv() []string {
-	return []string{
-		"COSIGN_KEY",
-		"COSIGN_PASSWORD",
-		"FORGEJO_TOKEN",
-		"GPG_SIGNING_FINGERPRINT",
-		"GPG_SIGNING_KEY",
-		"GPG_SIGNING_PASSWORD",
-		"MISE_FORGEJO_TOKEN",
-		"MISE_GITHUB_TOKEN",
-		"REUSABLE_CI_PROVIDER_TOKEN",
-		"REGISTRY_PASSWORD",
-		"REGISTRY_TOKEN",
-		envRegistryUser,
-	}
-}
+// signerSecretEnv is the credential list every tool at the signer boundary
+// runs without; secretenv keeps the one copy the changelog renderers share.
+func signerSecretEnv() []string { return secretenv.Names() }

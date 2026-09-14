@@ -4,6 +4,7 @@
 package security
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -73,39 +74,56 @@ func OpengrepHasFindingsMeetingThreshold(threshold OpengrepSeverity, findingsTot
 	}
 }
 
-// CountOccurrences returns the number of non-overlapping instances of
-// needle in body. Used to count opengrep JSON output markers like
-// `"severity":"ERROR"` — the bash uses `grep -o ... | wc -l` which
-// counts matches not lines, hence we want non-overlapping occurrences.
-func CountOccurrences(body, needle string) int {
-	if needle == "" {
-		return 0
-	}
-
-	return strings.Count(body, needle)
-}
-
-// OpengrepCounts is what the bash extracts from the JSON output file
-// using grep -o counts.
+// OpengrepCounts counts result objects and their extra.severity fields.
 type OpengrepCounts struct {
-	FindingsTotal int // `"check_id":` occurrences
-	ErrorTotal    int // `"severity":"ERROR"`
-	WarningTotal  int // `"severity":"WARNING"`
-	InfoTotal     int // `"severity":"INFO"`
+	FindingsTotal int
+	ErrorTotal    int
+	WarningTotal  int
+	InfoTotal     int
 }
 
-// CountOpengrepFindings parses the JSON body looking for the four
-// occurrence markers the bash relies on. The bash uses substring
-// counting rather than JSON parsing for performance and to avoid pulling
-// in jq; the Go port does the same so the result is byte-for-byte
-// identical.
-func CountOpengrepFindings(body string) OpengrepCounts {
-	return OpengrepCounts{
-		FindingsTotal: CountOccurrences(body, `"check_id":`),
-		ErrorTotal:    CountOccurrences(body, `"severity":"ERROR"`),
-		WarningTotal:  CountOccurrences(body, `"severity":"WARNING"`),
-		InfoTotal:     CountOccurrences(body, `"severity":"INFO"`),
+// CountOpengrepFindings counts actual result objects, independent of formatting
+// or strings in rule descriptions. An invalid report cannot establish a pass.
+func CountOpengrepFindings(body string) (OpengrepCounts, error) {
+	var report struct {
+		Results []struct {
+			CheckID string `json:"check_id"`
+			Extra   struct {
+				Severity string `json:"severity"`
+			} `json:"extra"`
+		} `json:"results"`
+		Errors []json.RawMessage `json:"errors"`
 	}
+	if err := json.Unmarshal([]byte(body), &report); err != nil {
+		return OpengrepCounts{}, fmt.Errorf("parse OpenGrep report: %w: %w", err, errs.ErrMalformedInput)
+	}
+
+	if report.Results == nil || len(report.Errors) > 0 {
+		return OpengrepCounts{}, fmt.Errorf("OpenGrep report must contain a results array and no scan errors: %w", errs.ErrMalformedInput)
+	}
+
+	var counts OpengrepCounts
+
+	for _, result := range report.Results {
+		if result.CheckID == "" {
+			return OpengrepCounts{}, fmt.Errorf("OpenGrep result lacks check_id: %w", errs.ErrMalformedInput)
+		}
+
+		counts.FindingsTotal++
+
+		switch result.Extra.Severity {
+		case "ERROR":
+			counts.ErrorTotal++
+		case "WARNING":
+			counts.WarningTotal++
+		case "INFO":
+			counts.InfoTotal++
+		default:
+			return OpengrepCounts{}, fmt.Errorf("OpenGrep result has unsupported severity: %w", errs.ErrMalformedInput)
+		}
+	}
+
+	return counts, nil
 }
 
 // OpengrepPlatformContext drives the code-scanning labels in the

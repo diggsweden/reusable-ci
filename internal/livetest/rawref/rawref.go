@@ -67,6 +67,13 @@ type Release struct {
 	Name   string
 	Body   string
 	Assets []Asset
+
+	// Draft and Prerelease are the policy state the forge recorded. Forgejo
+	// reports both; GitLab has neither concept (a release there is always
+	// published and never a prerelease), so both stay false for it and the
+	// product refuses a prerelease policy on GitLab before any request.
+	Draft      bool
+	Prerelease bool
 }
 
 // Asset is one attached file. Digest is the SHA-256 of the bytes the forge
@@ -128,10 +135,12 @@ func (r Reader) forgejoRelease(ctx context.Context, repo, tag string) (Release, 
 		"/releases/tags/" + url.PathEscape(tag)
 
 	var payload struct {
-		TagName string `json:"tag_name"`
-		Name    string `json:"name"`
-		Body    string `json:"body"`
-		Assets  []struct {
+		TagName    string `json:"tag_name"`
+		Name       string `json:"name"`
+		Body       string `json:"body"`
+		Draft      bool   `json:"draft"`
+		Prerelease bool   `json:"prerelease"`
+		Assets     []struct {
 			Name string `json:"name"`
 			Size int64  `json:"size"`
 			URL  string `json:"browser_download_url"`
@@ -143,7 +152,7 @@ func (r Reader) forgejoRelease(ctx context.Context, repo, tag string) (Release, 
 		return Release{}, false, err
 	}
 
-	release := Release{Tag: payload.TagName, Name: payload.Name, Body: payload.Body}
+	release := Release{Tag: payload.TagName, Name: payload.Name, Body: payload.Body, Draft: payload.Draft, Prerelease: payload.Prerelease}
 
 	for _, asset := range payload.Assets {
 		digest, digestErr := r.digest(ctx, asset.URL)

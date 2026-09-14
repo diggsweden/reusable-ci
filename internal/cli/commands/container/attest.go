@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/urfave/cli/v3"
 
@@ -106,24 +105,13 @@ func attestCmd() *cli.Command {
 	}
 }
 
-// provenanceFromEnv derives the forge-neutral SLSA provenance Input from the
-// active forge's CI environment. GitHub and Forgejo expose GITHUB_*; GitLab
-// exposes CI_*. Only used when a slsaprovenance predicate is generated. The
-// resulting predicate is the same shape `release provenance` emits for blobs.
+// provenanceFromEnv uses the same runner-attested source and identity as
+// generic release provenance. Only used when a SLSA predicate is generated.
 func provenanceFromEnv(image string) provenance.Input {
-	get := os.Getenv
-	server := strings.TrimSuffix(cmp.Or(get("GITHUB_SERVER_URL"), get("CI_SERVER_URL")), "/")
-	repo := cmp.Or(get("GITHUB_REPOSITORY"), get("CI_PROJECT_PATH"))
-	// Short ref name (v1.2.3), not the full GITHUB_REF (refs/tags/v1.2.3), to
-	// match the provider's RefName + GitLab's CI_COMMIT_REF_NAME + the release
-	// provenance path — one ref representation across forges and artifacts.
-	ref := cmp.Or(get("GITHUB_REF_NAME"), get("CI_COMMIT_REF_NAME"))
-	sha := cmp.Or(get("GITHUB_SHA"), get("CI_COMMIT_SHA"))
+	repoURL, ref, sha := cienv.ProvenanceSource()
 
-	var source, repoURL string
-
-	if server != "" && repo != "" {
-		repoURL = server + "/" + repo
+	var source string
+	if repoURL != "" {
 		source = "git+" + repoURL
 	}
 
@@ -144,8 +132,8 @@ func provenanceFromEnv(image string) provenance.Input {
 		Ref:          ref,
 		ImageName:    image,
 		InvocationID: cienv.ProvenanceInvocationID(),
-		StartedOn:    cmp.Or(get("BUILD_STARTED_ON"), epochTime),
-		FinishedOn:   cmp.Or(get("BUILD_FINISHED_ON"), epochTime),
+		StartedOn:    cmp.Or(os.Getenv("BUILD_STARTED_ON"), epochTime),
+		FinishedOn:   cmp.Or(os.Getenv("BUILD_FINISHED_ON"), epochTime),
 		ResolvedDeps: deps,
 	}
 }

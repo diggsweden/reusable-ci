@@ -13,12 +13,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/openpgp"
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/git"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
+	openpgp "github.com/diggsweden/reusable-ci/v3/internal/pgp"
 )
 
 // gitOps is the slice of internal/adapters/git.Repo this package needs.
@@ -50,7 +50,8 @@ type gitOps interface {
 
 // TagUniquenessInput drives `validate tag-uniqueness`.
 type TagUniquenessInput struct {
-	Tag string
+	Tag       string
+	IgnoreTag string
 }
 
 // TagUniqueness errors when one or more *other* tags point at the same
@@ -63,7 +64,7 @@ func TagUniqueness(ctx context.Context, repo gitOps, out io.Writer, in TagUnique
 
 	_, _ = fmt.Fprintf(out, "→ Validating Tag Points to Unique Commit\n")
 
-	commit, err := repo.RevParse(ctx, in.Tag+"^{commit}")
+	commit, err := repo.RevParse(ctx, "refs/tags/"+in.Tag+"^{commit}")
 	if err != nil {
 		return fmt.Errorf("resolve tag commit: %w", err)
 	}
@@ -76,6 +77,10 @@ func TagUniqueness(ctx context.Context, repo gitOps, out io.Writer, in TagUnique
 	}
 
 	others := validate.FilterOutTag(all, in.Tag)
+	if in.IgnoreTag != "" {
+		others = validate.FilterOutTag(others, in.IgnoreTag)
+	}
+
 	if len(others) > 0 {
 		var b []byte //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 
@@ -101,8 +106,9 @@ func TagUniqueness(ctx context.Context, repo gitOps, out io.Writer, in TagUnique
 
 // TagCommitInput drives `validate tag-commit`.
 type TagCommitInput struct {
-	Tag    string
-	Branch string // empty defaults to "main"
+	Tag         string
+	Branch      string // empty defaults to "main"
+	RequireHead bool   // require the tag commit to equal origin/<branch>, not merely be reachable
 }
 
 // TagCommit verifies the tagged commit is reachable from origin/<branch>.
@@ -121,7 +127,7 @@ func TagCommit(ctx context.Context, repo gitOps, out io.Writer, in TagCommitInpu
 
 	_, _ = fmt.Fprintf(out, "## Validating Tag Commit is Available on Branch\n")
 
-	tagCommit, err := repo.RevParse(ctx, in.Tag+"^{commit}")
+	tagCommit, err := repo.RevParse(ctx, "refs/tags/"+in.Tag+"^{commit}")
 	if err != nil {
 		// Adapter already classifies as validation failure with the
 		// git command + stderr appended; the "resolve tag commit:"
@@ -131,14 +137,16 @@ func TagCommit(ctx context.Context, repo gitOps, out io.Writer, in TagCommitInpu
 
 	_, _ = fmt.Fprintf(out, "Tag '%s' points to commit: %s\n", in.Tag, tagCommit)
 
-	branchHead, err := repo.RevParse(ctx, "origin/"+branch)
+	// Qualified refs and one resolved commit for both probes: a tag named
+	// origin/<branch> would otherwise shadow the remote-tracking branch.
+	branchHead, err := repo.RevParse(ctx, "refs/remotes/origin/"+branch+"^{commit}")
 	if err != nil {
 		return fmt.Errorf("resolve origin/%s: %w", branch, err)
 	}
 
 	_, _ = fmt.Fprintf(out, "Branch '%s' HEAD: %s\n", branch, branchHead)
 
-	tagInBranch, err := repo.IsAncestor(ctx, tagCommit, "origin/"+branch)
+	tagInBranch, err := repo.IsAncestor(ctx, tagCommit, branchHead)
 	if err != nil {
 		return fmt.Errorf("ancestor probe (tag→branch): %w", err)
 	}
@@ -176,8 +184,14 @@ func TagCommit(ctx context.Context, repo gitOps, out io.Writer, in TagCommitInpu
 				"  3. Delete and recreate tag: git tag -d %s && git tag -s %s: %w",
 			branch, in.Tag, tagCommit, branch, in.Tag, in.Tag, errs.ErrValidation)
 	case validate.BranchPositionAtHead, validate.BranchPositionAncestor:
-		// The two non-fatal positions — fall through to the success-log
-		// branch below.
+		if in.RequireHead && pos == validate.BranchPositionAncestor {
+			return fmt.Errorf(
+				"tag commit is not branch HEAD\n\n"+
+					"Tag '%s' points to: %s\n"+
+					"Branch '%s' is at: %s\n\n"+
+					"A release request authorizes exactly one source commit; create a new signed request tag at the current branch HEAD: %w",
+				in.Tag, tagCommit, branch, branchHead, errs.ErrValidation)
+		}
 	}
 
 	_, _ = fmt.Fprintf(out, "%s Tag commit %s is in branch '%s' history\n", clicolor.Check(out), tagCommit, branch)
@@ -197,6 +211,10 @@ type TagSignatureInput struct {
 	Tag                 string
 	Repository          string // optional, used to render the docs URL on failure
 	ReleaseGPGPublicKey []byte // optional armored key for verification
+	// RequireValidSignature fails when the signature cannot be verified with
+	// the supplied GPG key material or SSH allowed-signers file, without also
+	// requiring the signer to be in the human release-authorisation allowlist.
+	RequireValidSignature bool
 
 	// RequireAllowlistedSigner enforces that the signer is in the
 	// project's committed allowlist. When true, a missing/empty allowlist
@@ -245,7 +263,7 @@ func TagSignature(ctx context.Context, gitr gitOps, out io.Writer, annot output.
 
 	objType, err := gitr.CatFileType(ctx, in.Tag)
 	if err != nil {
-		objType = "unknown"
+		return fmt.Errorf("read tag object type: %w", err)
 	}
 
 	_, _ = fmt.Fprintf(out, "Tag '%s' object type: %s\n", in.Tag, objType)
@@ -338,6 +356,8 @@ func TagSignature(ctx context.Context, gitr gitOps, out io.Writer, annot output.
 //
 // Behaviour matrix:
 //
+//   - allowlist present but not a key bundle → ErrMalformedInput, before
+//     any verification, whatever require says
 //   - no allowlist present + require=true  → ErrPermissionDenied
 //   - no allowlist present + require=false → loud warning, then pass
 //     (the project hasn't opted in; the release proceeds but the gap is
@@ -349,13 +369,25 @@ func TagSignature(ctx context.Context, gitr gitOps, out io.Writer, annot output.
 //   - signer fingerprint in the set → pass
 //   - signer fingerprint NOT in the set → ErrPermissionDenied (the
 //     allowlist exists, so it is authoritative regardless of require)
-func checkGPGSignerAllowlist(ctx context.Context, gitr gitOps, out io.Writer, annot output.Annotator, in TagSignatureInput, allowedKeysPath string) error {
+func checkGPGSignerAllowlist(ctx context.Context, gitr gitOps, out io.Writer, annot output.Annotator, in TagSignatureInput, allowedKeysPath string) error { //nolint:cyclop // explicit policy matrix keeps fail-closed cases auditable.
 	allowedKeys, _, err := readOptionalFile(allowedKeysPath)
 	if err != nil {
 		return err
 	}
 
 	allowlistPresent := len(bytes.TrimSpace(allowedKeys)) > 0
+
+	// A present allowlist is parsed before anything is verified. A file that
+	// is not a key bundle is broken trust configuration, whatever the
+	// enforcement flags say: verifying against it would fail, and with
+	// enforcement off that failure reads as an unverifiable signature and
+	// passes with a warning that tells the operator to add a key.
+	var set validate.AllowedFingerprintSet
+	if allowlistPresent {
+		if set, err = buildGPGAllowlist(allowedKeys); err != nil {
+			return fmt.Errorf("%s: %w", allowedKeysPath, err)
+		}
+	}
 
 	// Verification keyring: the optionally-supplied release key (e.g. the
 	// bot key for an already-re-signed tag) plus every committed allowed
@@ -372,26 +404,29 @@ func checkGPGSignerAllowlist(ctx context.Context, gitr gitOps, out io.Writer, an
 				allowedKeysPath, errs.ErrPermissionDenied)
 		}
 
+		if in.RequireValidSignature {
+			if !verified {
+				return fmt.Errorf("tag signature could not be verified against the configured release GPG public key: %w", errs.ErrPermissionDenied)
+			}
+
+			return nil
+		}
+
 		warnNoAllowlist(out, annot, "GPG", allowedKeysPath)
 
 		return nil
 	}
 
 	if !verified {
-		if in.RequireAllowlistedSigner {
+		if in.RequireAllowlistedSigner || in.RequireValidSignature {
 			return fmt.Errorf(
-				"require-authorization is enabled but the tag signature could not be verified against any authorised key — commit the signer's public key to %s: %w",
+				"tag signature could not be verified against any configured key — commit the signer's public key to %s: %w",
 				allowedKeysPath, errs.ErrPermissionDenied)
 		}
 
 		warnUnverifiableSigner(out, annot, allowedKeysPath)
 
 		return nil
-	}
-
-	set, err := buildGPGAllowlist(allowedKeys)
-	if err != nil {
-		return err
 	}
 
 	if !set.Has(fingerprint) {
@@ -457,8 +492,17 @@ func buildGPGAllowlist(allowedKeys []byte) (validate.AllowedFingerprintSet, erro
 	}
 
 	set := validate.NewAllowedFingerprintSet()
+
 	for _, fingerprint := range fps {
-		set.Add(fingerprint)
+		// A fingerprint that parsed out of the key material but cannot
+		// be stored means the allowlist is narrower than the file, and
+		// the operator would otherwise learn that only from a key count
+		// in a later refusal message.
+		if !set.Add(fingerprint) {
+			return validate.AllowedFingerprintSet{}, fmt.Errorf(
+				"allowed GPG keys: key %s parsed but is not a usable fingerprint: %w",
+				fingerprint, errs.ErrMalformedInput)
+		}
 	}
 
 	return set, nil
@@ -533,9 +577,9 @@ func checkSSHSignerAllowlist(ctx context.Context, gitr gitOps, out io.Writer, an
 			return fmt.Errorf("stat %s: %w", allowedSignersPath, err)
 		}
 
-		if in.RequireAllowlistedSigner {
+		if in.RequireAllowlistedSigner || in.RequireValidSignature {
 			return fmt.Errorf(
-				"require-authorization is enabled but %s is missing — commit an OpenSSH allowed_signers file (see man ssh-keygen, ALLOWED SIGNERS) listing every SSH key allowed to sign releases: %w",
+				"tag signature verification requires %s — commit an OpenSSH allowed_signers file (see man ssh-keygen, ALLOWED SIGNERS) listing the release signing key: %w",
 				allowedSignersPath, errs.ErrPermissionDenied)
 		}
 
@@ -570,7 +614,7 @@ func checkSSHSignerAllowlist(ctx context.Context, gitr gitOps, out io.Writer, an
 // The equivalent is a one-liner; we keep it as its own use case so
 // the CLI surface mirrors the script names 1:1.
 func GPGPublicKey(out io.Writer, releaseGPGPublicKey string) error {
-	if releaseGPGPublicKey == "" {
+	if strings.TrimSpace(releaseGPGPublicKey) == "" {
 		return fmt.Errorf("missing RELEASE_GPG_PUBLIC_KEY secret\n"+
 			"This secret is needed for GPG operations and signing\n"+
 			"Add it in Settings → Secrets → Actions: %w", errs.ErrPermissionDenied)

@@ -19,6 +19,8 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // New returns the `doctor` top-level subcommand.
@@ -67,6 +69,8 @@ Exit codes:
 				ArtifactsPath:    cmd.String("artifacts-file"),
 				RepoSlug:         cmd.String("reusable-ci-repo"),
 				KeylessAvailable: env.Capabilities.PublicFulcioTrusted,
+				ForgeAPI:         provider.ForgeAPI(env.ForgeAPI),
+				ServerURL:        runcontext.ServerURL().Resolve(os.Getenv),
 			})
 			if err != nil {
 				return err

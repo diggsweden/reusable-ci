@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -131,12 +130,14 @@ func hasLineBreak(value string) bool {
 }
 
 func requireNonEmptyFile(path string) error {
-	info, err := os.Stat(path)
+	file, err := openReleaseFile(path)
 	if err != nil {
-		return fmt.Errorf("verify-release-request: release request SSH allowed signers file is missing or empty: %s: %w", path, errs.ErrValidation)
+		return fmt.Errorf("verify-release-request: allowed signers must be a non-empty regular file without symlinks: %s: %w", path, errs.ErrValidation)
 	}
+	defer func() { _ = file.Close() }()
 
-	if info.Size() == 0 {
+	info, err := file.Stat()
+	if err != nil || info.Size() == 0 {
 		return fmt.Errorf("verify-release-request: release request SSH allowed signers file is missing or empty: %s: %w", path, errs.ErrValidation)
 	}
 

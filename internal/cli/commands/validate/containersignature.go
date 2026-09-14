@@ -73,11 +73,7 @@ func containerSignatureCmd() *cli.Command {
 			identityRegexp := cmd.String(flagCertIdentityRegexp)
 			oidcIssuer := cmd.String(flagCertOIDCIssuer)
 
-			// Default the keyless verification identity from the detected
-			// forge unless this is a KMS verification (a non-empty --key).
-			if keyRef == "" && method != domainrelease.SignMethodKMS {
-				identityRegexp, oidcIssuer = keylessVerifyIdentity(identityRegexp, oidcIssuer)
-			}
+			identityRegexp, oidcIssuer = verificationIdentity(method, keyRef, identityRegexp, oidcIssuer)
 
 			return appcontainer.VerifyImage(ctx, cosign.New(), os.Stderr, appcontainer.VerifyImageInput{
 				Image:              image,

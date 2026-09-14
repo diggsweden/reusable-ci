@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
@@ -16,8 +17,8 @@ func TestRequireTagRefType_EmptyTypeUsage(t *testing.T) {
 	t.Parallel()
 
 	err := validate.RequireTagRefType("", "")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "usage")
+	require.ErrorIs(t, err, errs.ErrUsage)
+	require.Contains(t, err.Error(), "usage: validate ref-type")
 }
 
 func TestRequireTagRefType_TagSucceeds(t *testing.T) {

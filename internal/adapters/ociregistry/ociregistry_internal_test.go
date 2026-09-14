@@ -4,12 +4,14 @@
 package ociregistry
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -22,11 +24,20 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// TestPushLayoutByDigest writes a random image to an OCI layout, pushes it
+func TestCraneOptions_LeaveRetryOwnershipWithGoContainerRegistry(t *testing.T) {
+	t.Parallel()
+
+	options := crane.GetOptions(New().craneOpts(context.Background(), "ghcr.io/example/image:tag")...)
+	if options.Transport != remote.DefaultTransport {
+		t.Fatalf("transport = %T, want go-containerregistry default retry transport", options.Transport)
+	}
+}
+
+// TestPushLayoutByDigest_PushesRetrievablyAndCreatesNoTag writes a random image to an OCI layout, pushes it
 // tagless by digest to an in-process registry, and asserts the manifest is
 // retrievable at that exact digest with NO tag created — the daemonless
 // push-by-digest the buildah build path relies on (no ephemeral tag to clean up).
-func TestPushLayoutByDigest(t *testing.T) {
+func TestPushLayoutByDigest_PushesRetrievablyAndCreatesNoTag(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(registry.New())
@@ -88,10 +99,10 @@ func TestPushLayoutByDigest(t *testing.T) {
 	}
 }
 
-// TestAllLoopback pins the security-relevant predicate: plain-HTTP (insecure)
+// TestAllLoopback_IsTrueOnlyWhenEveryRefTargetsLoopback pins the security-relevant predicate: plain-HTTP (insecure)
 // is enabled ONLY when every ref targets a loopback host. A real registry —
 // or a mix — must stay on HTTPS so credentials never travel in clear text.
-func TestAllLoopback(t *testing.T) {
+func TestAllLoopback_IsTrueOnlyWhenEveryRefTargetsLoopback(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
@@ -118,10 +129,10 @@ func TestAllLoopback(t *testing.T) {
 	}
 }
 
-// TestResolveDigestAndCopyTag round-trips the adapter against an in-process
+// TestResolveDigestAndCopyTag_SecondTagResolvesToTheSourceDigest round-trips the adapter against an in-process
 // registry: a seeded image's digest resolves, and CopyTag points a second tag
 // at the same digest — daemonless, no docker.
-func TestResolveDigestAndCopyTag(t *testing.T) {
+func TestResolveDigestAndCopyTag_SecondTagResolvesToTheSourceDigest(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(registry.New())
@@ -189,10 +200,10 @@ func TestResolveDigest_MissingTagIsMissingInput(t *testing.T) {
 	}
 }
 
-// TestMergeManifest assembles a multi-platform index from two per-arch images
+// TestMergeManifest_AdvertisesEveryPlatformChild assembles a multi-platform index from two per-arch images
 // and asserts the written index advertises both children with the correct
 // platforms — the daemonless replacement for `docker buildx imagetools create`.
-func TestMergeManifest(t *testing.T) {
+func TestMergeManifest_AdvertisesEveryPlatformChild(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(registry.New())
@@ -420,9 +431,9 @@ func TestMergeManifest_CarriesAttestations(t *testing.T) {
 	}
 }
 
-// TestManifest fetches the raw manifest the registry serves and checks it is
+// TestManifest_ReturnsRawJSONNamingTheConfigDigest fetches the raw manifest the registry serves and checks it is
 // the real document (valid JSON referencing the image's config digest).
-func TestManifest(t *testing.T) {
+func TestManifest_ReturnsRawJSONNamingTheConfigDigest(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(registry.New())
@@ -463,7 +474,7 @@ func TestManifest(t *testing.T) {
 	}
 }
 
-func TestLabelsFetchesImageConfigLabels(t *testing.T) {
+func TestLabels_FetchesImageConfigLabels(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(registry.New())
@@ -535,5 +546,31 @@ func TestCopyTag_MissingSourceIsMissingInputNotUnavailable(t *testing.T) {
 
 	if !errors.Is(err, errs.ErrMissingInput) {
 		t.Errorf("CopyTag missing-source error = %v, want ErrMissingInput", err)
+	}
+}
+
+// TestIsLoopbackHost_SplitsHostAndPortLikeNet pins the loopback predicate on
+// the shapes a registry host takes: the IPv6 loopback used to be unreachable
+// because a LastIndex(":") split cut "::1" into "":"1".
+func TestIsLoopbackHost_SplitsHostAndPortLikeNet(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		host string
+		want bool
+	}{
+		{loopbackName, true},
+		{loopbackName + ":5000", true},
+		{"127.0.0.1:5000", true},
+		{"127.1.2.3", true},
+		{"::1", true},
+		{"[::1]:5000", true},
+		{"ghcr.io", false},
+		{"registry.example:443", false},
+		{"10.0.0.1:5000", false},
+	} {
+		if got := isLoopbackHost(tc.host); got != tc.want {
+			t.Errorf("isLoopbackHost(%q) = %v, want %v", tc.host, got, tc.want)
+		}
 	}
 }

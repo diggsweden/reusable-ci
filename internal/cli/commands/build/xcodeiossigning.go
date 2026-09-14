@@ -19,7 +19,12 @@ func xcodeIOSSetupCodeSigningCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "setup-code-signing",
 		Usage: "decode base64 cert+profile, create a transient macOS keychain, install the profile",
-		Description: `EXAMPLE:
+		Description: `Leaves the keychain, certificate and profile installed for later job
+   steps to use; a setup that fails partway removes what it had already
+   installed. Use "run" when one step owns the whole build and the signing
+   state should not outlive it.
+
+EXAMPLE:
    # Cert/profile/keychain-password come from env or files (never argv)
    IOS_SIGNING_CERTIFICATE_BASE64="..." PROVISIONING_PROFILE_BASE64="..." \
    reusable-ci build xcode-ios setup-code-signing`,
@@ -32,7 +37,7 @@ func xcodeIOSSetupCodeSigningCmd() *cli.Command {
 			&cli.StringFlag{Name: "pp-base64", Sources: cli.EnvVars("PROVISIONING_PROFILE_BASE64"), Usage: "base64-encoded provisioning profile (.mobileprovision)"},
 			&cli.StringFlag{
 				Name:  "keychain-password-file",
-				Usage: "path to a file containing the transient keychain password (use \"-\" for stdin; defaults to $KEYCHAIN_PASSWORD)",
+				Usage: "no longer used: the run mints its own transient keychain password, which no operator secret has to supply",
 			},
 			&cli.StringFlag{Name: flagTempDir, Sources: cienv.TempDir(), Usage: "directory the decoded cert / profile / keychain are written under"},
 		},
@@ -42,17 +47,11 @@ func xcodeIOSSetupCodeSigningCmd() *cli.Command {
 				return err
 			}
 
-			keychainPassword, err := secret.Resolve(cmd.String("keychain-password-file"), "KEYCHAIN_PASSWORD")
-			if err != nil {
-				return err
-			}
-
 			return appbuild.XcodeSetupCodeSigning(ctx, xcode.NewSecurity(), os.Stderr, appbuild.XcodeSetupCodeSigningInput{
-				CertBase64:       cmd.String("cert-base64"),
-				CertPassphrase:   certPassphrase,
-				PPBase64:         cmd.String("pp-base64"),
-				KeychainPassword: keychainPassword,
-				TempDir:          cmd.String(flagTempDir),
+				CertBase64:     cmd.String("cert-base64"),
+				CertPassphrase: certPassphrase,
+				PPBase64:       cmd.String("pp-base64"),
+				TempDir:        cmd.String(flagTempDir),
 			})
 		},
 	}

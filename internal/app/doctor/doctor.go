@@ -15,13 +15,18 @@ package doctor
 import (
 	"encoding/json"
 	"fmt"
+	"golang.org/x/mod/module"
+	"gopkg.in/yaml.v3"
 	"io"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
 
+	appconfig "github.com/diggsweden/reusable-ci/v3/internal/app/config"
+	appvalidate "github.com/diggsweden/reusable-ci/v3/internal/app/validate"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/config"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -81,6 +86,8 @@ type Input struct {
 	// recommendation. False off a keyless-capable forge (or when undetectable
 	// locally) simply suppresses the recommendation.
 	KeylessAvailable bool
+	ForgeAPI         provider.ForgeAPI
+	ServerURL        string
 }
 
 // Run executes every check and returns the result list. The caller
@@ -104,16 +111,11 @@ func Run(in Input) ([]Check, error) {
 	}
 
 	checks := make([]Check, 0, 8)
-	checks = append(checks, checkArtifactsExists(artifactsPath))
+	cfg, configChecks, parsed := loadDoctorConfig(root, artifactsPath, in.ArtifactsPath == "")
 
-	cfg, parseCheck, parsed := parseArtifacts(artifactsPath)
-	checks = append(checks, parseCheck)
-
-	if !parsed {
-		// Without a parsed config the remaining sign-aware checks
-		// have nothing to act on — but we still flag missing pieces
-		// the operator should fix first.
-		return checks, nil
+	checks = append(checks, configChecks...)
+	if providerCheck, ok := checkReleaseWorkflowProvider(in.ForgeAPI, in.ServerURL); ok {
+		checks = append(checks, providerCheck)
 	}
 
 	repoSlug := in.RepoSlug
@@ -121,11 +123,15 @@ func Run(in Input) ([]Check, error) {
 		repoSlug = deriveSelfRepoSlug()
 	}
 
+	checks = append(checks, checkWorkflowVersionRefs(root, repoSlug))
+	if !parsed {
+		return checks, nil
+	}
+
 	checks = append(checks,
 		checkSignBlock(cfg.Sign),
 		checkAllowedSignersIfRequired(root, cfg.Artifacts),
 		checkWorkflowPermissions(root, cfg.Sign),
-		checkWorkflowVersionRefs(root, repoSlug),
 	)
 
 	if rec, ok := signMethodRecommendation(cfg, in.KeylessAvailable); ok {
@@ -137,6 +143,65 @@ func Run(in Input) ([]Check, error) {
 	}
 
 	return checks, nil
+}
+
+func checkReleaseWorkflowProvider(forge provider.ForgeAPI, serverURL string) (Check, bool) {
+	if provider.ClassifyReleaseWorkflowScope(forge, serverURL) == provider.ReleaseWorkflowNotApplicable {
+		return Check{}, false
+	}
+
+	const name = "release workflow provider support"
+	if err := appvalidate.ReleaseProvider(forge, serverURL); err != nil {
+		return Check{
+			Name:        name,
+			Severity:    SeverityFail,
+			Message:     err.Error(),
+			Remediation: "run the reusable GitHub release workflows on github.com, or use a provider-native release pipeline without actions/upload-artifact@v7",
+		}, true
+	}
+
+	return Check{Name: name, Severity: SeverityOK, Message: "github.com supports the pinned release workflow actions"}, true
+}
+
+//nolint:nestif // the auto-derive branch reports three distinct outcomes (derive failed, derived nothing, derived one artifact); flattening would duplicate the check construction.
+func loadDoctorConfig(root, artifactsPath string, allowAutoDerive bool) (*config.Config, []Check, bool) {
+	if allowAutoDerive {
+		if _, err := os.Stat(artifactsPath); os.IsNotExist(err) {
+			cfg, deriveErr := appconfig.AutoDeriveConfig(nil, root)
+			if deriveErr != nil {
+				return nil, []Check{checkArtifactsExists(artifactsPath), {
+					Name:        "configuration auto-derives",
+					Severity:    SeverityFail,
+					Message:     deriveErr.Error(),
+					Remediation: "add one recognised root manifest or create .reusable-ci/artifacts.yml explicitly",
+				}}, false
+			}
+
+			if err := config.Validate(cfg); err != nil {
+				return cfg, []Check{{
+					Name:        "auto-derived configuration validates",
+					Severity:    SeverityFail,
+					Message:     err.Error(),
+					Remediation: "create .reusable-ci/artifacts.yml explicitly; see docs/artifacts-reference.md",
+				}}, true
+			}
+
+			artifact := cfg.Artifacts[0]
+
+			return cfg, []Check{{
+				Name:     checkArtifactsYMLPresent,
+				Severity: SeverityOK,
+				Message: fmt.Sprintf("%s not present; auto-derived %s artifact %q from the root manifest",
+					artifactsPath, artifact.ProjectType, artifact.Name),
+			}}, true
+		}
+	}
+
+	checks := make([]Check, 0, 2)
+	checks = append(checks, checkArtifactsExists(artifactsPath))
+	cfg, parseCheck, parsed := parseArtifacts(artifactsPath)
+
+	return cfg, append(checks, parseCheck), parsed
 }
 
 // signMethodRecommendation returns a non-failing advisory (and true) when the
@@ -303,6 +368,8 @@ func FormatEnvironment(w io.Writer, env Environment) { //nolint:varnamelen // id
 		{"keyless OIDC signing (own Fulcio)", env.Capabilities.MintsOIDCToken, "this forge mints no OIDC id-token; use key-based signing"},
 		{"release asset upload", env.Capabilities.ReleaseAssets, "release assets cannot be attached on this forge"},
 		{"run-artifact store (intra-run hand-off)", env.Capabilities.RunArtifacts, "pass run artifacts via the job template's artifacts:/needs:, not the binary"},
+		{"container tag deletion", env.Capabilities.ContainerTagDeletion, "container cleanup and rollback cannot delete forge-managed tags"},
+		{"container package listing", env.Capabilities.ContainerPackageListing, "container cleanup cannot enumerate stale package versions"},
 	}
 
 	for _, row := range rows {
@@ -470,11 +537,30 @@ func checkWorkflowPermissions(root string, sign config.SignConfig) Check {
 	// .forgejo/workflows (https://forgejo.org/docs/v15.0/user/actions/security-openid-connect/).
 	// A repo driven by this forge-neutral tool may target either, and doctor
 	// usually runs locally (forge undetectable), so accept whichever
-	// convention is present. Full expression evaluation is out of scope; this
-	// catches the common "operator forgot the grant" case.
-	conventions := []struct{ dir, marker, hint string }{
-		{filepath.Join(".github", "workflows"), "id-token: write", ".github/workflows/ grants `permissions: id-token: write`"},
-		{filepath.Join(".forgejo", "workflows"), "enable-openid-connect", ".forgejo/workflows/ sets `enable-openid-connect`"},
+	// convention is present.
+	//
+	// The grant is read out of the parsed document, not matched as text. A
+	// substring search got this wrong in both directions: `# id-token: write`
+	// in a comment, or the phrase inside a description, satisfied it; while
+	// `permissions: write-all`, which really does grant the token, and
+	// `id-token:   write` with different spacing, did not. Telling an operator
+	// their setup is fine because of a comment is the worse half — this check
+	// exists to catch the forgotten grant, and a false OK removes the only
+	// warning they were going to get.
+	conventions := []struct {
+		dir, hint string
+		grants    func(*yaml.Node) bool
+	}{
+		{
+			dir:    filepath.Join(".github", "workflows"),
+			hint:   ".github/workflows/ grants `permissions: id-token: write`",
+			grants: workflowGrantsIDToken,
+		},
+		{
+			dir:    filepath.Join(".forgejo", "workflows"),
+			hint:   ".forgejo/workflows/ sets `enable-openid-connect`",
+			grants: workflowEnablesOpenIDConnect,
+		},
 	}
 
 	anyDir := false
@@ -487,7 +573,7 @@ func checkWorkflowPermissions(root string, sign config.SignConfig) Check {
 
 		anyDir = true
 
-		found, walkErr := anyWorkflowContains(dir, conv.marker)
+		found, walkErr := anyWorkflowSatisfies(dir, conv.grants)
 		if walkErr != nil {
 			return Check{
 				Name:     checkWorkflowIDToken,
@@ -536,13 +622,11 @@ func missingIDTokenCheck(anyDir bool) Check {
 	}
 }
 
-// anyWorkflowGrantsIDToken walks workflowsDir and returns true when
-// at least one *.yml / *.yaml file contains the literal substring
-// `id-token: write`. Unreadable workflows are skipped (a permission
-// scan is best-effort, not authoritative).
-// anyWorkflowContains reports whether any *.yml/*.yaml under workflowsDir
-// contains marker (the forge-specific OIDC-grant substring).
-func anyWorkflowContains(workflowsDir, marker string) (bool, error) {
+// anyWorkflowSatisfies parses every *.yml/*.yaml under workflowsDir and reports
+// whether any of them satisfies grants. Unreadable and unparsable workflows are
+// skipped: this scan is best-effort advice, not authoritative, and a repository
+// with one malformed workflow should still get an answer about the others.
+func anyWorkflowSatisfies(workflowsDir string, grants func(*yaml.Node) bool) (bool, error) {
 	found := false
 
 	walkErr := filepath.WalkDir(workflowsDir, func(path string, entry fs.DirEntry, err error) error {
@@ -563,7 +647,12 @@ func anyWorkflowContains(workflowsDir, marker string) (bool, error) {
 			return nil //nolint:nilerr // unreadable workflow shouldn't fail the whole check.
 		}
 
-		if strings.Contains(string(body), marker) {
+		var doc yaml.Node
+		if err := yaml.Unmarshal(body, &doc); err != nil || len(doc.Content) == 0 {
+			return nil //nolint:nilerr // unparsable workflow shouldn't fail the whole check.
+		}
+
+		if grants(doc.Content[0]) {
 			found = true
 		}
 
@@ -571,6 +660,97 @@ func anyWorkflowContains(workflowsDir, marker string) (bool, error) {
 	})
 
 	return found, walkErr
+}
+
+// workflowGrantsIDToken reports whether a GitHub workflow grants the OIDC
+// id-token, at the workflow level or in any job.
+//
+// `permissions: write-all` counts: it grants every scope including id-token,
+// and an operator who wrote it has made the grant even though the words
+// "id-token" never appear. A bare `permissions: read-all`, or a permissions
+// block that names other scopes, does not.
+func workflowGrantsIDToken(root *yaml.Node) bool {
+	if permissionsGrantIDToken(yamlChild(root, "permissions")) {
+		return true
+	}
+
+	jobs := yamlChild(root, "jobs")
+	if jobs == nil || jobs.Kind != yaml.MappingNode {
+		return false
+	}
+
+	for i := 1; i < len(jobs.Content); i += 2 {
+		if permissionsGrantIDToken(yamlChild(jobs.Content[i], "permissions")) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// permissionsGrantIDToken reads one `permissions:` value, in either spelling
+// GitHub accepts: the scalar shorthand, or a mapping of scope to level.
+func permissionsGrantIDToken(permissions *yaml.Node) bool {
+	if permissions == nil {
+		return false
+	}
+
+	if permissions.Kind == yaml.ScalarNode {
+		return strings.TrimSpace(permissions.Value) == "write-all"
+	}
+
+	scope := yamlChild(permissions, "id-token")
+
+	return scope != nil && strings.TrimSpace(scope.Value) == "write"
+}
+
+// workflowEnablesOpenIDConnect reports whether a Forgejo workflow sets
+// enable-openid-connect. Forgejo ignores `permissions` entirely, so this is a
+// separate convention rather than a spelling of the same one.
+func workflowEnablesOpenIDConnect(root *yaml.Node) bool {
+	return yamlNodeEnablesKey(root, "enable-openid-connect")
+}
+
+// yamlNodeEnablesKey looks for key anywhere in the document with a value that
+// is not an explicit false. Forgejo accepts the setting at more than one level
+// and the documentation does not fix which, so the search stays broad — but it
+// is a search over parsed keys, so a mention in a comment or a description
+// string is not one.
+func yamlNodeEnablesKey(node *yaml.Node, key string) bool {
+	if node == nil {
+		return false
+	}
+
+	if node.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if node.Content[i].Value == key {
+				return strings.TrimSpace(node.Content[i+1].Value) != "false"
+			}
+		}
+	}
+
+	for _, child := range node.Content {
+		if yamlNodeEnablesKey(child, key) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// yamlChild returns the value node for key in a mapping, or nil.
+func yamlChild(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+
+	return nil
 }
 
 func checkWorkflowVersionRefs(root, repoSlug string) Check {
@@ -673,7 +853,12 @@ func findFloatingReusableCIRefs(workflowsDir, repoSlug string) ([]string, error)
 			return nil //nolint:nilerr // unreadable workflow shouldn't fail the whole check.
 		}
 
-		if hasFloatingReusableCIRef(body, repoSlug) {
+		floatingRef, parseErr := hasFloatingReusableCIRef(body, repoSlug)
+		if parseErr != nil {
+			return parseErr
+		}
+
+		if floatingRef {
 			floating = append(floating, filepath.Base(path))
 		}
 
@@ -685,19 +870,70 @@ func findFloatingReusableCIRefs(workflowsDir, repoSlug string) ([]string, error)
 
 // hasFloatingReusableCIRef reports whether body contains a
 // `uses: ...<repoSlug>...@main` or `@master` line.
-func hasFloatingReusableCIRef(body []byte, repoSlug string) bool {
-	for _, line := range strings.Split(string(body), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "uses:") {
-			continue
+func hasFloatingReusableCIRef(body []byte, repoSlug string) (bool, error) {
+	var workflow struct {
+		Jobs map[string]struct {
+			Uses  string `yaml:"uses"`
+			Steps []struct {
+				Uses string `yaml:"uses"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(body, &workflow); err != nil {
+		return false, fmt.Errorf("parse workflow uses: %w", err)
+	}
+
+	for _, job := range workflow.Jobs {
+		if floatingReusableRef(job.Uses, repoSlug) {
+			return true, nil
 		}
 
-		if strings.Contains(trimmed, repoSlug) && (strings.Contains(trimmed, "@main") || strings.Contains(trimmed, "@master")) {
-			return true
+		for _, step := range job.Steps {
+			if floatingReusableRef(step.Uses, repoSlug) {
+				return true, nil
+			}
 		}
 	}
 
-	return false
+	return false, nil
+}
+
+func floatingReusableRef(uses, repoSlug string) bool { //nolint:cyclop // exact ref and normalized repository/path identity checks; no expression or shell interpretation.
+	if strings.HasPrefix(uses, "./") || strings.HasPrefix(uses, "docker://") {
+		return false
+	}
+
+	index := strings.LastIndexByte(uses, '@')
+	if index < 0 {
+		return false
+	}
+
+	name, ref := uses[:index], uses[index+1:]
+	if ref != "main" && ref != "master" {
+		return false
+	}
+
+	if strings.Contains(name, "://") {
+		parsed, err := url.Parse(name)
+		if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return false
+		}
+
+		name = strings.TrimPrefix(parsed.Path, "/")
+	}
+
+	parts := strings.Split(name, "/")
+	if len(parts) < 2 || !strings.EqualFold(strings.Join(parts[:2], "/"), repoSlug) {
+		return false
+	}
+
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+
+	return true
 }
 
 // deriveSelfRepoSlug returns the "owner/repo" slug of this binary's own
@@ -721,29 +957,18 @@ func deriveSelfRepoSlug() string {
 // "/vN" major-version element. "github.com/diggsweden/reusable-ci" →
 // "diggsweden/reusable-ci"; "" for paths too short to carry a slug.
 func repoSlugFromModulePath(modPath string) string {
-	parts := strings.Split(modPath, "/")
-	if n := len(parts); n > 0 {
-		if last := parts[n-1]; len(last) > 1 && last[0] == 'v' && allDigits(last[1:]) {
-			parts = parts[:n-1]
-		}
+	prefix, _, ok := module.SplitPathVersion(modPath)
+	if !ok {
+		return ""
 	}
+
+	parts := strings.Split(prefix, "/")
 
 	if len(parts) < 2 {
 		return ""
 	}
 
 	return parts[len(parts)-2] + "/" + parts[len(parts)-1]
-}
-
-// allDigits reports whether value is non-empty and all ASCII digits.
-func allDigits(value string) bool {
-	for i := range len(value) {
-		if value[i] < '0' || value[i] > '9' {
-			return false
-		}
-	}
-
-	return value != ""
 }
 
 func regularFileExists(path string) bool {

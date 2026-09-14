@@ -6,8 +6,8 @@ package imageledger_test
 import (
 	"context"
 	"errors"
-	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -234,7 +234,53 @@ func TestCleanup_VisitsEveryEntry(t *testing.T) {
 	// Both candidates gone, in entry order, and nothing else touched --
 	// only the candidate tag may be deleted, never a final tag.
 	want := []string{first.CandidateTag, second.CandidateTag}
-	if !reflect.DeepEqual(reg.deleted, want) {
+	if !slices.Equal(reg.deleted, want) {
 		t.Errorf("deleted = %v, want %v", reg.deleted, want)
+	}
+}
+
+// droppingRegistry is a fakeCleanupRegistry whose delete also removes a
+// sibling tag, the way a manifest-level delete takes every name of the digest.
+type droppingRegistry struct {
+	fakeCleanupRegistry
+	alsoDrops string
+}
+
+func (r *droppingRegistry) DeleteTag(ctx context.Context, ref string) error {
+	if err := r.fakeCleanupRegistry.DeleteTag(ctx, ref); err != nil {
+		return err
+	}
+
+	delete(r.digests, r.alsoDrops)
+
+	return nil
+}
+
+// TestCleanup_RerunDeletesNothingAndADisturbingDeleteIsReported pins the two
+// halves of the safety contract no earlier test reached: a rerun whose
+// candidate is already gone deletes nothing, and a delete that disturbs the
+// promoted final or moving tag is reported after the fact rather than
+// swallowed.
+func TestCleanup_RerunDeletesNothingAndADisturbingDeleteIsReported(t *testing.T) {
+	t.Parallel()
+
+	e := candidateEntry()
+	e.MovingTag = "codeberg.org/itiquette/gommitlint:rust"
+
+	rerun := &fakeCleanupRegistry{digests: map[string]string{e.FinalTag: goodDigest, e.MovingTag: goodDigest}}
+	if err := imageledger.Cleanup(context.Background(), rerun, []imageledger.Entry{e}, "v1.2.3"); err != nil || len(rerun.deleted) != 0 {
+		t.Fatalf("a rerun with the candidate already gone: err=%v deleted=%v, want nothing", err, rerun.deleted)
+	}
+
+	for _, disturbed := range []string{e.FinalTag, e.MovingTag} {
+		reg := &droppingRegistry{
+			fakeCleanupRegistry: fakeCleanupRegistry{digests: map[string]string{e.FinalTag: goodDigest, e.MovingTag: goodDigest, e.CandidateTag: goodDigest}},
+			alsoDrops:           disturbed,
+		}
+
+		err := imageledger.Cleanup(context.Background(), reg, []imageledger.Entry{e}, "v1.2.3")
+		if err == nil || !strings.Contains(err.Error(), "after candidate cleanup") || !strings.Contains(err.Error(), disturbed) {
+			t.Errorf("a delete that dropped %s: err = %v, want the post-delete refusal naming it", disturbed, err)
+		}
 	}
 }

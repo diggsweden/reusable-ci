@@ -78,6 +78,17 @@ func TestExtractNPMTarball_NoTarballIsNoOp(t *testing.T) {
 	if err := appcontainer.ExtractNPMTarball(io.Discard, appcontainer.ExtractNPMTarballInput{Dir: fsys.Root}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
+	// "No-op" is the claim, so the directory has to be untouched -- not
+	// merely that nothing errored while something was unpacked into it.
+	entries, err := os.ReadDir(fsys.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(entries) != 0 {
+		t.Errorf("a run with no tarball created %v", entries)
+	}
 }
 
 func TestExtractNPMTarball_StripsPackagePrefixIntoWorkingDir(t *testing.T) {

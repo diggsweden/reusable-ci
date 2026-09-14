@@ -411,6 +411,10 @@ func prepareAssembleDist(path string, pruneDirs bool) (string, error) {
 		return "", fmt.Errorf("upload-dist: %s is not a regular directory: %w", dir, errs.ErrValidation)
 	}
 
+	if err := validateExistingAssembleDistPath(dir); err != nil {
+		return "", err
+	}
+
 	if !pruneDirs {
 		return dir, nil
 	}
@@ -423,21 +427,23 @@ func prepareAssembleDist(path string, pruneDirs bool) (string, error) {
 }
 
 func pruneAssembleDistDirs(dir string) error {
-	if dir == "." || dir == string(filepath.Separator) {
-		return fmt.Errorf("refusing to prune unsafe upload-dist path: %s: %w", dir, errs.ErrValidation)
-	}
-
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("read upload-dist path %s: %w", dir, err)
 	}
+
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return fmt.Errorf("open upload-dist path %s: %w", dir, err)
+	}
+	defer func() { _ = root.Close() }()
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
 		}
 
-		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
+		if err := root.RemoveAll(entry.Name()); err != nil {
 			return fmt.Errorf("prune upload-dist directory %s: %w", entry.Name(), err)
 		}
 	}
@@ -467,6 +473,8 @@ func validateSingleLineValue(value, label string) error {
 // long as it lands inside. The command already treats the working directory as
 // the workspace, since transfer item paths and the default "dist/" resolve
 // against it, so anchoring here matches what everything else already assumes.
+//
+//nolint:cyclop // resolve cwd → resolve path → containment check → walk each component for a symlink escape. Phases of one containment decision.
 func validateAssembleDistPath(path string) error {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -479,8 +487,55 @@ func validateAssembleDistPath(path string) error {
 	}
 
 	rel, err := filepath.Rel(cwd, abs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("path must stay inside the working directory: %s: %w", path, errs.ErrUsage)
+	}
+
+	current := cwd
+	for _, component := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, component)
+
+		info, statErr := os.Lstat(current)
+		if errors.Is(statErr, fs.ErrNotExist) {
+			break
+		}
+
+		if statErr != nil {
+			return fmt.Errorf("upload-dist: inspect path component %s: %w", current, statErr)
+		}
+
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("upload-dist path contains symlink component: %s: %w", current, errs.ErrUsage)
+		}
+	}
+
+	return nil
+}
+
+func validateExistingAssembleDistPath(path string) error {
+	cwd, err := filepath.Abs(".")
+	if err != nil {
+		return fmt.Errorf("upload-dist: resolve working directory: %w", err)
+	}
+
+	cwd, err = filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return fmt.Errorf("upload-dist: resolve working directory: %w", err)
+	}
+
+	resolved, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("upload-dist: resolve path %s: %w", path, err)
+	}
+
+	resolved, err = filepath.EvalSymlinks(resolved)
+	if err != nil {
+		return fmt.Errorf("upload-dist: resolve path %s: %w", path, err)
+	}
+
+	rel, err := filepath.Rel(cwd, resolved)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("upload-dist path must resolve to a strict descendant of the working directory: %s: %w", path, errs.ErrValidation)
 	}
 
 	return nil

@@ -5,18 +5,19 @@ package build_test
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
-	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/stretchr/testify/require"
 )
+
+var errKeychainInUse = errors.New("security: keychain in use")
 
 type fakeSecurity struct {
 	calls [][]string
@@ -33,67 +34,74 @@ func (f *fakeSecurity) Run(_ context.Context, args ...string) (string, error) {
 }
 
 func TestXcodeSetupCodeSigning_HappyPath(t *testing.T) {
-	tmpFS := testfs.NewReal(t)
-	profilesFS := testfs.NewReal(t)
-	tmp := tmpFS.Root
-	profiles := profilesFS.Root
-	cert := base64.StdEncoding.EncodeToString([]byte("fake-cert"))
-	pp := base64.StdEncoding.EncodeToString([]byte("fake-pp"))
+	for _, name := range []string{"explicit_paths", "owned_defaults", "empty_cert_passphrase"} {
+		t.Run(name, func(t *testing.T) {
+			in := xcodeSecurityFixture(t)
 
-	sec := &fakeSecurity{}
+			tmp, profiles := in.TempDir, in.ProvisioningProfilesDir
+			if name == "owned_defaults" {
+				root := filepath.Dir(in.TempDir)
+				tmp = filepath.Join(root, "TMPDIR")
+				profiles = filepath.Join(root, "HOME", "Library", "MobileDevice", "Provisioning Profiles")
+				in.TempDir, in.ProvisioningProfilesDir = "", ""
+			}
 
-	var out strings.Builder
-	if err := appbuild.XcodeSetupCodeSigning(context.Background(), sec, &out, appbuild.XcodeSetupCodeSigningInput{
-		CertBase64:              cert,
-		CertPassphrase:          "secret",
-		PPBase64:                pp,
-		KeychainPassword:        "passw0rd",
-		TempDir:                 tmp,
-		ProvisioningProfilesDir: profiles,
-	}); err != nil {
-		t.Fatal(err)
-	}
+			if name == "empty_cert_passphrase" {
+				in.CertPassphrase = ""
+			}
 
-	// The order matters, not just the count: the keychain is unlocked before
-	// the certificate is imported, and the partition list is set afterwards
-	// so codesign can use the key without prompting. Counting six calls and
-	// naming only the first could not see them reordered.
-	wantCalls := []string{
-		"create-keychain",
-		"set-keychain-settings",
-		"unlock-keychain",
-		"import",
-		"set-key-partition-list",
-		"list-keychain",
-	}
+			// The run mints the keychain password, so the expected argv exists
+			// only once the first call has been recorded.
+			var want [][]string
 
-	gotCalls := make([]string, 0, len(sec.calls))
-	for _, call := range sec.calls {
-		gotCalls = append(gotCalls, call[0])
-	}
+			expect := func(calls [][]string) [][]string {
+				if want == nil {
+					want = xcodeSecurityVectors(in, tmp, observedKeychainPassword(t, calls))
+				}
 
-	if !reflect.DeepEqual(gotCalls, wantCalls) {
-		t.Errorf("security calls = %v\nwant %v", gotCalls, wantCalls)
-	}
+				return want
+			}
 
-	// The decoded p12 holds the signing certificate and its private key. The
-	// comment here claimed 0600 and nothing checked it.
-	certInfo, err := os.Stat(filepath.Join(tmp, "certificate.p12"))
-	if err != nil {
-		t.Errorf("certificate not written: %v", err)
-	} else if certInfo.Mode().Perm() != 0o600 {
-		t.Errorf("certificate mode = %v, want 0600", certInfo.Mode().Perm())
-	}
-	// The provisioning profile is written the same way and to the same mode.
-	ppInfo, err := os.Stat(filepath.Join(profiles, "pp.mobileprovision"))
-	if err != nil {
-		t.Errorf("provisioning profile not installed: %v", err)
-	} else if ppInfo.Mode().Perm() != 0o600 {
-		t.Errorf("provisioning profile mode = %v, want 0600", ppInfo.Mode().Perm())
-	}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
 
-	if got := strings.TrimSpace(out.String()); got != "✓ Code signing configured successfully" {
-		t.Errorf("out = %q", got)
+			sec := &recordingXcodeSecurity{}
+			out := &xcodeSecurityWriter{}
+			sec.run = func(index int) (string, error) {
+				want := expect(sec.calls)
+				require.Less(t, index, len(want), "unexpected security command")
+				require.Equal(t, want[:index+1], sec.calls, "complete ordered security argv")
+				require.Same(t, ctx, sec.contexts[index], "security context")
+				require.Empty(t, out.calls, "no success write before security finishes")
+				assertXcodeSecret(t, filepath.Join(tmp, "certificate.p12"), xcodeContractCertificate)
+				assertXcodeSecret(t, filepath.Join(tmp, "pp.mobileprovision"), xcodeContractProfile)
+				requireEmptyXcodeDir(t, profiles, "installation follows every security command")
+
+				return xcodeSecurityCanaries(in) + "\nport output at " + want[index][0], nil
+			}
+			out.observe = func() {
+				require.Equal(t, expect(sec.calls), sec.calls, "success write follows every security command")
+				assertXcodeSecret(t, filepath.Join(profiles, "pp.mobileprovision"), xcodeContractProfile)
+			}
+			beforeEnv := os.Environ()
+			checkProcess := captureXcodeProcessDiagnostics(t, in)
+			err := appbuild.XcodeSetupCodeSigning(ctx, sec, out, in)
+
+			checkProcess()
+			require.NoError(t, err)
+			require.Equal(t, beforeEnv, os.Environ())
+			require.Equal(t, expect(sec.calls), sec.calls, "complete ordered security argv")
+			requireGeneratedKeychainPassword(t, in.KeychainPassword, observedKeychainPassword(t, sec.calls))
+			require.Equal(t, []string{xcodeSigningSuccess}, out.calls)
+			require.Equal(t, xcodeSigningSuccess, out.accepted.String())
+			assertXcodeSecurityNonleakage(t, in, out.accepted.String())
+			assertXcodeSecret(t, filepath.Join(tmp, "certificate.p12"), xcodeContractCertificate)
+			assertXcodeSecret(t, filepath.Join(tmp, "pp.mobileprovision"), xcodeContractProfile)
+			assertXcodeSecret(t, filepath.Join(profiles, "pp.mobileprovision"), xcodeContractProfile)
+			// The standalone verb installs signing state for a later job step to
+			// use, so it deliberately keeps it. Only the owning release build,
+			// which knows when the state stops being needed, tears it down.
+		})
 	}
 }
 
@@ -105,30 +113,45 @@ func TestXcodeSetupCodeSigning_MissingSecretsError(t *testing.T) {
 	}{
 		{"no cert", appbuild.XcodeSetupCodeSigningInput{}, "CERTIFICATE_BASE64"},
 		{"no pp", appbuild.XcodeSetupCodeSigningInput{CertBase64: "x"}, "PROVISIONING_PROFILE"},
-		{"no keychain password", appbuild.XcodeSetupCodeSigningInput{CertBase64: "x", PPBase64: "y"}, "KEYCHAIN_PASSWORD"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			err := appbuild.XcodeSetupCodeSigning(context.Background(), &fakeSecurity{}, io.Discard, c.in)
-			if err == nil || !strings.Contains(err.Error(), c.want) {
-				t.Errorf("got %v, want substring %q", err, c.want)
+			owned := xcodeSecurityFixture(t)
+			c.in.TempDir, c.in.ProvisioningProfilesDir = owned.TempDir, owned.ProvisioningProfilesDir
+			before := ownedTree(t, filepath.Dir(owned.TempDir))
+			sec, out := &fakeSecurity{}, &xcodeSecurityWriter{}
+			checkProcess := captureXcodeProcessDiagnostics(t, c.in)
+			err := appbuild.XcodeSetupCodeSigning(t.Context(), sec, out, c.in)
+
+			checkProcess()
+			require.Empty(t, sec.calls)
+			require.Empty(t, out.calls)
+			require.Equal(t, before, ownedTree(t, filepath.Dir(owned.TempDir)))
+
+			// ErrPermissionDenied (EX_NOPERM), not a generic failure: an
+			// absent signing secret is something the operator fixes in the
+			// forge, not a bad command line.
+			if !errors.Is(err, errs.ErrPermissionDenied) {
+				t.Fatalf("err = %v, want ErrPermissionDenied", err)
+			}
+
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("err = %v, want it to name %q", err, c.want)
 			}
 		})
 	}
 }
 
 func TestXcodeSetupCodeSigning_SecurityFailureBubbles(t *testing.T) {
-	tmpFS := testfs.NewReal(t)
-	tmp := tmpFS.Root
-	cert := base64.StdEncoding.EncodeToString([]byte("c"))
-	pp := base64.StdEncoding.EncodeToString([]byte("p"))
-	sec := &fakeSecurity{err: errors.New("security: keychain in use")} //nolint:err113 // test mock error
+	in := xcodeSecurityFixture(t)
+	sec := &fakeSecurity{err: errKeychainInUse}
 
-	err := appbuild.XcodeSetupCodeSigning(context.Background(), sec, io.Discard, appbuild.XcodeSetupCodeSigningInput{
-		CertBase64: cert, PPBase64: pp, KeychainPassword: "p", TempDir: tmp,
-		ProvisioningProfilesDir: testfs.NewReal(t).Root,
-	})
-	if err == nil {
-		t.Fatal("expected error")
+	checkProcess := captureXcodeProcessDiagnostics(t, in)
+	err := appbuild.XcodeSetupCodeSigning(t.Context(), sec, io.Discard, in)
+
+	checkProcess()
+
+	if !errors.Is(err, errKeychainInUse) {
+		t.Fatalf("err = %v, want the security tool's own error to survive wrapping", err)
 	}
 }

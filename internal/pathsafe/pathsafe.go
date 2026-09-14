@@ -13,7 +13,7 @@
 //
 // That makes it a leaf utility under ADR 0004's third rule, alongside
 // listval — carrying no domain knowledge, belonging to no layer, importable
-// by all of them. internal/syncguard keeps it the only implementation.
+// by all of them. Context-specific joining and validation remain with callers.
 package pathsafe
 
 import (

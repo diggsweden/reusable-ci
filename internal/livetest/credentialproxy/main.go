@@ -16,20 +16,32 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/livetest"
 )
 
+type authoritiesFlag []string
+
+func (values *authoritiesFlag) String() string { return "approved HTTPS origins" }
+
+func (values *authoritiesFlag) Set(value string) error {
+	*values = append(*values, value)
+
+	return nil
+}
+
 //nolint:cyclop // Strict startup, readiness, and signal handling stay in one process boundary.
 func main() {
-	authority := flag.String("authority", "", "the one HTTPS origin permitted for CONNECT")
+	var authorities authoritiesFlag
+	flag.Var(&authorities, "authority", "an HTTPS origin permitted for CONNECT; repeat for registry token authorities")
+
 	readyFile := flag.String("ready-file", "", "private file to create with the loopback proxy URL")
 
 	flag.Parse()
 
-	if flag.NArg() != 0 || *authority == "" || *readyFile == "" ||
+	if flag.NArg() != 0 || len(authorities) == 0 || *readyFile == "" ||
 		!filepath.IsAbs(*readyFile) || filepath.Clean(*readyFile) != *readyFile {
-		fmt.Fprintln(os.Stderr, "usage: credential-proxy --authority <https-origin> --ready-file <absolute-new-file>")
+		fmt.Fprintln(os.Stderr, "usage: credential-proxy --authority <https-origin> [--authority <https-origin>...] --ready-file <absolute-new-file>")
 		os.Exit(2)
 	}
 
-	proxy, err := livetest.StartCredentialProxy([]string{*authority})
+	proxy, err := livetest.StartCredentialProxy(authorities)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "credential proxy refused its authority")
 		os.Exit(2)

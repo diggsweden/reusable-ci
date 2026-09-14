@@ -10,7 +10,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/git"
 )
 
-func TestValidCommitSHA(t *testing.T) {
+func TestValidCommitSHA_AcceptsOnlySHA1AndSHA256Lengths(t *testing.T) {
 	t.Parallel()
 
 	cases := map[string]bool{

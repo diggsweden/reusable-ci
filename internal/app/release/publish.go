@@ -33,6 +33,10 @@ type PublishReleaseInput struct {
 // outside adapters and ensures provider mutations never start when the desired
 // asset set is malformed.
 func PublishRelease(ctx context.Context, pub provider.ReleasePublisher, out io.Writer, in PublishReleaseInput) error { //nolint:varnamelen // provider role name is intentionally short at call sites.
+	if pub == nil {
+		return fmt.Errorf("release publisher is required: %w", errs.ErrUsage)
+	}
+
 	tag := strings.TrimSpace(in.Tag)
 	if tag == "" {
 		return fmt.Errorf("tag is required: pass --tag <name> or set $TAG_NAME: %w", errs.ErrUsage)
@@ -43,17 +47,9 @@ func PublishRelease(ctx context.Context, pub provider.ReleasePublisher, out io.W
 		return fmt.Errorf("repository is required: pass --repository <owner/repo> or set $REPOSITORY: %w", errs.ErrUsage)
 	}
 
-	notesFile := strings.TrimSpace(in.ReleaseNotesFile)
-	if notesFile == "" {
-		return fmt.Errorf("release notes file is required: %w", errs.ErrUsage)
-	}
-
-	if !pathsafe.Relative(notesFile) {
-		return fmt.Errorf("unsafe release notes path: %s: %w", notesFile, errs.ErrValidation)
-	}
-
-	if !regularReleaseFile(notesFile) {
-		return fmt.Errorf("release notes are missing, not a regular file, or a symlink: %s: %w", notesFile, errs.ErrMissingInput)
+	notesFile, err := validateReleaseNotesFile(in.ReleaseNotesFile)
+	if err != nil {
+		return err
 	}
 
 	assets, err := validatePublishAssets(in.Assets)
@@ -93,6 +89,25 @@ func repositoryReleaseName(repo, tag string) string {
 	}
 
 	return repo + " " + tag
+}
+
+// validateReleaseNotesFile returns the trimmed notes path once it names a
+// relative, regular, nonlinked file.
+func validateReleaseNotesFile(path string) (string, error) {
+	notesFile := strings.TrimSpace(path)
+	if notesFile == "" {
+		return "", fmt.Errorf("release notes file is required: %w", errs.ErrUsage)
+	}
+
+	if !pathsafe.Relative(notesFile) {
+		return "", fmt.Errorf("unsafe release notes path: %s: %w", notesFile, errs.ErrValidation)
+	}
+
+	if !regularReleaseFile(notesFile) {
+		return "", fmt.Errorf("release notes are missing, not a regular file, or a symlink: %s: %w", notesFile, errs.ErrMissingInput)
+	}
+
+	return notesFile, nil
 }
 
 func validatePublishAssets(paths []string) ([]string, error) {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainversion "github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/listval"
@@ -37,12 +38,7 @@ type GenerateContainerInput struct {
 // `analyzed-container` layer SBOMs produced after a multi-artifact
 // container is published.
 //
-// When ArtifactTypes contains multiple comma-separated entries the
-// inner generator runs once per entry, but every invocation writes to
-// the same output filename — the analyzed-container layer is
-// artifact-type-agnostic, so the loop is functionally a single write.
-// The last entry's run wins; in practice every entry produces
-// identical output, so the loop is observationally idempotent.
+// ArtifactTypes labels the dependencies; the image is scanned only once.
 func GenerateContainer(
 	ctx context.Context,
 	syft SyftOps,
@@ -65,6 +61,10 @@ func GenerateContainer(
 
 	if in.ImageDigest == "" {
 		return fmt.Errorf("image digest is required: pass --image-digest <sha256:…> or set $IMAGE_DIGEST: %w", errs.ErrUsage)
+	}
+
+	if !domaincontainer.ValidDigest(in.ImageDigest) {
+		return fmt.Errorf("image digest must be canonical sha256:<64 lowercase hex>: %w", errs.ErrUsage)
 	}
 
 	version := domainversion.StripVPrefix(in.RefName)

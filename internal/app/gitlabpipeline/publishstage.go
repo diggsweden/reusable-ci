@@ -4,61 +4,149 @@
 package gitlabpipeline
 
 import (
+	"fmt"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/pipeline"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/projecttype"
 )
 
-// PublishStagePipeline renders a child pipeline that fans the release publish
-// stage out over its running targets and items — the publish-side sibling of
-// BuildStagePipeline. One `include:` of the matching `publish-<target>`
-// component per item; no job bodies are synthesised. Pure.
+// componentPublishContainer is the catalogue component three publish targets
+// share: containers, and the container-first Cargo and Go builds, which all
+// publish an image rather than a package.
+const componentPublishContainer = "publish-container"
+
+// PublishStagePipeline renders only publish targets whose complete execution
+// contract can be represented in the generated child pipeline. Artifact-based
+// components are refused until the generator can wire their needs/dependencies
+// to sibling build jobs; emitting them without that handoff would create jobs
+// that cannot access the files they publish.
 //
-// NOTE: components are authored incrementally as `templates/publish-*.yml`.
-// Done: publish-maven-central (Sonatype), publish-apple-appstore (App Store
-// Connect via altool on a macOS runner), and publish-forge-packages (the
-// forge-native registry — GitLab Package Registry via Job-Token). Pending:
-// publish-google-play (its GitHub upload is a third-party Action with no
-// binary/GitLab equivalent — needs a binary upload command first) and
-// publish-container (build-stage-coupled: needs a build-container fan-out and
-// per-arch digest aggregation first). The generated includes are structurally
-// valid for all; the missing components simply aren't includable until authored.
-//
-// The per-item input mapping is intentionally minimal until each component pins
-// its input contract: job-name, artifact-name, version, and — for the
-// artifact-based targets — project-type. project-type is load-bearing for
-// publish-forge-packages (dispatches Maven/npm/Gradle on the package ecosystem);
-// the others accept it harmlessly. Component names are final.
-func PublishStagePipeline(plan pipeline.ReleasePublishStagePlan, opts BuildPipelineOptions) ChildPipeline {
+//nolint:cyclop // one "include this component if the target runs" guard per publish target — a flat dispatch table written out.
+func PublishStagePipeline(plan pipeline.ReleasePublishStagePlan, opts BuildPipelineOptions) (ChildPipeline, error) {
+	if err := validateComponentCoordinate(opts); err != nil {
+		return ChildPipeline{}, err
+	}
+
 	stage := opts.Stage
 	if stage == "" {
 		stage = "publish"
 	}
 
 	out := ChildPipeline{Stages: []string{stage}}
+
 	tgt := plan.Targets
+	for _, contract := range []struct {
+		component string
+		target    pipeline.TargetPlan[pipeline.PlannedArtifact]
+	}{
+		{component: "publish-maven-central", target: tgt.MavenCentral},
+		{component: "publish-forge-packages", target: tgt.ForgePackages},
+		{component: "publish-google-play", target: tgt.GooglePlay},
+		{component: "publish-apple-appstore", target: tgt.XcodeIOS},
+		{component: componentPublishContainer, target: tgt.CargoContainerFirst},
+		{component: componentPublishContainer, target: tgt.GoContainerFirst},
+	} {
+		if err := validateTargetContract(contract.component, contract.target); err != nil {
+			return ChildPipeline{}, err
+		}
+	}
 
-	// Artifact-based publish targets map one component each; project-type lets a
-	// multi-ecosystem component (publish-forge-packages) route on the package kind.
-	addTargetIncludes(&out, "publish-maven-central", tgt.MavenCentral, opts, artifactName, projectTypeInput)
-	addTargetIncludes(&out, "publish-forge-packages", tgt.ForgePackages, opts, artifactName, projectTypeInput)
-	addTargetIncludes(&out, "publish-google-play", tgt.GooglePlay, opts, artifactName, projectTypeInput)
-	addTargetIncludes(&out, "publish-apple-appstore", tgt.XcodeIOS, opts, artifactName, projectTypeInput)
+	if err := validateTargetContract(componentPublishContainer, tgt.Containers); err != nil {
+		return ChildPipeline{}, err
+	}
 
-	// Container publishes: the index build (PlannedContainer) plus the
-	// container-first cargo/go variants (PlannedArtifact) all use publish-container.
-	addTargetIncludes(&out, "publish-container", tgt.Containers, opts, containerName, nil)
-	addTargetIncludes(&out, "publish-container", tgt.CargoContainerFirst, opts, artifactName, projectTypeInput)
-	addTargetIncludes(&out, "publish-container", tgt.GoContainerFirst, opts, artifactName, projectTypeInput)
+	for _, unsupported := range []struct {
+		name      string
+		component string
+		planned   bool
+	}{
+		{name: "google-play", component: "publish-google-play", planned: targetPlanned(tgt.GooglePlay)},
+		{name: "containers", component: componentPublishContainer, planned: targetPlanned(tgt.Containers)},
+		{name: "cargo-container-first", component: componentPublishContainer, planned: targetPlanned(tgt.CargoContainerFirst)},
+		{name: "go-container-first", component: componentPublishContainer, planned: targetPlanned(tgt.GoContainerFirst)},
+	} {
+		if unsupported.planned {
+			return ChildPipeline{}, unsupportedTarget("publish", unsupported.name, unsupported.component)
+		}
+	}
 
-	return out
+	if err := representableProjectTypes(tgt); err != nil {
+		return ChildPipeline{}, err
+	}
+
+	if err := representableAppStoreItems(tgt.XcodeIOS.Items); err != nil {
+		return ChildPipeline{}, err
+	}
+
+	for _, artifactTarget := range []struct {
+		name      string
+		component string
+		planned   bool
+	}{
+		{name: "maven-central", component: "publish-maven-central", planned: tgt.MavenCentral.Runs},
+		{name: "forge-packages", component: "publish-forge-packages", planned: tgt.ForgePackages.Runs},
+		{name: "apple-appstore", component: "publish-apple-appstore", planned: tgt.XcodeIOS.Runs},
+	} {
+		if artifactTarget.planned {
+			return ChildPipeline{}, unsupportedArtifactHandoff(artifactTarget.name, artifactTarget.component)
+		}
+	}
+
+	if err := out.validate(); err != nil {
+		return ChildPipeline{}, err
+	}
+
+	return out, nil
 }
 
-// containerName extracts a PlannedContainer's name.
-func containerName(c pipeline.PlannedContainer) string { return c.Name }
+// representableProjectTypes rejects artifacts whose project type has no
+// equivalent in the GitLab component the target would map to.
+func representableProjectTypes(tgt pipeline.ReleasePublishTargets) error {
+	for _, artifact := range tgt.ForgePackages.Items {
+		if artifact.ProjectType != projecttype.Maven && artifact.ProjectType != projecttype.NPM {
+			return fmt.Errorf("GitLab publish target forge-packages cannot represent project type %q: %w", artifact.ProjectType, errs.ErrUnsupported)
+		}
+	}
 
-// projectTypeInput forwards the artifact's ecosystem as the project-type input.
-// Multi-ecosystem publish components (notably publish-forge-packages, which spans
-// Maven/npm/Gradle) need it to route; empty values are dropped by
-// addTargetIncludes so single-ecosystem components simply ignore it.
-func projectTypeInput(a pipeline.PlannedArtifact) map[string]string {
-	return map[string]string{"project-type": string(a.ProjectType)}
+	for _, artifact := range tgt.MavenCentral.Items {
+		if artifact.ProjectType != projecttype.Maven {
+			return fmt.Errorf("GitLab publish target maven-central cannot represent project type %q: %w", artifact.ProjectType, errs.ErrUnsupported)
+		}
+	}
+
+	return nil
+}
+
+// representableAppStoreItems rejects App Store artifacts whose settings the
+// generated component cannot express: an unsigned build, a review submission,
+// or a macOS version that would have to become a runner image.
+func representableAppStoreItems(items []pipeline.PlannedArtifact) error {
+	for _, artifact := range items {
+		if artifact.ProjectType != projecttype.XcodeIOS {
+			return fmt.Errorf("GitLab publish target apple-appstore requires project type xcode-ios, got %q: %w", artifact.ProjectType, errs.ErrInvalidConfig)
+		}
+
+		if artifact.XcodeIOS == nil {
+			continue
+		}
+
+		if artifact.XcodeIOS.EnableCodeSigning != nil && !*artifact.XcodeIOS.EnableCodeSigning {
+			return fmt.Errorf("GitLab publish target apple-appstore cannot publish an unsigned xcode-ios artifact: %w", errs.ErrUnsupported)
+		}
+
+		if artifact.XcodeIOS.SubmitForReview {
+			return fmt.Errorf("GitLab publish target apple-appstore cannot represent submit-for-review: %w", errs.ErrUnsupported)
+		}
+
+		if artifact.XcodeIOS.MacOSVersion != "" {
+			return fmt.Errorf("GitLab publish target apple-appstore cannot translate macos-version %q to a GitLab runner image: %w", artifact.XcodeIOS.MacOSVersion, errs.ErrUnsupported)
+		}
+	}
+
+	return nil
+}
+
+func unsupportedArtifactHandoff(target, component string) error {
+	return fmt.Errorf("GitLab publish target %q requires a build artifact handoff, but generated child pipelines cannot wire needs/dependencies to sibling build jobs for component %q: %w", target, component, errs.ErrUnsupported)
 }

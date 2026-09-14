@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -24,8 +26,8 @@ type ScanContainerInput struct {
 	// JSONFile is the destination for the raw trivy JSON output.
 	// Default: trivy-results.json.
 	JSONFile string
-	// SARIFFile is the destination for the SARIF report derived via
-	// `trivy convert`. Default: trivy-results.sarif. Skipped when the JSON
+	// SARIFFile is the destination for the SARIF report derived in-process.
+	// Default: trivy-results.sarif. Skipped when the parsed JSON
 	// scan returned zero findings.
 	SARIFFile string
 	// GitLabReportFile is the destination for the GitLab
@@ -43,9 +45,9 @@ type ScanContainerInput struct {
 }
 
 // ScanContainer orchestrates a container scan in four steps:
-//  1. `trivy image --format json` → JSONFile  (subprocess — trivy does the scan)
+//  1. `trivy image --format json` → private report (trivy does the scan)
 //  2. Parse JSON, count findings at/above Severity → fail when non-zero
-//  3. in-process TrivyToSARIF       → SARIFFile (skipped when JSON is empty)
+//  3. in-process TrivyToSARIF       → SARIFFile (skipped with no findings)
 //  4. in-process TrivyToGitLabContainer → GitLabReportFile
 //
 // Trivy itself is invoked with `--exit-code 0` so the failure decision
@@ -54,10 +56,14 @@ type ScanContainerInput struct {
 // the Code Scanning tab + GitLab report carry the same findings the
 // pipeline rejected on — making the failure visible in the same places
 // where adopters look for vulnerability detail.
+// Configured output files represent this invocation: previous files are retired
+// after preflight; fresh validated reports are installed individually.
 //
 // TRIVY_PLATFORM (when set in the env) is inherited by the trivy
 // subprocess automatically; the multi-arch container build pins per-leg
 // platforms that way.
+//
+//nolint:cyclop // validate the severity vocabulary before the scan/report phases.
 func ScanContainer(
 	ctx context.Context,
 	trivy TrivyOps,
@@ -74,22 +80,46 @@ func ScanContainer(
 	gitlabPath := cmp.Or(in.GitLabReportFile, security.DefaultTrivyGitLabContainerFile)
 	severity := cmp.Or(in.Severity, "CRITICAL,HIGH")
 
-	_, _ = fmt.Fprintf(out, "🔍 Container vulnerability scan\n")
-	_, _ = fmt.Fprintf(out, "   Image: %s\n", in.ImageRef)
-	_, _ = fmt.Fprintf(out, "   Severity filter: %s\n\n", severity)
-
-	if err := runTrivyContainerScan(ctx, trivy, out, stderr, jsonPath, severity, in.ImageRef); err != nil {
-		return err
+	parts := strings.Split(severity, ",")
+	for index, part := range parts {
+		part = strings.ToUpper(strings.TrimSpace(part))
+		switch part {
+		case "UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL":
+			parts[index] = part
+		default:
+			return fmt.Errorf("unsupported container scan severity %q: %w", part, errs.ErrUsage)
+		}
 	}
 
-	ids, empty, err := loadContainerVulnIDs(jsonPath)
+	severity = strings.Join(parts, ",")
+
+	workDir, err := prepareScanReports(jsonPath, sarifPath, gitlabPath)
 	if err != nil {
 		return err
 	}
 
-	// Empty JSON means "trivy ran but found nothing at threshold". The
-	// pipeline passes; no SARIF / GitLab artifacts to upload.
-	if empty || len(ids) == 0 {
+	defer func() { _ = os.RemoveAll(workDir) }()
+
+	rawReport := filepath.Join(workDir, "raw.json")
+
+	_, _ = fmt.Fprintf(out, "🔍 Container vulnerability scan\n")
+	_, _ = fmt.Fprintf(out, "   Image: %s\n", in.ImageRef)
+	_, _ = fmt.Fprintf(out, "   Severity filter: %s\n\n", severity)
+
+	if scanErr := runTrivyContainerScan(ctx, trivy, out, stderr, rawReport, severity, in.ImageRef); scanErr != nil {
+		return scanErr
+	}
+
+	ids, err := loadContainerVulnIDs(rawReport)
+	if err != nil {
+		return err
+	}
+
+	if err := publishScanReport(rawReport, jsonPath, true); err != nil {
+		return err
+	}
+	// Only a parsed report with no findings is clean; empty bytes are not a scan.
+	if len(ids) == 0 {
 		_, _ = fmt.Fprintf(out, "%s No vulnerabilities found at severity %s or above\n", clicolor.Check(out), severity)
 
 		return nil
@@ -99,11 +129,11 @@ func ScanContainer(
 	// the artifacts must reach Code Scanning so the failure is visible
 	// in the same places adopters use for vulnerability triage.
 	deriveContainerReports(out, annot, TransformInput{
-		InputPath:    jsonPath,
-		OutputPath:   sarifPath,
+		InputPath:    rawReport,
+		OutputPath:   filepath.Join(workDir, "report.sarif"),
 		TrivyVersion: in.TrivyVersion,
 		ImageRef:     in.ImageRef,
-	}, gitlabPath)
+	}, filepath.Join(workDir, "gitlab.json"), sarifPath, gitlabPath)
 
 	noun := "vulnerabilities"
 	if len(ids) == 1 {
@@ -121,7 +151,7 @@ func ScanContainer(
 // the image ref and writes the JSON output to jsonPath.
 // `--exit-code 0` keeps the scan-gate decision inside the Go code.
 func runTrivyContainerScan(ctx context.Context, trivy TrivyOps, out, stderr io.Writer, jsonPath, severity, imageRef string) error {
-	if _, err := trivy.RunInherit(ctx, out, stderr,
+	code, err := trivy.RunInherit(ctx, out, stderr,
 		"image",
 		"--format", "json",
 		"--output", jsonPath,
@@ -129,48 +159,44 @@ func runTrivyContainerScan(ctx context.Context, trivy TrivyOps, out, stderr io.W
 		"--vuln-type", "os,library",
 		"--exit-code", "0",
 		imageRef,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("trivy image: %w", err)
+	}
+
+	if code != 0 {
+		return fmt.Errorf("trivy image exited with status %d: %w", code, errs.ErrDependencyUnavailable)
 	}
 
 	return nil
 }
 
-// loadContainerVulnIDs reads the trivy JSON report. Returns (ids,
-// empty, err) where `empty` is true when the JSON file is zero-sized
-// (trivy ran but found nothing at the configured severity threshold).
-func loadContainerVulnIDs(jsonPath string) ([]string, bool, error) {
-	info, err := os.Stat(jsonPath)
+// loadContainerVulnIDs reads a fresh, bounded, regular Trivy report.
+func loadContainerVulnIDs(jsonPath string) ([]string, error) {
+	body, err := readJSONScanReport(jsonPath)
 	if err != nil {
-		return nil, false, fmt.Errorf("stat %s: %w", jsonPath, err)
-	}
-
-	if info.Size() == 0 {
-		return nil, true, nil
-	}
-
-	body, err := os.ReadFile(jsonPath) //nolint:gosec // jsonPath is a locally-built filename.
-	if err != nil {
-		return nil, false, fmt.Errorf("read %s: %w", jsonPath, err)
+		return nil, fmt.Errorf("read %s: %w", jsonPath, err)
 	}
 
 	ids, err := security.ExtractTrivyVulnIDs(body)
 	if err != nil {
-		return nil, false, fmt.Errorf("extract container vuln ids: %w", err)
+		return nil, fmt.Errorf("extract container vuln ids: %w", err)
 	}
 
-	return ids, false, nil
+	return ids, nil
 }
 
 // deriveContainerReports derives the SARIF + GitLab container-scanning
 // reports from the trivy JSON. Both transforms are best-effort: if
 // either fails, the gate still fires below but the artifacts may be
 // incomplete. annot.Warningf surfaces the failure.
-func deriveContainerReports(out io.Writer, annot output.Annotator, in TransformInput, gitlabPath string) {
+func deriveContainerReports(out io.Writer, annot output.Annotator, in TransformInput, gitlabPath, sarifDestination, gitlabDestination string) {
 	_, _ = fmt.Fprintln(out, "Converting JSON to SARIF...")
 
 	if err := TrivyToSARIF(in); err != nil {
 		annot.Warningf("convert to SARIF failed: %v", err)
+	} else if err := publishScanReport(in.OutputPath, sarifDestination, true); err != nil {
+		annot.Warningf("publish SARIF failed: %v", err)
 	}
 
 	_, _ = fmt.Fprintln(out, "Generating GitLab container-scanning report...")
@@ -180,5 +206,7 @@ func deriveContainerReports(out io.Writer, annot output.Annotator, in TransformI
 
 	if _, err := TrivyToGitLabContainer(gitlabIn); err != nil {
 		annot.Warningf("TrivyToGitLabContainer: %v", err)
+	} else if err := publishScanReport(gitlabPath, gitlabDestination, true); err != nil {
+		annot.Warningf("publish GitLab container report failed: %v", err)
 	}
 }

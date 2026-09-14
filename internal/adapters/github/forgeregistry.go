@@ -12,6 +12,23 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
+const defaultServerURL = "https://github.com"
+
+func requirePublicGitHubRegistries(env func(string) string) error {
+	server := strings.TrimRight(strings.TrimSpace(env("GITHUB_SERVER_URL")), "/")
+	if server == defaultServerURL {
+		return nil
+	}
+
+	if server == "" {
+		return fmt.Errorf("GITHUB_SERVER_URL is required to resolve GitHub registries: %w", errs.ErrUsage)
+	}
+
+	return fmt.Errorf(
+		"public GitHub registries are not supported on GITHUB_SERVER_URL %q: %w",
+		server, errs.ErrUnsupported)
+}
+
 // ResolveForgeMavenRegistry implements provider.ForgeMavenRegistryResolver for
 // GitHub Packages: https://maven.pkg.github.com/<owner>/<repo>, authenticated
 // with a username/password <server> ($GITHUB_ACTOR / $GITHUB_TOKEN).
@@ -21,12 +38,19 @@ import (
 // TOKEN deliberately does not: see the note on the Token field below.
 func (p *Provider) ResolveForgeMavenRegistry() (provider.ForgeMavenRegistry, error) {
 	env := p.envFunc()
+	if err := requirePublicGitHubRegistries(env); err != nil {
+		return provider.ForgeMavenRegistry{}, err
+	}
 
-	repo := strings.TrimSpace(runcontext.Repository().Resolve(env))
+	repo := runcontext.Repository().Resolve(env)
 	if repo == "" {
 		return provider.ForgeMavenRegistry{}, fmt.Errorf(
 			"a repository (owner/repo) is required for GitHub Packages deploy (set one of %s): %w",
 			runcontext.Repository(), errs.ErrUsage)
+	}
+
+	if _, _, err := splitRepo(repo); err != nil {
+		return provider.ForgeMavenRegistry{}, err
 	}
 
 	return provider.ForgeMavenRegistry{
@@ -55,10 +79,24 @@ func (p *Provider) ResolveForgeMavenRegistry() (provider.ForgeMavenRegistry, err
 // host-scoped _authToken from $GITHUB_TOKEN.
 func (p *Provider) ResolveForgeNPMRegistry() (provider.ForgeNPMRegistry, error) {
 	env := p.envFunc()
+	if err := requirePublicGitHubRegistries(env); err != nil {
+		return provider.ForgeNPMRegistry{}, err
+	}
 
-	owner := strings.TrimSpace(runcontext.RepositoryOwner().Resolve(env))
+	repo := runcontext.Repository().Resolve(env)
+	if repo != "" {
+		if _, _, err := splitRepo(repo); err != nil {
+			return provider.ForgeNPMRegistry{}, err
+		}
+	}
+
+	owner := runcontext.RepositoryOwner().Resolve(env)
 	if owner == "" {
-		owner, _, _ = strings.Cut(strings.TrimSpace(runcontext.Repository().Resolve(env)), "/")
+		owner, _, _ = strings.Cut(repo, "/")
+	}
+
+	if _, _, err := splitRepo(owner + "/packages"); err != nil {
+		return provider.ForgeNPMRegistry{}, err
 	}
 
 	if owner == "" {

@@ -4,19 +4,27 @@
 package github
 
 import (
+	"strings"
+
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/validate"
 )
 
-// Describe returns GitHub's self-description. The OIDC issuer is the
-// fixed GitHub Actions token endpoint (what runner-issued tokens claim
-// via `iss` and what cosign verifies against).
+// Describe returns GitHub's self-description. github.com uses the public
+// Actions issuer; GHES publishes an instance-local issuer under _services/token.
 func (p *Provider) Describe() provider.Info {
+	server := strings.TrimRight(strings.TrimSpace(p.envFunc()("GITHUB_SERVER_URL")), "/")
+	issuer := "https://token.actions.githubusercontent.com"
+
+	if server != "" && !strings.EqualFold(server, "https://github.com") {
+		issuer = server + "/_services/token"
+	}
+
 	return provider.Info{
 		DisplayName: "GitHub",
 		SetupURL:    "https://github.com/settings/personal-access-tokens/new",
 		ScopesHint:  "A fine-grained PAT (github_pat_*) with 'contents: write' permission is required.",
-		OIDCIssuer:  "https://token.actions.githubusercontent.com",
+		OIDCIssuer:  issuer,
 	}
 }
 
@@ -27,9 +35,8 @@ func (p *Provider) Describe() provider.Info {
 //
 // PublicFulcioTrusted is asked of the issuer rather than declared, the same way
 // every adapter asks it. Describe() returns the fixed github.com Actions
-// issuer, which public Fulcio trusts, so it answers true today — and a GitHub
-// Enterprise Server instance, which publishes its own issuer, would answer
-// false the moment Describe() learns to report one.
+// issuer, which public Fulcio trusts. GHES reports its instance-local issuer,
+// so public Fulcio is correctly reported unavailable there.
 func (p *Provider) Capabilities() provider.Capabilities {
 	return provider.DeriveCapabilities(p, provider.Declared{
 		MintsOIDCToken:      true,

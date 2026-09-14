@@ -16,16 +16,10 @@ package conformance_test
 // tag to the digest it held before. None of those conditions exist against a
 // fake registry; they are the registry.
 //
-// There are two rollback paths and they undo different things:
-//
-//   - from the ledger: deletes the stage's own pointer (<base>:release), derived
-//     from the ledger and the stage rather than recorded anywhere;
-//   - from a promotion journal: undoes a ledger-release-tag promotion, which is
-//     the only path that can restore a moving tag, because what it pointed at
-//     before is not recoverable from the ledger once the promotion has run.
-//
-// Both run on every forge that claims tag deletion, so this is a real GitLab and
-// Forgejo comparison.
+// Rollback requires the pre-promotion journal: current registry state cannot
+// prove whether this run created a tag or whether it already existed at the same
+// digest. The journal path runs on every forge that claims tag deletion, so this
+// is a real GitLab and Forgejo comparison.
 
 import (
 	"path/filepath"
@@ -38,54 +32,7 @@ import (
 // deletesTags selects the forges that claim the capability rollback needs.
 func deletesTags(c provider.Capabilities) bool { return c.ContainerTagDeletion }
 
-// PAR-REG-4a: rolling back a stage removes that stage's pointer and nothing
-// else. The immutable release tag is not a stage destination, so a rollback that
-// took it would be destroying the release it was asked to un-promote.
-func TestRollback_FromLedger_RemovesTheStagePointerOnly(t *testing.T) {
-	const (
-		releaseTag   = "v0.0.1"
-		candidateTag = "staging-" + releaseTag
-		stage        = "release"
-	)
-
-	for _, forge := range forgesClaiming(t, deletesTags, "container tag deletion") {
-		t.Run(string(forge), func(t *testing.T) {
-			f := newLedgerFixture(t, forge, "rollback-stage")
-
-			// One manifest under the candidate and the immutable release tag,
-			// as a build leaves it.
-			pushed := livetest.PushImageTags(t, f.target, f.repo, candidateTag, releaseTag)
-			ledger := "release-images.json"
-
-			f.mustRun(t, "ledger add",
-				"container", "ledger", "add",
-				"--ledger", ledger, "--auth-file", f.authFile, "--tag", releaseTag,
-				"--role", "distroless",
-				"--candidate-tag", f.imagePath+":"+candidateTag,
-				"--final-tag", f.imagePath+":"+releaseTag,
-				"--sbom", writeSBOM(t, f.work, "rollback-stage"),
-				"--capture-digest",
-			)
-
-			f.mustRun(t, "ledger promote",
-				"container", "ledger", "promote",
-				"--ledger", ledger, "--auth-file", f.authFile, "--tag", releaseTag, "--stage", stage)
-			f.assertServes(t, stage, pushed.Digest, "promotion should have moved the pointer here")
-
-			f.mustRun(t, "ledger rollback",
-				"container", "ledger", "rollback",
-				"--ledger", ledger, "--auth-file", f.authFile, "--tag", releaseTag, "--stage", stage)
-
-			f.assertAbsent(t, stage, "rollback should have removed the stage pointer")
-			f.assertServes(t, releaseTag, pushed.Digest,
-				"the immutable release tag is not a stage destination and must survive rollback")
-			f.assertServes(t, candidateTag, pushed.Digest,
-				"the candidate is the promotion source and must survive rollback")
-		})
-	}
-}
-
-// PAR-REG-4b: the journal's central judgement — an immutable tag may be deleted
+// PAR-REG-4a: the journal's central judgement — an immutable tag may be deleted
 // only when this promotion created it.
 //
 // The journal exists because that fact is unrecoverable afterwards: once the tag
@@ -129,7 +76,7 @@ func TestRollback_FromJournal_RemovesAReleaseTagThePromotionCreated(t *testing.T
 
 			f.mustRun(t, "ledger rollback",
 				"container", "ledger", "rollback",
-				"--ledger", ledger, "--auth-file", f.authFile, "--tag", releaseTag, "--journal", journal)
+				"--auth-file", f.authFile, "--tag", releaseTag, "--journal", journal)
 
 			f.assertAbsent(t, releaseTag, "the promotion created this tag, so rollback should remove it")
 			f.assertServes(t, candidateTag, pushed.Digest,
@@ -138,7 +85,7 @@ func TestRollback_FromJournal_RemovesAReleaseTagThePromotionCreated(t *testing.T
 	}
 }
 
-// PAR-REG-4c: rollback restores a moving tag rather than deleting it.
+// PAR-REG-4b: rollback restores a moving tag rather than deleting it.
 //
 // This is the property nothing below a real registry can check. A moving tag
 // that pointed at the previous release must go back to pointing at it — not be
@@ -199,7 +146,7 @@ func TestRollback_FromJournal_RestoresAMovingTagToItsPreviousImage(t *testing.T)
 
 			f.mustRun(t, "ledger rollback",
 				"container", "ledger", "rollback",
-				"--ledger", ledger, "--auth-file", f.authFile, "--tag", releaseTag, "--journal", journal)
+				"--auth-file", f.authFile, "--tag", releaseTag, "--journal", journal)
 
 			f.assertServes(t, movingTag, previous.Digest,
 				"rollback must put the moving tag back on the previous release, not delete it")

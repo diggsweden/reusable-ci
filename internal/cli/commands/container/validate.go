@@ -59,7 +59,7 @@ func validateArtifactsCmd() *cli.Command {
 		Action: func(_ context.Context, cmd *cli.Command) error {
 			annot := deps.Annotator(cmd)
 
-			return appcontainer.ValidateArtifacts(os.Stderr, os.Stderr, annot, appcontainer.ValidateArtifactsInput{
+			return appcontainer.ValidateArtifacts(os.Stderr, annot, appcontainer.ValidateArtifactsInput{
 				ProjectType:       cmd.String("project-type"),
 				ArtifactDir:       cmd.String("artifact-dir"),
 				ContainerfilePath: cmd.String(flagContainerfile),

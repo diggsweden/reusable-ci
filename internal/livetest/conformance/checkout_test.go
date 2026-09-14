@@ -117,7 +117,7 @@ func git(t *testing.T, dir string, args ...string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...) //nolint:gosec // fixed read-only git subcommands from the scenario, not from input.
+	cmd := checkoutGitCommand(ctx, dir, t.TempDir(), args...)
 
 	out, err := cmd.Output()
 	if err != nil {
@@ -125,4 +125,11 @@ func git(t *testing.T, dir string, args ...string) string {
 	}
 
 	return strings.TrimSpace(string(out))
+}
+
+func checkoutGitCommand(ctx context.Context, dir, home string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir, "-c", "core.hooksPath=" + os.DevNull, "-c", "credential.helper="}, args...)...) //nolint:gosec // scenario-authored read-only Git arguments.
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "USERPROFILE=" + home, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=false", "GIT_PAGER=cat", "LC_ALL=C"}
+
+	return cmd
 }

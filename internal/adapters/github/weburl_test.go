@@ -9,7 +9,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/github"
 )
 
-func TestWebURLs(t *testing.T) {
+func TestWebURLs_PointAtTheForgeSpecificPaths(t *testing.T) {
 	t.Parallel()
 
 	p := github.New()

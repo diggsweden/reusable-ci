@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
-	"reflect"
+	"maps"
 	"regexp"
 	"testing"
 
@@ -67,7 +67,7 @@ func TestAndroidReleaseBuild_RunsSequenceAndEmitsNames(t *testing.T) {
 				"version":      "unknown", // no build.gradle in the fixture
 				"version-code": "unknown",
 			}
-			if got := sink.AllScalar(); !reflect.DeepEqual(got, wantOutputs) {
+			if got := sink.AllScalar(); !maps.Equal(got, wantOutputs) {
 				t.Errorf("outputs =\n%v\nwant\n%v", got, wantOutputs)
 			}
 

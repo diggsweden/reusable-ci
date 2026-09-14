@@ -26,6 +26,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
@@ -46,14 +47,20 @@ type releaseImagesCommon struct {
 	ExpectedImageRepository string
 }
 
+// The Forgejo runner variables this command forwards to child steps.
+const (
+	envForgejoServerURL  = "FORGEJO_SERVER_URL"
+	envForgejoRepository = "FORGEJO_REPOSITORY"
+)
+
 func releaseImagesGroup() *cli.Command {
 	return &cli.Command{
 		Name:  "release-images",
 		Usage: "high-level release-image signing, promotion, rollback, and cleanup boundary",
 		Description: `Workflow-facing release-image boundary. These commands combine the
 digest-first image ledger with short-lived registry auth, signer-safe cosign
-environment isolation, Forgejo package-API tag deletion, and forgejo-ci's
-release-only promotion policy. Lower-level ` + "`container ledger`" + ` verbs remain
+environment isolation, provider package-API tag deletion, and a release-only
+promotion policy. Lower-level ` + "`container ledger`" + ` verbs remain
 available for custom workflows; reusable workflows should use this group.`,
 		Commands: []*cli.Command{
 			releaseImagesSignCmd(),
@@ -204,6 +211,7 @@ func releaseImagesPromote(ctx context.Context, cmd *cli.Command, common releaseI
 		stage:          stage,
 		journal:        journal,
 		journalDirPerm: 0o700,
+		dryRun:         dryrun.Enabled(cmd),
 		errPrefix:      "release images",
 		done:           fmt.Sprintf("release images: promoted %d entr(y/ies) to release tags", len(entries)),
 		out:            os.Stderr,
@@ -236,8 +244,22 @@ func releaseImagesRollbackCmd() *cli.Command {
 				return err
 			}
 
+			// Both states mean "nothing to undo" and both are legitimate — a
+			// workflow's `if: failure()` rollback step runs even when the
+			// promotion failed before it journalled anything. But they are
+			// reached by different routes, and only one of them is also what a
+			// wrong --journal path looks like, so say which one it is: an
+			// operator who mistyped the path, or whose state dir did not
+			// survive between jobs, otherwise reads a bare "nothing to roll
+			// back" as confirmation that the release was undone.
+			if !fileExistsAt(journal) {
+				_, _ = fmt.Fprintf(os.Stderr, "No promotion journal at %s — nothing to roll back.\n", journal)
+
+				return nil
+			}
+
 			if !fileHasContent(journal) {
-				_, _ = fmt.Fprintln(os.Stderr, "No promoted image tags to roll back.")
+				_, _ = fmt.Fprintf(os.Stderr, "Promotion journal %s is empty — nothing to roll back.\n", journal)
 
 				return nil
 			}
@@ -428,7 +450,23 @@ func releaseImagesExpectedRepository(cmd *cli.Command, serverHost, repository st
 }
 
 func releaseImagesLoadLedger(common releaseImagesCommon, nonEmpty bool) ([]imageledger.Entry, error) {
-	data, err := cliio.ReadFile(common.Ledger)
+	if err := appcontainer.ValidateReleaseImagesPath(common.Ledger, common.DistDir); err != nil {
+		return nil, err
+	}
+
+	root, err := pathsafe.OpenRoot(common.DistDir)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = root.Close() }()
+
+	rel, err := filepath.Rel(common.DistDir, common.Ledger)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := cliio.ReadFileInRoot(root, rel)
 	if err != nil {
 		return nil, fmt.Errorf("release images: read ledger %s: %w", common.Ledger, err)
 	}
@@ -536,6 +574,14 @@ func fileHasContent(path string) bool {
 	return err == nil && info.Size() > 0
 }
 
+// fileExistsAt distinguishes "no journal was ever written here" from "the
+// journal is present but empty" — see the rollback action.
+func fileExistsAt(path string) bool {
+	_, err := os.Stat(path)
+
+	return err == nil
+}
+
 func releaseImagesWithTagDeleter(ctx context.Context, cmd *cli.Command, common releaseImagesCommon, fn func(imageledger.TagDeleter) error) error {
 	token, err := releaseImagesSecret(cmd.String("provider-token-file"), "REUSABLE_CI_PROVIDER_TOKEN", "FORGEJO_TOKEN", "GITEA_TOKEN", "GITHUB_TOKEN")
 	if err != nil {
@@ -561,8 +607,8 @@ func releaseImagesWithTagDeleter(ctx context.Context, cmd *cli.Command, common r
 func withReleaseImagesProviderEnv(common releaseImagesCommon, token string, fn func() error) error {
 	return withEnv(map[string]string{
 		"FORGEJO_TOKEN":      token,
-		"FORGEJO_SERVER_URL": common.ServerURL,
-		"FORGEJO_REPOSITORY": common.Repository,
+		envForgejoServerURL:  common.ServerURL,
+		envForgejoRepository: common.Repository,
 	}, fn)
 }
 

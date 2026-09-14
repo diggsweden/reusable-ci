@@ -53,10 +53,7 @@ before Trivy runs, because Trivy's
 			&cli.StringFlag{Name: flagTempDir, Sources: cienv.TempDir(), Usage: "scratch directory for the exported OCI layouts"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			skopeoAdapter := skopeo.New()
-			if authFile := cmd.String(flagAuthFile); authFile != "" {
-				skopeoAdapter = skopeo.WithAuthFile(authFile)
-			}
+			skopeoAdapter := newImageEvidenceSkopeo(cmd.String(flagAuthFile))
 
 			return appcontainer.ImageEvidence(ctx,
 				buildah.New(),
@@ -84,4 +81,26 @@ before Trivy runs, because Trivy's
 			)
 		},
 	}
+}
+
+// newImageEvidenceSkopeo builds the skopeo adapter this command drives,
+// scrubbed of signing material.
+//
+// The UnsetEnv field and the envWithout helper behind it existed on this
+// adapter and no caller ever set them, in the same function where syft
+// is handed signerSecretEnv() three lines away. So the one subprocess
+// here that talks to a registry was the one holding every signing secret
+// in the environment.
+//
+// Named rather than inline so the wiring is testable: the defect was not
+// that scrubbing was hard, it was that nothing could see it was missing.
+func newImageEvidenceSkopeo(authFile string) *skopeo.Adapter {
+	adapter := skopeo.New()
+	if authFile != "" {
+		adapter = skopeo.WithAuthFile(authFile)
+	}
+
+	adapter.UnsetEnv = signerSecretEnv()
+
+	return adapter
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
@@ -45,21 +46,41 @@ type ValidateNamespaceInput struct {
 // their own policy. The enforced registry is taken from in.Registry, so the
 // same check works for ghcr.io (the default) or any self-hosted registry an
 // adopter configures.
+//
+// The comparison ignores case: OCI repository paths are lowercase and
+// ResolveImageName lowercases the name it derives, while the owner and
+// repository arrive in the forge's own case (github.repository_owner keeps
+// "MyOrg"), so a case-sensitive match reported every mixed-case owner as a
+// violation.
 func ValidateNamespace(in ValidateNamespaceInput) error {
 	enforceOn := in.EnforceOnRegistries
 	if len(enforceOn) == 0 {
 		enforceOn = []string{DefaultRegistry}
 	}
 
-	if !slices.Contains(enforceOn, in.Registry) {
+	if !slices.ContainsFunc(enforceOn, func(registry string) bool {
+		return strings.EqualFold(registry, in.Registry)
+	}) {
 		return nil
 	}
 
+	// Two refusals rather than one: they are different misconfigurations with
+	// different fixes -- the enforced owner is deployment policy, the
+	// repository comes from the run -- and a single message naming both left
+	// the operator to guess which was missing.
+	if in.EnforceNamespace == "" {
+		return fmt.Errorf("the enforced namespace (owner) for registry %q is empty: %w", in.Registry, errs.ErrInvalidConfig)
+	}
+
+	if in.Repository == "" {
+		return fmt.Errorf("the repository to check against registry %q is empty: %w", in.Registry, errs.ErrInvalidConfig)
+	}
+
 	repoShort := repoShortName(in.Repository)
-	expectedPrefix := fmt.Sprintf("%s/%s/%s", in.Registry, in.EnforceNamespace, repoShort)
+	expectedPrefix := strings.ToLower(fmt.Sprintf("%s/%s/%s", in.Registry, in.EnforceNamespace, repoShort))
 	pattern := "^" + regexp.QuoteMeta(expectedPrefix) + `(-[^/]*|/.*)?$`
 
-	matched, err := regexp.MatchString(pattern, in.ImageName)
+	matched, err := regexp.MatchString(pattern, strings.ToLower(in.ImageName))
 	if err != nil {
 		return fmt.Errorf("validate namespace: build regex: %w", err)
 	}

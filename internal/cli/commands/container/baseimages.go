@@ -23,6 +23,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/regflags"
 	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
@@ -42,18 +43,18 @@ func localRegistryFlag() cli.Flag {
 var baseImagesRepositorySuffixRE = regexp.MustCompile(`^(-[A-Za-z0-9][A-Za-z0-9._-]*)?$`)
 
 type baseImagesCommon struct {
-	ServerURL          string
-	ServerHost         string
-	Registry           string
-	Repository         string
-	RepositorySuffix   string
-	ExpectedRepository string
-	ExpectedSource     string
-	RegistryUsername   string
-	RegistryPassword   string
-	PublicKeyPath      string
-	PublicKeySHA256    string
-	ExpectedWorkflow   string
+	ServerURL            string
+	ServerHost           string
+	Registry             string
+	Repository           string
+	RepositorySuffix     string
+	ExpectedRepository   string
+	ExpectedSource       string
+	RegistryUsername     string
+	RegistryPasswordFile string
+	PublicKeyPath        string
+	PublicKeySHA256      string
+	ExpectedWorkflow     string
 }
 
 func baseImagesGroup() *cli.Command {
@@ -133,7 +134,7 @@ func baseImagesCommonFromCmd(cmd *cli.Command, requireRegistry, requirePublicKey
 	}
 
 	workflow := strings.TrimSpace(cmd.String("expected-workflow"))
-	if unsafeWorkflowPath(workflow) {
+	if !pathsafe.Relative(workflow) {
 		return baseImagesCommon{}, fmt.Errorf("base images: unsafe expected-workflow path: %s: %w", workflow, errs.ErrUsage)
 	}
 
@@ -142,26 +143,27 @@ func baseImagesCommonFromCmd(cmd *cli.Command, requireRegistry, requirePublicKey
 		return baseImagesCommon{}, err
 	}
 
-	registryUsername, registryPassword := baseImagesRegistryCreds(cmd, requireRegistry)
+	registryUsername, registryPasswordFile := baseImagesRegistryCreds(cmd, requireRegistry)
 
 	return baseImagesCommon{
-		ServerURL:          serverURL,
-		ServerHost:         serverHost,
-		Registry:           registry,
-		Repository:         repository,
-		RepositorySuffix:   repositorySuffix,
-		ExpectedRepository: expectedRepository,
-		ExpectedSource:     expectedSource,
-		RegistryUsername:   registryUsername,
-		RegistryPassword:   registryPassword,
-		PublicKeyPath:      publicKeyPath,
-		PublicKeySHA256:    publicKeySHA256,
-		ExpectedWorkflow:   workflow,
+		ServerURL:            serverURL,
+		ServerHost:           serverHost,
+		Registry:             registry,
+		Repository:           repository,
+		RepositorySuffix:     repositorySuffix,
+		ExpectedRepository:   expectedRepository,
+		ExpectedSource:       expectedSource,
+		RegistryUsername:     registryUsername,
+		RegistryPasswordFile: registryPasswordFile,
+		PublicKeyPath:        publicKeyPath,
+		PublicKeySHA256:      publicKeySHA256,
+		ExpectedWorkflow:     workflow,
 	}, nil
 }
 
-// baseImagesRegistryCreds reads the registry credentials for verbs that
-// log in; verbs without registry login leave both empty.
+// baseImagesRegistryCreds reads the registry username and password FILE for
+// verbs that log in (the password itself is resolved at login time); verbs
+// without registry login leave both empty.
 func baseImagesRegistryCreds(cmd *cli.Command, requireRegistry bool) (string, string) {
 	if !requireRegistry {
 		return "", ""
@@ -212,7 +214,7 @@ func baseImagesPublicKeyFromCmd(cmd *cli.Command, requirePublicKey bool) (string
 	}
 
 	publicKeyPath := strings.TrimSpace(cmd.String("cosign-public-key-path"))
-	if unsafeWorkflowPath(publicKeyPath) {
+	if !pathsafe.Relative(publicKeyPath) {
 		return "", "", fmt.Errorf("base images: unsafe Cosign public key path: %s: %w", publicKeyPath, errs.ErrUsage)
 	}
 
@@ -220,7 +222,7 @@ func baseImagesPublicKeyFromCmd(cmd *cli.Command, requirePublicKey bool) (string
 }
 
 func (c baseImagesCommon) login(authFile string) error {
-	password, err := regflags.LoginPassword(c.RegistryUsername, c.RegistryPassword)
+	password, err := regflags.LoginPassword(c.RegistryUsername, c.RegistryPasswordFile)
 	if err != nil {
 		return err
 	}
@@ -315,10 +317,6 @@ func parseBaseImages(raw string) ([]appbaseimages.BaseImageMetadata, error) {
 	}
 
 	return images, nil
-}
-
-func unsafeWorkflowPath(path string) bool {
-	return path == "" || filepath.IsAbs(path) || strings.HasPrefix(path, "../") || strings.Contains(path, "/../") || strings.ContainsAny(path, "\n\r")
 }
 
 // baseImagePackageRegistry resolves the surface that lists and deletes base-image

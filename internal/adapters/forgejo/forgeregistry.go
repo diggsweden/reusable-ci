@@ -39,8 +39,10 @@ func (p *Provider) resolveRegistry(kind string) (packageRegistry, error) {
 			kind, runcontext.ServerURL(), errs.ErrUsage)
 	}
 
-	owner, _, ok := strings.Cut(runcontext.Repository().Resolve(env), "/")
-	if !ok || owner == "" {
+	// The URL needs only the owner, but a repository without a name is as
+	// malformed here as in every other Forgejo role, so it is refused alike.
+	owner, _, err := splitRepo(runcontext.Repository().Resolve(env))
+	if err != nil {
 		return packageRegistry{}, fmt.Errorf(
 			"a repository (owner/repo) is required for Forgejo %s deploy (set one of %s): %w",
 			kind, runcontext.Repository(), errs.ErrUsage)

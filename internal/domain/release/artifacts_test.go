@@ -4,12 +4,13 @@
 package release_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 )
 
-func TestIsReleaseArtifact(t *testing.T) {
+func TestIsReleaseArtifact_MatchesKnownArchiveAndPackageExtensions(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]bool{
@@ -40,15 +41,11 @@ func TestIsReleaseArtifact(t *testing.T) {
 func TestSBOMFilePatterns_HasExpectedShape(t *testing.T) {
 	t.Parallel()
 
+	// Order matters: callers glob in this sequence, so SPDX is discovered
+	// before CycloneDX.
 	want := []string{"*-sbom.spdx.json", "*-sbom.cyclonedx.json"}
-	if len(release.SBOMFilePatterns) != len(want) {
-		t.Fatalf("got %d patterns, want %d", len(release.SBOMFilePatterns), len(want))
-	}
-
-	for i, p := range release.SBOMFilePatterns {
-		if p != want[i] {
-			t.Errorf("pattern[%d] = %q, want %q", i, p, want[i])
-		}
+	if !slices.Equal(release.SBOMFilePatterns, want) {
+		t.Errorf("SBOMFilePatterns = %v, want %v", release.SBOMFilePatterns, want)
 	}
 }
 

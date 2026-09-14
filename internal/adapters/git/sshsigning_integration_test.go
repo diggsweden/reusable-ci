@@ -166,36 +166,14 @@ func TestVerifyTagSSHAgainstAllowedSigners_BrokenSetupIsNotADenial(t *testing.T)
 	}
 }
 
-// TestVerifyTagSSHAgainstAllowedSigners_MissingFileReadsAsADenial records
-// a gap between the adapter's documented contract and its behaviour. The
-// doc comment says err distinguishes "the tag isn't signed, isn't
-// annotated, the file is missing, or git itself errored"; the file being
-// missing is in fact reported as ErrPermissionDenied -- the sentinel that
-// means "signed, but this signer is not authorised".
-//
-// The cause is that git prints "No principal matched." for a missing
-// file, an empty file and a genuinely unauthorised key alike, and the
-// match looks for nothing else. It could: a missing file additionally
-// prints "Unable to open allowed keys file".
-//
-// It is unreachable and fail-closed. Both callers stat the path before
-// they get here -- checkSSHSignerAllowlist in app/validate/tags.go and
-// requireNonEmptyFile in app/release/verifyreleaserequest.go -- so the
-// operator is told the file is missing rather than that their key is
-// untrusted. The gap is that the adapter reads as though it made that
-// distinction itself.
-//
-// Recorded in docs/open-questions.md ("A missing allowed_signers file is
-// reported as a signer denial").
-func TestVerifyTagSSHAgainstAllowedSigners_MissingFileReadsAsADenial(t *testing.T) {
+func TestVerifyTagSSHAgainstAllowedSigners_MissingFileIsMissingInput(t *testing.T) {
 	repo, _ := signingRepo(t)
 	repo.Git("tag", "-s", "v1.0.0", "-m", "release v1.0.0")
 
 	_, out, err := (&adaptergit.Repo{Dir: repo.Dir}).
 		VerifyTagSSHAgainstAllowedSigners(context.Background(), "v1.0.0", filepath.Join(repo.Home, "absent"))
-	if !errors.Is(err, errs.ErrPermissionDenied) {
-		t.Fatalf("the adapter now separates a missing file from a denial (err = %v) -- "+
-			"close the open question and delete this test", err)
+	if !errors.Is(err, errs.ErrMissingInput) || errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrMissingInput and not ErrPermissionDenied", err)
 	}
 
 	// The output git returned does carry the distinction, which is what

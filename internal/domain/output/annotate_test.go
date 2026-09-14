@@ -5,6 +5,8 @@ package output_test
 
 import (
 	"bytes"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -34,7 +36,7 @@ func TestAnnotator_NonGitHubFormats_EmitPlainPrefix(t *testing.T) {
 	t.Parallel()
 
 	for _, f := range []output.Format{ //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		output.FormatText, output.FormatJSON, output.FormatGitLab, output.FormatAuto,
+		output.FormatText, output.FormatJSON, output.FormatGitLab, output.FormatForgejo, output.FormatAuto,
 	} {
 		t.Run(string(f), func(t *testing.T) {
 			t.Parallel()
@@ -110,12 +112,39 @@ func TestAnnotator_ErrorAt_GitHubRendersEscapedProperties(t *testing.T) {
 func TestAnnotator_ErrorAt_NonGitHubRendersPlainLocation(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
+	for _, format := range []output.Format{output.FormatText, output.FormatForgejo} {
+		var buf bytes.Buffer
 
-	a := output.NewAnnotator(&buf, output.FormatText)
-	a.ErrorAt(output.Annotation{File: "f.yml", Line: 6}, "bad value")
+		a := output.NewAnnotator(&buf, format)
+		a.ErrorAt(output.Annotation{File: "f.yml", Line: 6}, "bad value")
+		a.WarningAt(output.Annotation{File: "f.yml"}, "odd value")
 
-	require.Equal(t, "Error: f.yml:6: bad value\n", buf.String())
+		require.Equal(t, "Error: f.yml:6: bad value\nWarning: f.yml: odd value\n", buf.String(), "format %s", format)
+	}
+}
+
+// TestAnnotator_PlainFormats_KeepDataOnTheAnnotationLine is the plain
+// branch's answer to annotation injection. GitHub's branch escapes control
+// characters; the plain branch used to print data verbatim, so a value
+// carrying a line break started a fresh line at column 0, which is where a
+// runner that understands `::command::` lines (Forgejo's act_runner does)
+// looks for one. Continuation lines are indented, so none can be a command.
+func TestAnnotator_PlainFormats_KeepDataOnTheAnnotationLine(t *testing.T) {
+	t.Parallel()
+
+	for _, format := range []output.Format{output.FormatText, output.FormatForgejo, output.FormatGitLab} {
+		var buf bytes.Buffer
+
+		a := output.NewAnnotator(&buf, format)
+		a.Errorf("tag %s refused", "v1\n::add-mask::x\r::stop-commands::y\r\n::error::z")
+		a.ErrorAt(output.Annotation{File: "f.yml"}, "bad\n::warning::w")
+
+		for _, line := range strings.Split(buf.String(), "\n") {
+			require.False(t, strings.HasPrefix(line, "::"), "format %s let data start a command line:\n%s", format, buf.String())
+		}
+
+		require.Equal(t, "Error: tag v1\n    ::add-mask::x\n    ::stop-commands::y\n    ::error::z refused\nError: f.yml: bad\n    ::warning::w\n", buf.String())
+	}
 }
 
 func TestAnnotator_WarningAt_TitleOnly(t *testing.T) {
@@ -171,4 +200,63 @@ func TestAnnotatorFromFlag_ResolvesFormat(t *testing.T) {
 	a = output.AnnotatorFromFlag(&buf, "auto", provider.RunnerForgejo)
 	a.Warningf("watch out")
 	require.Equal(t, "Warning: watch out\n", buf.String())
+}
+
+// TestAnnotator_ConcurrentSerialisesWrites covers the wrapper that makes one
+// Annotator safe to hand to work running in parallel.
+//
+// An Annotator is a writer and a format, and nothing serialised the writer.
+// validate.Prerequisites runs its checks in an errgroup and gives each the same
+// annotator, so two checks that both annotate write to one io.Writer from two
+// goroutines. On a runner the visible symptom is two "::error::" lines spliced
+// into each other, which the forge parses as neither.
+//
+// It went unnoticed because every test passed the zero-value Annotator, whose
+// writer is nil and whose writes go nowhere — the race needs a real
+// destination, and no test had one.
+func TestAnnotator_ConcurrentSerialisesWrites(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+
+	annot := output.NewAnnotator(&buf, output.FormatGitHub).Concurrent()
+
+	const writers = 16
+
+	var wg sync.WaitGroup
+
+	for i := range writers {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			annot.Errorf("message %d", i)
+		}()
+	}
+
+	wg.Wait()
+
+	// Every annotation must be a whole line: a spliced write shows up as a
+	// line that does not carry the full prefix.
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != writers {
+		t.Fatalf("got %d annotation lines, want %d:\n%s", len(lines), writers, buf.String())
+	}
+
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "::error::") {
+			t.Errorf("line %d is spliced: %q", i, line)
+		}
+	}
+}
+
+// TestAnnotator_ConcurrentOnTheZeroValueIsSafe keeps the wrapper usable
+// unconditionally: the zero-value Annotator has no writer to guard.
+func TestAnnotator_ConcurrentOnTheZeroValueIsSafe(t *testing.T) {
+	t.Parallel()
+
+	var annot output.Annotator
+
+	annot.Concurrent().Errorf("no destination configured")
 }

@@ -22,6 +22,20 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
+// Flag names shared by the platform commands and their tests. goconst counts a
+// literal across the whole package, test files included.
+const (
+	commandCheckout = "checkout"
+
+	flagServerURL  = "server-url"
+	flagRepository = "repository"
+	flagRef        = "ref"
+	flagOutputKey  = "output-key"
+	flagFetchBase  = "fetch-base"
+	flagSparse     = "sparse"
+	flagPath       = "path"
+)
+
 // New returns the `platform` subgroup command tree.
 func New() *cli.Command {
 	return &cli.Command{
@@ -43,13 +57,13 @@ func resolveRefCmd() *cli.Command {
    reusable-ci platform resolve-ref --remote-url https://github.com/org/app --ref v1.2.3`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "remote-url", Sources: cli.EnvVars("REMOTE_URL"), Usage: "remote git URL queried with 'git ls-remote' (default: this repository, derived from --server-url + --repository)"},
-			&cli.StringFlag{Name: "server-url", Sources: cienv.ServerURL(), Usage: "forge base URL used to derive --remote-url when it is unset"},
-			&cli.StringFlag{Name: "repository", Sources: cienv.Repository(), Usage: `"owner/repo" used to derive --remote-url when it is unset`},
-			&cli.StringFlag{Name: "ref", Sources: cienv.Ref(), Usage: "ref to resolve (tag, branch, or full refs/X/Y)"},
-			&cli.StringFlag{Name: "output-key", Value: "sha", Sources: cli.EnvVars("OUTPUT_KEY"), Usage: "key written to the platform output sink"},
+			&cli.StringFlag{Name: flagServerURL, Sources: cienv.ServerURL(), Usage: "forge base URL used to derive --remote-url when it is unset"},
+			&cli.StringFlag{Name: flagRepository, Sources: cienv.Repository(), Usage: `"owner/repo" used to derive --remote-url when it is unset`},
+			&cli.StringFlag{Name: flagRef, Sources: cienv.Ref(), Usage: "ref to resolve (tag, branch, or full refs/X/Y)"},
+			&cli.StringFlag{Name: flagOutputKey, Value: "sha", Sources: cli.EnvVars("OUTPUT_KEY"), Usage: "key written to the platform output sink"},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			remoteURL, err := resolveRemoteURL(cmd.String("remote-url"), cmd.String("server-url"), cmd.String("repository"))
+			remoteURL, err := resolveRemoteURL(cmd.String("remote-url"), cmd.String(flagServerURL), cmd.String(flagRepository))
 			if err != nil {
 				return err
 			}
@@ -57,8 +71,8 @@ func resolveRefCmd() *cli.Command {
 			return deps.FromCmd(ctx, cmd, func(d *deps.Deps) error {
 				_, err := appplatform.ResolveRef(ctx, git.New(), d.OutputSink, os.Stderr, appplatform.ResolveRefInput{
 					RemoteURL: remoteURL,
-					Ref:       cmd.String("ref"),
-					OutputKey: cmd.String("output-key"),
+					Ref:       cmd.String(flagRef),
+					OutputKey: cmd.String(flagOutputKey),
 				})
 
 				return err

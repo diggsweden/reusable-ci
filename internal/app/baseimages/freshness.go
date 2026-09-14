@@ -4,6 +4,7 @@
 package baseimages
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,7 +12,9 @@ import (
 	"strconv"
 	"strings"
 
+	domainartifact "github.com/diggsweden/reusable-ci/v3/internal/domain/artifact"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
+	domaincontainer "github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
@@ -52,8 +55,10 @@ func CheckFreshness(ctx context.Context, resolver imageDigestResolver, sink ci.O
 
 	stale := 0
 
+	var progress, diagnostics bytes.Buffer
+
 	for _, check := range checks {
-		isStale, err := checkOneFreshness(ctx, resolver, out, stderr, check, in.Enforce)
+		isStale, err := checkOneFreshness(ctx, resolver, &progress, &diagnostics, check, in.Enforce)
 		if err != nil {
 			return err
 		}
@@ -61,6 +66,14 @@ func CheckFreshness(ctx context.Context, resolver imageDigestResolver, sink ci.O
 		if isStale {
 			stale++
 		}
+	}
+
+	if _, err := io.Copy(out, &progress); err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(stderr, &diagnostics); err != nil {
+		return err
 	}
 
 	if err := sink.Set(ctx, "stale-count", strconv.Itoa(stale)); err != nil {
@@ -111,11 +124,16 @@ func validateFreshnessCheck(check FreshnessCheck) error {
 		return fmt.Errorf("freshness: check name is empty: %w", errs.ErrUsage)
 	}
 
+	if err := domainartifact.ValidateName(check.Name); err != nil {
+		return fmt.Errorf("freshness check label: %w", err)
+	}
+
 	if check.PinnedRef == "" {
 		return fmt.Errorf("freshness: %s pinned ref is empty: %w", check.Name, errs.ErrUsage)
 	}
 
-	if !strings.Contains(check.PinnedRef, "@sha256:") {
+	_, digest, _ := strings.Cut(check.PinnedRef, "@")
+	if !domaincontainer.ValidDigestReference(check.PinnedRef) || !domaincontainer.ValidDigest(digest) {
 		return fmt.Errorf("freshness: %s image ref must be pinned by sha256 digest: %s: %w", check.Name, check.PinnedRef, errs.ErrValidation)
 	}
 
@@ -123,13 +141,8 @@ func validateFreshnessCheck(check FreshnessCheck) error {
 		return fmt.Errorf("freshness: %s source tag is empty: %w", check.Name, errs.ErrUsage)
 	}
 
-	if strings.Contains(check.SourceTag, "://") || strings.Contains(check.SourceTag, "@") {
+	if !domaincontainer.ValidTaggedRef(check.SourceTag) {
 		return fmt.Errorf("freshness: %s source tag must be a registry tag, not URL or digest: %s: %w", check.Name, check.SourceTag, errs.ErrValidation)
-	}
-
-	slash := strings.Index(check.SourceTag, "/")
-	if slash < 0 || !strings.Contains(check.SourceTag[slash:], ":") {
-		return fmt.Errorf("freshness: %s source tag must include registry, repository, and tag: %s: %w", check.Name, check.SourceTag, errs.ErrValidation)
 	}
 
 	return nil
@@ -147,6 +160,10 @@ func checkOneFreshness(ctx context.Context, resolver imageDigestResolver, out, s
 		_, _ = fmt.Fprintf(stderr, "WARNING: %s: could not fetch current digest for %s; skipping (not blocking)\n", check.Name, check.SourceTag)
 
 		return false, nil
+	}
+
+	if !domaincontainer.ValidDigest(currentDigest) {
+		return false, fmt.Errorf("freshness: %s resolver returned an invalid digest: %w", check.Name, errs.ErrMalformedInput)
 	}
 
 	if pinnedDigest != currentDigest {

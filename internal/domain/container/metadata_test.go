@@ -5,6 +5,7 @@ package container_test
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -60,15 +61,8 @@ func TestFormatTags_PrefixesImage(t *testing.T) {
 		{Tag: "v1.0.0"}, {Tag: "1.0"}, //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	})
 
-	want := []string{"ghcr.io/o/r:v1.0.0", "ghcr.io/o/r:1.0"}
-	if len(got) != len(want) {
-		t.Fatalf("got %v want %v", got, want)
-	}
-
-	for i := range got {
-		if got[i] != want[i] {
-			t.Errorf("tags[%d] = %q want %q", i, got[i], want[i])
-		}
+	if want := []string{"ghcr.io/o/r:v1.0.0", "ghcr.io/o/r:1.0"}; !slices.Equal(got, want) {
+		t.Errorf("FormatTags = %v, want %v", got, want)
 	}
 }
 
@@ -142,21 +136,10 @@ func TestBuildJSONOutput_Shape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Round-trip into a map for shape assertion.
-	var got struct {
-		Tags   []string          `json:"tags"`
-		Labels map[string]string `json:"labels"`
-	}
-	if err := json.Unmarshal(b, &got); err != nil {
-		t.Fatal(err)
-	}
-
-	if len(got.Tags) != 2 || got.Tags[0] != "img:v1.0.0" {
-		t.Errorf("Tags = %v", got.Tags)
-	}
-
-	if got.Labels["org.opencontainers.image.licenses"] != "MIT" {
-		t.Errorf("Labels = %v", got.Labels)
+	// Pin every public key and value, including tag order and the complete labels.
+	want := `{"tags":["img:v1.0.0","img:1"],"labels":{"org.opencontainers.image.licenses":"MIT","org.opencontainers.image.title":"app"}}`
+	if string(b) != want {
+		t.Errorf("JSON = %s, want %s", b, want)
 	}
 }
 
@@ -185,4 +168,101 @@ func TestBuildJSONOutput_EmptyTagsRendersArrayNotNull(t *testing.T) {
 	if got.Labels == nil || len(got.Labels) != 0 {
 		t.Errorf("labels = %#v, want empty object", got.Labels)
 	}
+}
+
+// TestBuildLabels_ExactOrderedLabels pins the whole slice, in order.
+//
+// The tests above convert the result to a map and check that the keys they
+// expect are present. A map cannot see what that hides: an extra label nobody
+// asked for, a duplicate key (the map keeps one), or a change in order. Order
+// matters because these labels are rendered into build arguments in sequence,
+// and cardinality matters because a duplicated key is a Containerfile that
+// declares the same label twice with different values.
+func TestBuildLabels_ExactOrderedLabels(t *testing.T) {
+	t.Parallel()
+
+	got := container.BuildLabels(container.LabelInputs{
+		ImageName:   "ghcr.io/example/app",
+		Description: "an example",
+		RepoURL:     "https://github.com/example/app",
+		Primary:     "v1.2.3",
+		SHA:         "abcdef0123",
+		License:     "EUPL-1.2",
+		CreatedAt:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+
+	want := []container.Label{
+		{Key: "org.opencontainers.image.title", Value: "app"},
+		{Key: "org.opencontainers.image.description", Value: "an example"},
+		{Key: "org.opencontainers.image.url", Value: "https://github.com/example/app"},
+		{Key: "org.opencontainers.image.source", Value: "https://github.com/example/app"},
+		{Key: "org.opencontainers.image.version", Value: "v1.2.3"},
+		{Key: "org.opencontainers.image.created", Value: "2026-01-01T00:00:00Z"},
+		{Key: "org.opencontainers.image.revision", Value: "abcdef0123"},
+		{Key: "org.opencontainers.image.licenses", Value: "EUPL-1.2"},
+	}
+
+	if !slices.Equal(got, want) {
+		t.Errorf("labels =\n%v\nwant\n%v", got, want)
+	}
+}
+
+// TestBuildLabels_OmitsUnknownValuesEntirely covers the omission policy at
+// exact cardinality.
+//
+// An absent label says nothing; an empty one claims the value IS the empty
+// string, which is what published images carried on every build whose event
+// context had no commit. Counting the result is what distinguishes "omitted"
+// from "present and empty" — a map lookup returns "" for both.
+func TestBuildLabels_OmitsUnknownValuesEntirely(t *testing.T) {
+	t.Parallel()
+
+	got := container.BuildLabels(container.LabelInputs{
+		ImageName: "ghcr.io/example/app",
+		CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+
+	want := []container.Label{
+		{Key: "org.opencontainers.image.title", Value: "app"},
+		{Key: "org.opencontainers.image.created", Value: "2026-01-01T00:00:00Z"},
+	}
+
+	if !slices.Equal(got, want) {
+		t.Errorf("labels =\n%v\nwant only title and created\n%v", got, want)
+	}
+}
+
+// TestBuildLabels_CreatedIsRenderedInUTC crosses a date boundary, which is the
+// only way to see the conversion happen.
+//
+// Every other case passes a time already in UTC, so dropping the .UTC() call
+// changes nothing they can observe. A build running at 01:30 in Stockholm on
+// the 2nd is 23:30 UTC on the 1st, and a label claiming the wrong DAY is the
+// kind of provenance error nobody notices until it is used as evidence.
+func TestBuildLabels_CreatedIsRenderedInUTC(t *testing.T) {
+	t.Parallel()
+
+	// UTC+2, so 01:30 local on the 2nd is 23:30 UTC on the 1st.
+	zone := time.FixedZone("CEST", 2*60*60)
+
+	got := container.BuildLabels(container.LabelInputs{
+		ImageName: "app",
+		CreatedAt: time.Date(2026, 6, 2, 1, 30, 0, 0, zone),
+	})
+
+	const want = "2026-06-01T23:30:00Z"
+
+	for _, label := range got {
+		if label.Key != "org.opencontainers.image.created" {
+			continue
+		}
+
+		if label.Value != want {
+			t.Errorf("created = %q, want %q (the local time was 2026-06-02T01:30 at UTC+2)", label.Value, want)
+		}
+
+		return
+	}
+
+	t.Fatal("no created label was emitted")
 }

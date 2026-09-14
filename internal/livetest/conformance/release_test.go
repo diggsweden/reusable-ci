@@ -147,9 +147,41 @@ func TestRelease_CreateWithAssets_IsEquivalentAcrossForges(t *testing.T) {
 				t.Errorf("%s release body = %q, want %q", forge, release.Body, body)
 			}
 
+			// The policy the forge recorded, not the one the adapter reported
+			// back: a draft left staged or a plain tag marked prerelease is
+			// exactly what the adapter's own read would agree with.
+			if release.Draft != spec.Draft || release.Prerelease != spec.Prerelease {
+				t.Errorf("%s recorded draft=%v prerelease=%v, want draft=%v prerelease=%v",
+					forge, release.Draft, release.Prerelease, spec.Draft, spec.Prerelease)
+			}
+
 			assertAssetsArrivedIntact(t, forge, release, assets, digests)
 		})
 	}
+}
+
+// rawRelease reads the release the forge holds at tag, through the oracle
+// rather than the adapter.
+func rawRelease(t *testing.T, target livetest.Target, repo, tag string) (rawref.Release, bool) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	reader := rawref.Reader{
+		Forge:  string(target.Forge),
+		Base:   target.BaseURL(),
+		Token:  target.Token,
+		Owner:  target.Owner,
+		Client: livetest.HTTPClient(t, target, time.Minute),
+	}
+
+	release, found, err := rawref.ReleaseByTag(ctx, reader, repo, tag)
+	if err != nil {
+		t.Fatalf("%s raw release read: %v", target.Forge, err)
+	}
+
+	return release, found
 }
 
 // writeAssets creates two assets whose content differs, so a forge that mixed
@@ -310,15 +342,19 @@ func TestRelease_ReReleasingATag_ReplacesRatherThanAccumulates(t *testing.T) {
 			defer cancel()
 
 			slug := livetest.RepoSlug(target, repo)
-			asset := writeAsset(t, assetSuffix, "asset content\n")
+
+			// The same asset name with different bytes each round, so the
+			// surviving asset can be told apart from the one it replaced.
+			var asset string
 
 			for _, round := range []struct {
-				name string
-				body string
+				name, body, content string
 			}{
-				{name: "first", body: firstBody},
-				{name: "second", body: secondBody},
+				{name: "first", body: firstBody, content: "first round asset content\n"},
+				{name: "second", body: secondBody, content: "second round asset content, which must replace the first\n"},
 			} {
+				asset = writeAsset(t, assetSuffix, round.content)
+
 				spec := provider.ReleaseSpec{
 					Tag:       tag,
 					Name:      "PAR-REL-3",
@@ -343,8 +379,20 @@ func TestRelease_ReReleasingATag_ReplacesRatherThanAccumulates(t *testing.T) {
 			// into a growing pile a consumer never asked for.
 			names := release.AssetNames()
 			if len(names) != 1 || names[0] != filepath.Base(asset) {
-				t.Errorf("%s attached %v after two releases, want exactly [%s]",
+				t.Fatalf("%s attached %v after two releases, want exactly [%s]",
 					forge, names, filepath.Base(asset))
+			}
+
+			// And it is the second round's bytes the forge serves, not the
+			// first round's asset kept under the same name.
+			wantDigest, _, err := rawref.SHA256(asset)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if served, _ := release.Asset(filepath.Base(asset)); served.Digest != wantDigest {
+				t.Errorf("%s serves %s for %s, want the replacement's %s — re-release kept the old bytes",
+					forge, served.Digest, filepath.Base(asset), wantDigest)
 			}
 		})
 	}
@@ -442,7 +490,8 @@ func assertAssetsArrivedIntact(
 // So the scenario publishes twice with an overlapping set and asserts all three
 // outcomes at once: kept, added, and gone.
 func TestRelease_PublishReconcile_ConvergesOnTheGivenAssets(t *testing.T) {
-	const tag = "v0.0.1-reconcile"
+	// Asset convergence is independent of prerelease policy, which GitLab cannot represent.
+	const tag = "v0.0.4"
 
 	for _, forge := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
 		t.Run(string(forge), func(t *testing.T) {
@@ -505,6 +554,85 @@ func TestRelease_PublishReconcile_ConvergesOnTheGivenAssets(t *testing.T) {
 				t.Errorf("%s: reconcile left the release with %v, want %v — a stale asset that is never removed means a release page keeps shipping the previous version's files",
 					forge, got, want)
 			}
+
+			// Reconcile publishes through a staged draft; the forge must hold
+			// the published state at the end, and a plain tag is no prerelease.
+			state, found := rawRelease(t, target, repo, tag)
+			if !found || state.Draft || state.Prerelease {
+				t.Errorf("%s: after reconcile the forge holds found=%v draft=%v prerelease=%v, want a published, non-prerelease release",
+					forge, found, state.Draft, state.Prerelease)
+			}
+		})
+	}
+}
+
+// PAR-REL-6: the release policy is what the forge records.
+//
+// Draft and prerelease are the two things the CLI cannot observe about its own
+// release: it sends them and trusts the answer. PAR-REL-1 and PAR-REL-4 read
+// the recorded state for a plain tag; this scenario covers a prerelease-shaped
+// tag, where policy diverges by forge. Forgejo records a prerelease, first as
+// the default draft and then published; GitLab has no such state, so the
+// product refuses before any request and the forge holds no release at all.
+func TestRelease_Policy_IsWhatTheForgeRecords(t *testing.T) {
+	const tag = "v0.0.6-rc.1"
+
+	for _, forge := range forgesClaiming(t, alwaysValidatesTokens, "releases") {
+		t.Run(string(forge), func(t *testing.T) {
+			target := livetest.Accept(t, forge)
+			repo := livetest.NewScratchRepo(t, target, "relpolicy")
+
+			livetest.PrepareTag(t, target, repo, tag)
+
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("PAR-REL-6\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			publish := func(extra ...string) livetest.Run {
+				args := append([]string{
+					"release", "publish", "--strategy", "reconcile",
+					"--tag", tag,
+					"--repository", livetest.RepoSlug(target, repo),
+					"--release-notes-file", "notes.md",
+				}, extra...)
+
+				return livetest.CLIIn(t, target, repo, livetest.RunOptions{Dir: dir}, args...)
+			}
+
+			first := publish()
+
+			if forge == provider.ForgeGitLab {
+				if first.ExitCode == 0 {
+					t.Fatalf("%s: a prerelease tag was published on a forge that cannot represent one\nstdout: %s", forge, first.Stdout)
+				}
+
+				if _, found := rawRelease(t, target, repo, tag); found {
+					t.Errorf("%s: the refusal came after a request; the forge holds a release at %s", forge, tag)
+				}
+
+				return
+			}
+
+			if first.ExitCode != 0 {
+				t.Fatalf("%s: default publish failed (exit %d)\nstderr: %s", forge, first.ExitCode, first.Stderr)
+			}
+
+			state, found := rawRelease(t, target, repo, tag)
+			if !found || !state.Draft || !state.Prerelease {
+				t.Errorf("%s: after the default publish the forge holds found=%v draft=%v prerelease=%v, want a prerelease draft",
+					forge, found, state.Draft, state.Prerelease)
+			}
+
+			if run := publish("--draft=false"); run.ExitCode != 0 {
+				t.Fatalf("%s: publish --draft=false failed (exit %d)\nstderr: %s", forge, run.ExitCode, run.Stderr)
+			}
+
+			state, found = rawRelease(t, target, repo, tag)
+			if !found || state.Draft || !state.Prerelease {
+				t.Errorf("%s: after --draft=false the forge holds found=%v draft=%v prerelease=%v, want a published prerelease",
+					forge, found, state.Draft, state.Prerelease)
+			}
 		})
 	}
 }
@@ -531,7 +659,7 @@ func TestRelease_PublishReconcile_ConvergesOnTheGivenAssets(t *testing.T) {
 // Deterministic seed, so a failure is reproducible.
 func TestRelease_LargeAsset_ArrivesIntact(t *testing.T) {
 	const (
-		tag  = "v0.0.1-largeasset"
+		tag  = "v0.0.5"
 		name = "large-asset.bin"
 		size = 40 << 20 // the 40 MB §1.1 asks about
 	)

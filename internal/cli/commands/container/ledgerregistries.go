@@ -10,7 +10,6 @@ import (
 	"os"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/cosign"
-	"github.com/diggsweden/reusable-ci/v3/internal/adapters/ociregistry"
 	"github.com/diggsweden/reusable-ci/v3/internal/cli/deps"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/imageledger"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -48,7 +47,7 @@ func (r promotionRollbackRegistry) DeleteTag(ctx context.Context, ref string) er
 // dry-run it previews via the in-memory decorator (no forge needed); a
 // real run resolves digests via docker and deletes via the active
 // forge's tag-scoped package API (gated by RequireTagDeleter).
-func cleanupReg(d *deps.Deps, dryRun bool, reg *ociregistry.Adapter) (imageledger.CleanupRegistry, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func cleanupReg(d *deps.Deps, dryRun bool, reg imageledger.DigestResolver) (imageledger.CleanupRegistry, error) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	if dryRun {
 		return newDryRunRegistry(reg, os.Stderr), nil
 	}
@@ -66,7 +65,7 @@ func cleanupReg(d *deps.Deps, dryRun bool, reg *ociregistry.Adapter) (imageledge
 	}, nil
 }
 
-func promotionRollbackReg(d *deps.Deps, dryRun bool, reg *ociregistry.Adapter) (imageledger.PromotionRollbackRegistry, error) { //nolint:varnamelen // idiomatic short name.
+func promotionRollbackReg(d *deps.Deps, dryRun bool, reg imageledger.Registry) (imageledger.PromotionRollbackRegistry, error) { //nolint:varnamelen // idiomatic short name.
 	if dryRun {
 		return newDryRunRegistry(reg, os.Stderr), nil
 	}

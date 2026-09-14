@@ -74,7 +74,7 @@ func TestVerifyAttestation_KMSArgvShape(t *testing.T) {
 }
 
 func TestVerifyAttestation_RejectsMutableTag(t *testing.T) {
-	a := &cosign.Adapter{}
+	a := refusingAdapter(t)
 
 	err := a.VerifyAttestation(context.Background(), cosign.VerifyAttestationInput{
 		ImageRef:      "ghcr.io/diggsweden/app:latest",

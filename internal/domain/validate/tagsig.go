@@ -16,12 +16,18 @@ type SignaturePresence struct {
 func (s SignaturePresence) Any() bool { return s.HasGPG || s.HasSSH }
 
 // DetectTagSignatures scans a `git cat-file tag <tag>` body for the
-// canonical PGP / SSH signature header lines.
+// canonical PGP / SSH signature header lines. Git appends a signature to the
+// tag object as its own lines, so only an armor header that starts a line
+// counts; the same words inside the tag message are prose.
 func DetectTagSignatures(body string) SignaturePresence {
 	return SignaturePresence{
-		HasGPG: strings.Contains(body, "BEGIN PGP SIGNATURE"),
-		HasSSH: strings.Contains(body, "BEGIN SSH SIGNATURE"),
+		HasGPG: hasArmorLine(body, "-----BEGIN PGP SIGNATURE-----"),
+		HasSSH: hasArmorLine(body, "-----BEGIN SSH SIGNATURE-----"),
 	}
+}
+
+func hasArmorLine(body, header string) bool {
+	return strings.HasPrefix(body, header) || strings.Contains(body, "\n"+header)
 }
 
 // FilterOutTag returns tags with the named one removed. Used by

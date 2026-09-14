@@ -8,17 +8,20 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	gocrypto "github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
+	"github.com/ProtonMail/go-crypto/openpgp/packet"
+	"github.com/stretchr/testify/require"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/openpgp"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/pgp"
 )
 
 // mintTestEntity creates a fresh OpenPGP entity in-process. Replaces the
@@ -88,12 +91,8 @@ func armorPublicKey(t *testing.T, entity *gocrypto.Entity) []byte {
 	return buf.Bytes()
 }
 
-// armorPublicKeyRing serialises several entities into ONE armor block --
-// the shape `gpg --armor --export A B` writes. Concatenating separate
-// blocks instead reads back as one key only; that is a known behaviour,
-// recorded in docs/open-questions.md ("Appending a key to
-// allowed_gpg_keys.asc does not authorise it") and pinned at the tag
-// level in app/validate/tags_allowlist_test.go.
+// armorPublicKeyRing serialises several entities into one armor block,
+// the shape `gpg --armor --export A B` writes.
 func armorPublicKeyRing(t *testing.T, entities ...*gocrypto.Entity) []byte {
 	t.Helper()
 
@@ -132,13 +131,54 @@ func TestNewSignerFromArmor_AcceptsUnencryptedKey(t *testing.T) {
 	}
 }
 
-func TestNewSignerFromArmor_AcceptsEncryptedKeyWithPassphrase(t *testing.T) {
+func TestNewSignerFromArmor_EncryptedKeySignsWithPassphrase(t *testing.T) {
 	t.Parallel()
-	entity := mintTestEntity(t)
 
-	armor := armorPrivateKey(t, entity, "swordfish")
-	if _, err := openpgp.NewSignerFromArmor(armor, "swordfish"); err != nil {
-		t.Fatalf("NewSignerFromArmor: %v", err)
+	for _, key := range []string{"primary", "signing subkey"} {
+		t.Run(key, func(t *testing.T) {
+			entity := mintTestEntity(t)
+			if key == "signing subkey" {
+				require.NoError(t, entity.AddSigningSubkey(nil))
+			}
+
+			pubKeyRing, err := gocrypto.ReadArmoredKeyRing(bytes.NewReader(armorPublicKey(t, entity)))
+			require.NoError(t, err)
+			keyArmor := armorPrivateKey(t, entity, "swordfish")
+			createdAt := time.Now().Truncate(time.Second).Add(time.Second)
+			verifyConfig := &packet.Config{Time: func() time.Time { return createdAt.Add(time.Hour) }}
+
+			for _, tc := range []struct {
+				name string
+				new  func() (*openpgp.Signer, error)
+			}{
+				{"Armor", func() (*openpgp.Signer, error) {
+					return openpgp.NewSignerFromArmor(keyArmor, "swordfish")
+				}},
+				{"ArmorAt", func() (*openpgp.Signer, error) {
+					return openpgp.NewSignerFromArmorAt(keyArmor, "swordfish", createdAt)
+				}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					signer, err := tc.new()
+					require.NoError(t, err)
+
+					const payload = "encrypted-key payload\x00\r\n"
+
+					var sig bytes.Buffer
+					require.NoError(t, signer.WriteSignature(&sig, strings.NewReader(payload)), "WriteSignature")
+					_, err = gocrypto.CheckArmoredDetachedSignature(pubKeyRing, strings.NewReader(payload), &sig, verifyConfig)
+					require.NoError(t, err, "writer signature does not verify")
+
+					artifact := filepath.Join(t.TempDir(), "artifact.bin")
+					require.NoError(t, os.WriteFile(artifact, []byte(payload), 0o600))
+					require.NoError(t, signer.SignFile(context.Background(), artifact), "SignFile")
+					body, err := os.ReadFile(artifact + ".asc")
+					require.NoError(t, err)
+					_, err = gocrypto.CheckArmoredDetachedSignature(pubKeyRing, strings.NewReader(payload), bytes.NewReader(body), verifyConfig)
+					require.NoError(t, err, "file signature does not verify")
+				})
+			}
+		})
 	}
 }
 
@@ -148,7 +188,7 @@ func TestNewSignerFromArmor_RejectsWrongPassphrase(t *testing.T) {
 	armor := armorPrivateKey(t, entity, "swordfish")
 
 	_, err := openpgp.NewSignerFromArmor(armor, "wrong")
-	if err == nil || !errors.Is(err, errs.ErrPermissionDenied) {
+	if !errors.Is(err, errs.ErrPermissionDenied) {
 		t.Fatalf("err = %v, want ErrPermissionDenied", err)
 	}
 }
@@ -159,7 +199,7 @@ func TestNewSignerFromArmor_RejectsEncryptedKeyWithoutPassphrase(t *testing.T) {
 	armor := armorPrivateKey(t, entity, "swordfish")
 
 	_, err := openpgp.NewSignerFromArmor(armor, "")
-	if err == nil || !errors.Is(err, errs.ErrPermissionDenied) {
+	if !errors.Is(err, errs.ErrPermissionDenied) {
 		t.Fatalf("err = %v, want ErrPermissionDenied", err)
 	}
 }
@@ -169,7 +209,7 @@ func TestNewSignerFromArmor_RejectsEmptyArmor(t *testing.T) {
 
 	for _, armor := range [][]byte{nil, []byte("   \n\n  ")} {
 		_, err := openpgp.NewSignerFromArmor(armor, "")
-		if err == nil || !errors.Is(err, errs.ErrMissingInput) {
+		if !errors.Is(err, errs.ErrMissingInput) {
 			t.Errorf("err = %v, want ErrMissingInput", err)
 		}
 	}
@@ -179,8 +219,8 @@ func TestNewSignerFromArmor_RejectsMalformedArmor(t *testing.T) {
 	t.Parallel()
 
 	_, err := openpgp.NewSignerFromArmor([]byte("not a key"), "")
-	if err == nil {
-		t.Fatal("expected parse error")
+	if !errors.Is(err, errs.ErrMalformedInput) {
+		t.Fatalf("err = %v, want ErrMalformedInput — a broken key file must not read as a missing one", err)
 	}
 }
 
@@ -190,7 +230,7 @@ func TestNewSignerFromArmor_RejectsPublicKey(t *testing.T) {
 	pub := armorPublicKey(t, entity)
 
 	_, err := openpgp.NewSignerFromArmor(pub, "")
-	if err == nil || !errors.Is(err, errs.ErrMissingInput) {
+	if !errors.Is(err, errs.ErrMissingInput) {
 		t.Fatalf("err = %v, want ErrMissingInput (private half missing)", err)
 	}
 }
@@ -236,32 +276,124 @@ func TestSignFile_ProducesVerifiableSignature(t *testing.T) {
 	}
 }
 
-func TestSignFile_TruncatesExistingAsc(t *testing.T) {
+func TestSignFile_RefusesUnsafeSidecarWithoutChangingFiles(t *testing.T) {
+	t.Parallel()
+
+	signer := openpgp.NewSignerFromEntity(mintTestEntity(t))
+	for _, tc := range []struct {
+		name        string
+		parentLink  bool
+		wantEntries int
+	}{{"sidecar link", false, 2}, {"parent link", true, 1}} {
+		t.Run(tc.name, func(t *testing.T) {
+			parentLink := tc.parentLink
+			root, outside := t.TempDir(), t.TempDir()
+
+			artifact := filepath.Join(root, "artifact")
+			if err := os.WriteFile(artifact, []byte("artifact bytes"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			canary := filepath.Join(outside, "canary")
+			if err := os.WriteFile(canary, []byte("unchanged"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			if parentLink {
+				link := filepath.Join(outside, "linked")
+				if err := os.Symlink(root, link); err != nil {
+					t.Fatal(err)
+				}
+
+				artifact = filepath.Join(link, "artifact")
+			} else if err := os.Symlink(canary, artifact+".asc"); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := signer.SignFile(context.Background(), artifact); !errors.Is(err, errs.ErrValidation) {
+				t.Errorf("err = %v, want ErrValidation", err)
+			}
+
+			body, err := os.ReadFile(canary)
+			if err != nil || string(body) != "unchanged" {
+				t.Errorf("canary changed: %v", err)
+			}
+
+			entries, err := os.ReadDir(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if len(entries) != tc.wantEntries {
+				t.Errorf("unexpected sidecar or staging files: %v", entries)
+			}
+		})
+	}
+}
+
+func TestSignFile_ReadFailurePreservesExistingSidecar(t *testing.T) {
+	t.Parallel()
+	signer := openpgp.NewSignerFromEntity(mintTestEntity(t))
+
+	artifact := filepath.Join(t.TempDir(), "directory")
+	if err := os.Mkdir(artifact, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(artifact+".asc", []byte("old signature"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := signer.SignFile(context.Background(), artifact); err == nil {
+		t.Error("directory read succeeded")
+	}
+
+	body, err := os.ReadFile(artifact + ".asc")
+	if err != nil || string(body) != "old signature" {
+		t.Errorf("old signature changed: %v", err)
+	}
+}
+
+func TestSignFile_ReplacesStaleSidecarWithExactSignature(t *testing.T) {
 	t.Parallel()
 	entity := mintTestEntity(t)
-	signer := openpgp.NewSignerFromEntity(entity)
+	createdAt := entity.PrimaryKey.CreationTime.Add(time.Second)
+	signer, err := openpgp.NewSignerFromEntityAt(entity, createdAt)
+	require.NoError(t, err)
+	pubKeyRing, err := gocrypto.ReadArmoredKeyRing(bytes.NewReader(armorPublicKey(t, entity)))
+	require.NoError(t, err)
+
+	verifyConfig := &packet.Config{Time: func() time.Time { return createdAt.Add(time.Hour) }}
+
+	const payload = "artifact bytes\x00\r\n"
+
+	var want bytes.Buffer
+	require.NoError(t, signer.WriteSignature(&want, strings.NewReader(payload)))
 	dir := t.TempDir()
 
 	artifact := filepath.Join(dir, "x")
-	if err := os.WriteFile(artifact, []byte("body"), 0o644); err != nil { //nolint:gosec // test fixture
-		t.Fatal(err)
-	}
-	// Pre-stage a stale .asc with junk content — re-signing must overwrite.
-	if err := os.WriteFile(artifact+".asc", []byte("STALE"), 0o644); err != nil { //nolint:gosec // test fixture
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(artifact, []byte(payload), 0o600))
+	// The old sidecar is longer than the replacement, exposing non-truncating writes.
+	require.NoError(t, os.WriteFile(artifact+".asc", bytes.Repeat([]byte("STALE"), want.Len()+1), 0o600))
 
-	if err := signer.SignFile(context.Background(), artifact); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, signer.SignFile(context.Background(), artifact))
 
 	body, err := os.ReadFile(artifact + ".asc") //nolint:gosec // test fixture
-	if err != nil {
-		t.Fatal(err)
+	require.NoError(t, err)
+
+	_, err = gocrypto.CheckArmoredDetachedSignature(pubKeyRing, strings.NewReader(payload), bytes.NewReader(body), verifyConfig)
+	require.NoError(t, err, "replacement signature does not verify for the exact artifact")
+	// Verification alone can ignore trailing bytes after the armor block.
+	if !bytes.Equal(body, want.Bytes()) {
+		t.Errorf("replacement differs from the complete signature: got %d bytes, want %d", len(body), want.Len())
 	}
 
-	if strings.Contains(string(body), "STALE") {
-		t.Error(".asc still carries stale content; must be truncated on re-sign")
+	_, err = gocrypto.CheckArmoredDetachedSignature(pubKeyRing, strings.NewReader(payload+"tampered"), bytes.NewReader(body), verifyConfig)
+	require.Error(t, err, "replacement signature verifies for a different artifact")
+
+	gotArtifact, err := os.ReadFile(artifact)
+	if err != nil || string(gotArtifact) != payload {
+		t.Errorf("artifact changed: body = %q, err = %v", gotArtifact, err)
 	}
 }
 
@@ -271,8 +403,8 @@ func TestSignFile_RejectsUninitialisedSigner(t *testing.T) {
 	var s *openpgp.Signer
 
 	err := s.SignFile(context.Background(), "anything")
-	if err == nil || !strings.Contains(err.Error(), "not initialised") {
-		t.Errorf("err = %v, want 'not initialised'", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "not initialised") {
+		t.Errorf("err = %v, want ErrUsage naming the uninitialised signer", err)
 	}
 }
 
@@ -291,7 +423,86 @@ func TestWriteSignature_StreamsToWriter(t *testing.T) {
 	}
 }
 
-func TestFingerprint_StableAcrossReloadFromArmor(t *testing.T) {
+func TestSigner_FixedCreationTimeMatchesRequestAndIsByteStable(t *testing.T) {
+	t.Parallel()
+
+	entity := mintTestEntity(t)
+	keyArmor := armorPrivateKey(t, entity, "")
+	pubKeyRing, err := gocrypto.ReadArmoredKeyRing(bytes.NewReader(armorPublicKey(t, entity)))
+	require.NoError(t, err)
+
+	createdAt := entity.PrimaryKey.CreationTime.Add(24 * time.Hour)
+	// Verify after the requested epoch; packet decoding below checks its exact value.
+	verifyConfig := &packet.Config{Time: func() time.Time { return createdAt.Add(time.Hour) }}
+
+	for _, tc := range []struct {
+		name string
+		new  func() (*openpgp.Signer, error)
+	}{
+		{"EntityAt", func() (*openpgp.Signer, error) {
+			return openpgp.NewSignerFromEntityAt(entity, createdAt)
+		}},
+		{"ArmorAt", func() (*openpgp.Signer, error) {
+			return openpgp.NewSignerFromArmorAt(keyArmor, "", createdAt)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			signer, err := tc.new()
+			require.NoError(t, err)
+
+			var first, second bytes.Buffer
+			require.NoError(t, signer.WriteSignature(&first, strings.NewReader("payload")))
+			require.NoError(t, signer.WriteSignature(&second, strings.NewReader("payload")))
+			artifact := filepath.Join(t.TempDir(), "artifact")
+			require.NoError(t, os.WriteFile(artifact, []byte("payload"), 0o600))
+			require.NoError(t, signer.SignFile(context.Background(), artifact))
+			fileSig, err := os.ReadFile(artifact + ".asc")
+			require.NoError(t, err)
+
+			for _, output := range []struct {
+				name string
+				body []byte
+			}{{"writer", first.Bytes()}, {"writer repeat", second.Bytes()}, {"file", fileSig}} {
+				t.Run(output.name, func(t *testing.T) {
+					if !bytes.Equal(first.Bytes(), output.body) {
+						t.Error("fixed-time OpenPGP signatures differ")
+					}
+
+					_, verifyErr := gocrypto.CheckArmoredDetachedSignature(pubKeyRing, strings.NewReader("payload"), bytes.NewReader(output.body), verifyConfig)
+					require.NoError(t, verifyErr, "signature does not verify")
+
+					block, err := armor.Decode(bytes.NewReader(output.body))
+					require.NoError(t, err)
+					decoded, err := packet.Read(block.Body)
+					require.NoError(t, err)
+
+					sig, ok := decoded.(*packet.Signature)
+					require.True(t, ok, "decoded packet = %T, want signature", decoded)
+
+					if !sig.CreationTime.Equal(createdAt) {
+						t.Errorf("signature creation time = %s, want requested %s", sig.CreationTime, createdAt)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestNewSignerFromEntityAt_RejectsV6Key(t *testing.T) {
+	t.Parallel()
+
+	entity, err := gocrypto.NewEntity("Test", "ci", "test@example.com", &packet.Config{V6Keys: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = openpgp.NewSignerFromEntityAt(entity, entity.PrimaryKey.CreationTime.Add(time.Second))
+	if !errors.Is(err, errs.ErrUnsupported) {
+		t.Fatalf("err = %v, want ErrUnsupported", err)
+	}
+}
+
+func TestFingerprint_UppercasePrimaryFingerprintAcrossReloadFromArmor(t *testing.T) {
 	t.Parallel()
 	entity := mintTestEntity(t)
 	armor := armorPrivateKey(t, entity, "")
@@ -306,16 +517,13 @@ func TestFingerprint_StableAcrossReloadFromArmor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if first.Fingerprint() != second.Fingerprint() {
-		t.Errorf("fingerprints differ: %q vs %q", first.Fingerprint(), second.Fingerprint())
-	}
-
-	if len(first.Fingerprint()) != 40 {
-		t.Errorf("fingerprint length = %d, want 40 (legacy v4 RSA)", len(first.Fingerprint()))
+	want := strings.ToUpper(hex.EncodeToString(entity.PrimaryKey.Fingerprint))
+	for i, signer := range []*openpgp.Signer{first, second} {
+		if got := signer.Fingerprint(); got != want {
+			t.Errorf("reload %d fingerprint = %q, want uppercase primary fingerprint %q", i, got, want)
+		}
 	}
 }
-
-var _ = io.EOF
 
 // TestVerifyDetachedArmored_RejectsASignatureFromAnotherKey is the
 // identity half of verification. Every other GPG test in the repository
@@ -337,7 +545,7 @@ func TestVerifyDetachedArmored_RejectsASignatureFromAnotherKey(t *testing.T) {
 
 	other := mintTestEntity(t)
 
-	err := openpgp.VerifyDetachedArmored(
+	err := pgp.VerifyDetachedArmored(
 		strings.NewReader(message),
 		bytes.NewReader(sig.Bytes()),
 		armorPublicKey(t, other),
@@ -367,8 +575,74 @@ func TestVerifyDetachedArmored_AcceptsAnyKeyInTheRing(t *testing.T) {
 
 	ring := armorPublicKeyRing(t, mintTestEntity(t), entity)
 
-	if err := openpgp.VerifyDetachedArmored(strings.NewReader(message), bytes.NewReader(sig.Bytes()), ring); err != nil {
+	if err := pgp.VerifyDetachedArmored(strings.NewReader(message), bytes.NewReader(sig.Bytes()), ring); err != nil {
 		t.Fatalf("signature from the second key in the ring rejected: %v", err)
+	}
+}
+
+// TestVerifyDetachedArmored_AcceptsAKeyInAnAppendedBlock covers the
+// verification half of the concatenated-bundle shape.
+//
+// The allowlist and the trust anchor are the same file, read by two
+// functions. When only PrimaryFingerprints learned to read every armor
+// block, a key added with `>>` would be authorised and then refused as
+// "signature made by unknown entity" before the fingerprint check ran.
+// Both readers have to see the whole file or neither should.
+func TestVerifyDetachedArmored_AcceptsAKeyInAnAppendedBlock(t *testing.T) {
+	t.Parallel()
+
+	const message = "artifact bytes\n"
+
+	entity := mintTestEntity(t)
+
+	signer := openpgp.NewSignerFromEntity(entity)
+
+	var sig bytes.Buffer
+	if err := signer.WriteSignature(&sig, strings.NewReader(message)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two separate armor blocks, as `gpg --armor --export >> file`
+	// writes them -- not one block holding two keys.
+	outgoing := armorPublicKey(t, mintTestEntity(t))
+	incoming := armorPublicKey(t, entity)
+	appended := append(append([]byte{}, outgoing...), incoming...)
+
+	if err := pgp.VerifyDetachedArmored(strings.NewReader(message), bytes.NewReader(sig.Bytes()), appended); err != nil {
+		t.Fatalf("a signature from a key in the appended block was rejected: %v", err)
+	}
+}
+
+// TestPrimaryFingerprints_ReadsEveryConcatenatedBlock is the allowlist
+// half of the same file shape: every key the operator committed has to
+// reach the authorised set, or the allowlist is narrower than the file
+// with only a key count to say so.
+func TestPrimaryFingerprints_ReadsEveryConcatenatedBlock(t *testing.T) {
+	t.Parallel()
+
+	first := mintTestEntity(t)
+	second := mintTestEntity(t)
+
+	appended := append(append([]byte{}, armorPublicKey(t, first)...), armorPublicKey(t, second)...)
+
+	got, err := pgp.PrimaryFingerprints(appended)
+	if err != nil {
+		t.Fatalf("PrimaryFingerprints: %v", err)
+	}
+
+	want := []string{
+		strings.ToUpper(hex.EncodeToString(first.PrimaryKey.Fingerprint)),
+		strings.ToUpper(hex.EncodeToString(second.PrimaryKey.Fingerprint)),
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("fingerprints = %v, want %v", got, want)
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("fingerprint %d = %q, want %q", i, got[i], want[i])
+		}
 	}
 }
 
@@ -398,7 +672,7 @@ func TestVerifyDetachedArmored_RefusalsAreDistinguishable(t *testing.T) {
 		want    error
 	}{
 		{
-			name:    "unparseable public key armor",
+			name:    "unparsable public key armor",
 			pubKey:  []byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\nnot base64\n-----END PGP PUBLIC KEY BLOCK-----\n"),
 			sig:     sig.Bytes(),
 			message: message,
@@ -431,7 +705,7 @@ func TestVerifyDetachedArmored_RefusalsAreDistinguishable(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := openpgp.VerifyDetachedArmored(strings.NewReader(tc.message), bytes.NewReader(tc.sig), tc.pubKey)
+			err := pgp.VerifyDetachedArmored(strings.NewReader(tc.message), bytes.NewReader(tc.sig), tc.pubKey)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)
 			}
@@ -450,7 +724,7 @@ func TestPrimaryFingerprints_ReadsEveryKeyInTheBundle(t *testing.T) {
 	first := mintTestEntity(t)
 	second := mintTestEntity(t)
 
-	got, err := openpgp.PrimaryFingerprints(armorPublicKeyRing(t, first, second))
+	got, err := pgp.PrimaryFingerprints(armorPublicKeyRing(t, first, second))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,12 +755,12 @@ func TestPrimaryFingerprints_ReadsEveryKeyInTheBundle(t *testing.T) {
 func TestPrimaryFingerprints_EmptyArmorIsNotAnError(t *testing.T) {
 	t.Parallel()
 
-	got, err := openpgp.PrimaryFingerprints([]byte("  \n\t\n"))
+	got, err := pgp.PrimaryFingerprints([]byte("  \n\t\n"))
 	if err != nil || len(got) != 0 {
 		t.Fatalf("got (%v, %v), want (empty, nil)", got, err)
 	}
 
-	if _, err := openpgp.PrimaryFingerprints([]byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\nnope\n-----END PGP PUBLIC KEY BLOCK-----\n")); !errors.Is(err, errs.ErrMalformedInput) {
+	if _, err := pgp.PrimaryFingerprints([]byte("-----BEGIN PGP PUBLIC KEY BLOCK-----\nnope\n-----END PGP PUBLIC KEY BLOCK-----\n")); !errors.Is(err, errs.ErrMalformedInput) {
 		t.Errorf("a broken keyring file must not read as an empty allowlist: err = %v", err)
 	}
 }

@@ -6,19 +6,15 @@ package gradle_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/gradle"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
-
-func TestNew(t *testing.T) {
-	if gradle.New() == nil {
-		t.Fatal("New returned nil")
-	}
-}
 
 // stubGradlew writes a fake ./gradlew script in the test's tmpdir and
 // returns its absolute path. Tests pass that path via Adapter.Bin.
@@ -57,8 +53,8 @@ func TestRunInherit_NonZeroExitWraps(t *testing.T) {
 	a := &gradle.Adapter{Bin: bin}
 
 	err := a.RunInherit(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, "cyclonedxBom")
-	if err == nil {
-		t.Fatal("expected error from exit 7")
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("exit 7 = %v, want ErrValidation (the build was refused, not the toolchain missing)", err)
 	}
 
 	if !strings.Contains(err.Error(), "cyclonedxBom") {

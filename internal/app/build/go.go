@@ -4,7 +4,6 @@
 package build
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -15,12 +14,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"golang.org/x/mod/modfile"
 
 	domainbuild "github.com/diggsweden/reusable-ci/v3/internal/domain/build"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainversion "github.com/diggsweden/reusable-ci/v3/internal/domain/version"
 	"github.com/diggsweden/reusable-ci/v3/internal/listval"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // GoTool runs `go` commands.
@@ -173,6 +177,21 @@ func GoBuildBinaries(ctx context.Context, tool GoTool, w, stderr io.Writer, in G
 		mainPackage = "."
 	}
 
+	for _, value := range []string{binaryName, in.Commit, in.BuildTags, in.LDFlags, mainPackage} {
+		if scalarErr := validateScalarValue(value); scalarErr != nil {
+			return scalarErr
+		}
+	}
+
+	if !pathsafe.Relative(binaryName) || binaryName == "." || filepath.Base(binaryName) != binaryName {
+		return fmt.Errorf("binary-name must be a plain basename: %w", errs.ErrUsage)
+	}
+
+	buildDate, err := resolveBuildDate(time.Now)
+	if err != nil {
+		return err
+	}
+
 	// Wipe only the per-platform output dirs we are about to write.
 	// A blanket RemoveAll(dist) would silently delete sibling artifacts
 	// the user (or another tool) staged in dist/ — e.g. tarballs,
@@ -183,11 +202,6 @@ func GoBuildBinaries(ctx context.Context, tool GoTool, w, stderr io.Writer, in G
 		if rmErr := os.RemoveAll(filepath.Join(dir, "dist", goos+"-"+goarch)); rmErr != nil {
 			return fmt.Errorf("remove dist/%s-%s: %w", goos, goarch, rmErr)
 		}
-	}
-
-	buildDate, err := resolveBuildDate(time.Now)
-	if err != nil {
-		return err
 	}
 
 	baseLDFlags := fmt.Sprintf("-s -w -X main.version=%s -X main.commit=%s -X main.date=%s", version, in.Commit, buildDate)
@@ -315,7 +329,7 @@ func GoMetadata(ctx context.Context, sink ci.OutputSink, w io.Writer, in GoMetad
 }
 
 func readGoModulePath(path string) (string, error) {
-	f, err := os.Open(path) //nolint:gosec,varnamelen // caller passes a CLI-flag-derived path to go.mod.
+	body, err := os.ReadFile(path) //nolint:gosec // caller passes a CLI-flag-derived path to go.mod.
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return "", fmt.Errorf("go.mod not found at %q: %w", path, errs.ErrMissingInput)
@@ -324,26 +338,16 @@ func readGoModulePath(path string) (string, error) {
 		return "", fmt.Errorf("read go.mod at %q: %w", path, err)
 	}
 
-	defer func() { _ = f.Close() }()
-
-	s := bufio.NewScanner(f) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	for s.Scan() {
-		line := strings.TrimSpace(s.Text())
-		if strings.HasPrefix(line, "module ") {
-			module := strings.TrimSpace(strings.TrimPrefix(line, "module "))
-			if module == "" {
-				return "", fmt.Errorf("go.mod module path is empty: %w", errs.ErrInvalidConfig)
-			}
-
-			return module, nil
-		}
+	parsed, err := modfile.Parse(path, body, nil)
+	if err != nil {
+		return "", fmt.Errorf("parse go.mod at %q: %w: %w", path, err, errs.ErrInvalidConfig)
 	}
 
-	if err := s.Err(); err != nil {
-		return "", fmt.Errorf("scan go.mod: %w", err)
+	if parsed.Module == nil || strings.TrimSpace(parsed.Module.Mod.Path) == "" {
+		return "", fmt.Errorf("go.mod module directive not found: %w", errs.ErrInvalidConfig)
 	}
 
-	return "", fmt.Errorf("go.mod module directive not found: %w", errs.ErrInvalidConfig)
+	return parsed.Module.Mod.Path, nil
 }
 
 func firstNonEmpty(values ...string) string {
@@ -416,6 +420,10 @@ func validateScalarValue(value string) error {
 		return fmt.Errorf("value contains a newline (would break output sinks): %w", errs.ErrUsage)
 	}
 
+	if !utf8.ValidString(value) || strings.ContainsFunc(value, unicode.IsControl) {
+		return fmt.Errorf("value contains invalid UTF-8 or control characters: %w", errs.ErrUsage)
+	}
+
 	return nil
 }
 
@@ -432,7 +440,12 @@ func resolveBuildDate(now func() time.Time) (string, error) {
 			return "", fmt.Errorf("invalid SOURCE_DATE_EPOCH %q (expected integer seconds since UNIX epoch): %w", raw, errs.ErrUsage)
 		}
 
-		return time.Unix(secs, 0).UTC().Format(time.RFC3339), nil
+		date := time.Unix(secs, 0).UTC().Format(time.RFC3339)
+		if _, err := time.Parse(time.RFC3339, date); err != nil {
+			return "", fmt.Errorf("SOURCE_DATE_EPOCH is outside the RFC3339 range: %w", errs.ErrUsage)
+		}
+
+		return date, nil
 	}
 
 	return now().UTC().Format(time.RFC3339), nil

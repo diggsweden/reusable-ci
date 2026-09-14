@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 // FindBuildBOMInput drives FindBuildBOM. Patterns are glob-style
@@ -92,42 +94,16 @@ func FindBuildBOM(in FindBuildBOMInput) string {
 	return cands[0].path
 }
 
-// pathMatch matches a find-style glob (*, **, ?) against a clean path.
-// We implement a custom matcher because filepath.Match doesn't span
-// directory separators — we want `*/target/bom.json` to match
-// `release-artifacts/foo/target/bom.json`.
+// pathMatch adapts the repository's find-style whole-segment * patterns to
+// doublestar. In `find -path`, * spans separators; replacing a segment that is
+// exactly * with ** retains that behavior without maintaining a custom parser.
 func pathMatch(pattern, path string) (bool, error) {
-	// Convert find-glob to regexp.
-	var sb strings.Builder
-	sb.WriteByte('^')
-
-	i := 0 //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	for i < len(pattern) {
-		c := pattern[i] //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		switch c {
-		case '*':
-			// `*` matches any run of non-`/` chars in glob, but the bash
-			// patterns are find -path globs which match `/` too. We use the
-			// permissive form: `.*`.
-			sb.WriteString(".*")
-		case '?':
-			sb.WriteString(".")
-		case '.', '+', '(', ')', '|', '^', '$', '{', '}', '\\':
-			sb.WriteByte('\\')
-			sb.WriteByte(c)
-		default:
-			sb.WriteByte(c)
+	segments := strings.Split(filepath.ToSlash(pattern), "/")
+	for i, segment := range segments {
+		if segment == "*" {
+			segments[i] = "**"
 		}
-
-		i++
 	}
 
-	sb.WriteByte('$')
-
-	rx, err := regexpCompile(sb.String())
-	if err != nil {
-		return false, err
-	}
-
-	return rx.MatchString(path), nil
+	return doublestar.Match(strings.Join(segments, "/"), filepath.ToSlash(path))
 }

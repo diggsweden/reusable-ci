@@ -9,101 +9,82 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakegitlabserver"
 )
 
-func TestServer_RoutesProjectGET(t *testing.T) {
-	srv := fakegitlabserver.New(t)
-	srv.OnGet("/api/v4/projects/owner%2Frepo", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
-		return fakegitlabserver.Response{
-			Status: 200,
-			Body:   `{"description":"x","license":{"key":"apache-2.0"}}`,
-		}
-	})
+// do sends one request through the server's client and returns the status,
+// headers and body, failing on any transport or read error before the response
+// is used.
+func do(t *testing.T, srv *fakegitlabserver.Server, method, path, body string) (int, http.Header, string) {
+	t.Helper()
 
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL()+"/api/v4/projects/owner%2Frepo", nil)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
 	}
+
+	req, err := http.NewRequestWithContext(t.Context(), method, srv.URL()+path, reader)
+	require.NoError(t, err)
+
+	resp, err := srv.Client().Do(req)
+	require.NoError(t, err)
 
 	defer func() { _ = resp.Body.Close() }()
 
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "apache-2.0") {
-		t.Errorf("body = %q, want apache-2.0", body)
-	}
+	got, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	return resp.StatusCode, resp.Header, string(got)
 }
 
-func TestServer_RoutesPOSTAndPUT(t *testing.T) {
+// TestServer_RoutesAndRecordsDistinctRequests sends three distinguishable
+// requests and compares each response and each recorded request whole: an
+// explicit status with repeated headers, the default status for a zero Status,
+// a lower-case method registration matching an upper-case request, an escaped
+// path matched as written, and a query and body recorded per request. A route
+// registered twice answers with its last handler, and an unregistered route is
+// a 404 naming the method and path.
+func TestServer_RoutesAndRecordsDistinctRequests(t *testing.T) {
+	t.Parallel()
+
 	srv := fakegitlabserver.New(t)
-	srv.OnPost("/api/v4/projects/x/releases", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
-		return fakegitlabserver.Response{Status: 201, Body: `{"tag_name":"v1.0.0"}`}
+	srv.OnPost("/api/v4/projects/owner%2Frepo/releases", func(fakegitlabserver.Request) fakegitlabserver.Response {
+		return fakegitlabserver.Response{Status: http.StatusTeapot, Body: "replaced"}
 	})
-	srv.OnPut("/api/v4/projects/x/releases/v1.0.0", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
-		return fakegitlabserver.Response{Status: 200, Body: `{}`}
+	srv.OnPost("/api/v4/projects/owner%2Frepo/releases", func(fakegitlabserver.Request) fakegitlabserver.Response {
+		return fakegitlabserver.Response{Status: http.StatusCreated, Header: http.Header{"X-Fixture": {"one", "two"}}, Body: `{"id":1}`}
 	})
-
-	reqPost, _ := http.NewRequestWithContext(t.Context(), http.MethodPost,
-		srv.URL()+"/api/v4/projects/x/releases", strings.NewReader(`{"tag_name":"v1.0.0"}`))
-	reqPost.Header.Set("Content-Type", "application/json")
-	resp1, _ := http.DefaultClient.Do(reqPost)
-
-	defer func() { _ = resp1.Body.Close() }()
-
-	if resp1.StatusCode != http.StatusCreated {
-		t.Errorf("POST status = %d, want 201", resp1.StatusCode)
-	}
-
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPut, srv.URL()+"/api/v4/projects/x/releases/v1.0.0", nil)
-	resp2, _ := http.DefaultClient.Do(req)
-
-	defer func() { _ = resp2.Body.Close() }()
-
-	if resp2.StatusCode != http.StatusOK {
-		t.Errorf("PUT status = %d, want 200", resp2.StatusCode)
-	}
-}
-
-func TestServer_404OnUnregistered(t *testing.T) {
-	srv := fakegitlabserver.New(t)
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL()+"/random", nil)
-	resp, _ := http.DefaultClient.Do(req)
-
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status = %d, want 404", resp.StatusCode)
-	}
-}
-
-func TestServer_RequestsReturnsSnapshot(t *testing.T) {
-	srv := fakegitlabserver.New(t)
-	srv.OnGet("/api/v4/projects/x", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
-		return fakegitlabserver.Response{Body: `{}`}
+	srv.On("get", "/api/v4/projects/x", func(fakegitlabserver.Request) fakegitlabserver.Response {
+		return fakegitlabserver.Response{Body: `{"name":"repo"}`}
 	})
 
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL()+"/api/v4/projects/x?with_license=true", nil)
+	status, header, body := do(t, srv, http.MethodPost, "/api/v4/projects/owner%2Frepo/releases?draft=true&draft=false", "tag=v1&notes=raw bytes")
+	require.Equal(t, http.StatusCreated, status)
+	require.Equal(t, []string{"one", "two"}, header.Values("X-Fixture"))
+	require.JSONEq(t, `{"id":1}`, body)
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	status, _, body = do(t, srv, http.MethodGet, "/api/v4/projects/x", "")
+	require.Equal(t, http.StatusOK, status)
+	require.JSONEq(t, `{"name":"repo"}`, body)
 
-	defer func() { _ = resp.Body.Close() }()
+	status, _, body = do(t, srv, http.MethodDelete, "/api/v4/projects/x", "")
+	require.Equal(t, http.StatusNotFound, status)
+	require.Equal(t, "no route registered for DELETE /api/v4/projects/x\n", body)
 
 	requests := srv.Requests()
-	if len(requests) != 1 {
-		t.Fatalf("Requests len = %d, want 1", len(requests))
-	}
+	require.Len(t, requests, 3)
 
-	if got := requests[0].Query["with_license"]; len(got) != 1 || got[0] != "true" {
-		t.Errorf("query = %q, want true", got)
-	}
+	require.Equal(t, http.MethodPost, requests[0].Method)
+	require.Equal(t, "/api/v4/projects/owner%2Frepo/releases", requests[0].Path)
+	require.Equal(t, map[string][]string{"draft": {"true", "false"}}, requests[0].Query)
+	require.Equal(t, []byte("tag=v1&notes=raw bytes"), requests[0].Body)
 
-	requests[0].Path = "tampered"
-	if got := srv.Requests()[0].Path; got != "/api/v4/projects/x" {
-		t.Errorf("stored request path = %q, want original", got)
-	}
+	require.Equal(t, http.MethodGet, requests[1].Method)
+	require.Equal(t, "/api/v4/projects/x", requests[1].Path)
+	require.Empty(t, requests[1].Query)
+	require.Empty(t, requests[1].Body)
+
+	require.Equal(t, http.MethodDelete, requests[2].Method)
 }

@@ -5,10 +5,12 @@ package forgejo_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/forgejo"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
 )
 
 // Forgejo splits the two keyless claims: it can mint an id-token, so it signs
@@ -146,8 +148,116 @@ func TestResolveKeylessIdentity_GithubAliasNeedsForgejoRunner(t *testing.T) {
 		}[k]
 	}}
 
-	if _, err := p.ResolveKeylessIdentity(); err == nil {
-		t.Error("want an error: $GITHUB_REPOSITORY on a GitHub runner names GitHub's" +
-			" repository and must not anchor a Forgejo verification")
+	id, err := p.ResolveKeylessIdentity()
+	if !errors.Is(err, errs.ErrUsage) {
+		t.Fatalf("err = %v, want ErrUsage: $GITHUB_REPOSITORY on a GitHub runner names"+
+			" GitHub's repository and must not anchor a Forgejo verification", err)
+	}
+
+	// Fail closed: nothing partially resolved may reach cosign's
+	// --certificate-identity-regexp.
+	if id.SubjectRegexp != "" || id.SubjectID != "" {
+		t.Errorf("a refused resolution still returned an anchor: %+v", id)
+	}
+}
+
+// TestResolveKeylessIdentity_EachMissingPrerequisiteRefusesOnItsOwn removes
+// exactly one prerequisite at a time.
+//
+// The existing refusals drop the repository, or the runner marker, from an
+// otherwise-sparse environment — so a case can be satisfied by a guard other
+// than the one it names, and the missing server URL has no case at all. Each
+// guard decides what a signature is anchored to: without the runner marker the
+// attested names resolve to the HOST runner's repository, which is a real
+// repository and the wrong one; without the server or the repository there is
+// no subject to anchor at all. A guard that stopped firing would produce a
+// signature verifiable against something the operator never chose.
+func TestResolveKeylessIdentity_EachMissingPrerequisiteRefusesOnItsOwn(t *testing.T) {
+	t.Parallel()
+
+	complete := map[string]string{
+		"GITHUB_ACTIONS":     "true",
+		"FORGEJO_ACTIONS":    "true",
+		"FORGEJO_SERVER_URL": "https://codeberg.org",
+		"FORGEJO_REPOSITORY": "acme/app",
+	}
+
+	for _, tc := range []struct {
+		name, drop, wantIn string
+	}{
+		{name: "no Forgejo runner marker", drop: "FORGEJO_ACTIONS", wantIn: "Forgejo runner"},
+		{name: "no runner-provided repository", drop: "FORGEJO_REPOSITORY", wantIn: "repository"},
+		{name: "no runner-provided server URL", drop: "FORGEJO_SERVER_URL", wantIn: "server URL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			env := make(map[string]string, len(complete))
+			for k, v := range complete {
+				if k != tc.drop {
+					env[k] = v
+				}
+			}
+
+			p := &forgejo.Provider{Env: func(k string) string { return env[k] }}
+
+			id, err := p.ResolveKeylessIdentity()
+			if !errors.Is(err, errs.ErrUsage) {
+				t.Fatalf("dropping %s: err = %v, want ErrUsage", tc.drop, err)
+			}
+
+			if !strings.Contains(err.Error(), tc.wantIn) {
+				t.Errorf("dropping %s: err = %v, want it to name the missing prerequisite (%q)", tc.drop, err, tc.wantIn)
+			}
+
+			if id != (provider.KeylessIdentity{}) {
+				t.Errorf("dropping %s: a partial identity was returned: %+v", tc.drop, id)
+			}
+		})
+	}
+
+	// The control: with everything present it resolves, so the cases above
+	// cannot be satisfied by a resolver that always refuses.
+	p := &forgejo.Provider{Env: func(k string) string { return complete[k] }}
+	if _, err := p.ResolveKeylessIdentity(); err != nil {
+		t.Fatalf("a complete environment was refused: %v", err)
+	}
+}
+
+// TestResolveKeylessIdentity_PinsEveryIdentityField compares the whole
+// identity, not the two fields the success test happens to read.
+//
+// Each field is a separate trust decision — which issuer is accepted, which
+// audience the token must carry, which subject the certificate must name — and
+// the audience and subject ID were never asserted. A wrong audience means the
+// token is accepted by something it was not minted for.
+func TestResolveKeylessIdentity_PinsEveryIdentityField(t *testing.T) {
+	t.Parallel()
+
+	p := &forgejo.Provider{Env: func(k string) string {
+		// act_runner sets the GitHub names as compatibility aliases, so a
+		// Forgejo runner is recognised by both markers being present.
+		return map[string]string{
+			"GITHUB_ACTIONS":     "true",
+			"FORGEJO_ACTIONS":    "true",
+			"FORGEJO_SERVER_URL": "https://codeberg.org",
+			"FORGEJO_REPOSITORY": "acme/app",
+		}[k]
+	}}
+
+	got, err := p.ResolveKeylessIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := provider.KeylessIdentity{
+		OIDCIssuer:    "",
+		TokenAudience: provider.KeylessAudience,
+		SubjectID:     "https://codeberg.org/acme/app",
+		SubjectRegexp: `^https://codeberg\.org/acme/app/`,
+	}
+
+	if got != want {
+		t.Errorf("identity =\n  %+v\nwant\n  %+v", got, want)
 	}
 }

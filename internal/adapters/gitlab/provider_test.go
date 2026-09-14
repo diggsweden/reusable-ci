@@ -6,6 +6,7 @@ package gitlab_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,7 +43,11 @@ func TestResolveContext_BranchPush(t *testing.T) {
 		"CI_PROJECT_URL":      "https://gitlab.com/group/project",
 	})}
 
-	evt, _ := p.ResolveContext(context.Background())
+	evt, err := p.ResolveContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if evt.RefType != provider.RefTypeBranch {
 		t.Errorf("RefType = %q", evt.RefType)
 	}
@@ -66,7 +71,11 @@ func TestResolveContext_TagPush(t *testing.T) {
 		"CI_COMMIT_SHA":      "abcdef0123456789",
 	})}
 
-	evt, _ := p.ResolveContext(context.Background())
+	evt, err := p.ResolveContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if evt.RefType != provider.RefTypeTag {
 		t.Errorf("RefType = %q, want tag", evt.RefType)
 	}
@@ -87,7 +96,11 @@ func TestResolveContext_MergeRequest(t *testing.T) {
 		"CI_MERGE_REQUEST_TARGET_BRANCH_NAME": "main",
 	})}
 
-	evt, _ := p.ResolveContext(context.Background())
+	evt, err := p.ResolveContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if evt.RefType != provider.RefTypePR {
 		t.Errorf("RefType = %q, want pr", evt.RefType)
 	}
@@ -149,7 +162,11 @@ func TestResolveContext_ShortSHAFallback(t *testing.T) {
 		"CI_COMMIT_SHA": "1234567890abcdef",
 	})}
 
-	evt, _ := p.ResolveContext(context.Background())
+	evt, err := p.ResolveContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if evt.ShortSHA != "1234567" {
 		t.Errorf("ShortSHA fallback = %q", evt.ShortSHA)
 	}
@@ -178,7 +195,11 @@ func TestResolveContext_RefNameOnlyImpliesBranch(t *testing.T) {
 		"CI_COMMIT_REF_NAME": "detached",
 	})}
 
-	evt, _ := p.ResolveContext(context.Background())
+	evt, err := p.ResolveContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if evt.RefType != provider.RefTypeBranch {
 		t.Errorf("RefType = %q, want Branch (REF_NAME present, no TAG/BRANCH env)", evt.RefType)
 	}
@@ -194,7 +215,11 @@ func TestResolveContext_MRTrumpsTag(t *testing.T) {
 		"CI_MERGE_REQUEST_IID": "1",
 	})}
 
-	evt, _ := p.ResolveContext(context.Background())
+	evt, err := p.ResolveContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	if evt.RefType != provider.RefTypePR {
 		t.Errorf("RefType = %q, want pr", evt.RefType)
 	}
@@ -209,6 +234,10 @@ func TestFetchRepoMetadata_HappyPath(t *testing.T) {
 			t.Errorf("PRIVATE-TOKEN header = %q", got)
 		}
 
+		if got := req.Header.Get("Job-Token"); got != "" {
+			t.Errorf("JOB-TOKEN must not be sent with GITLAB_TOKEN, got %q", got)
+		}
+
 		return fakegitlabserver.Response{
 			Body: `{"description":"a test project","web_url":"https://gitlab.com/group/sub/project","license":{"key":"apache-2.0","nickname":"Apache 2.0"}}`,
 		}
@@ -216,8 +245,10 @@ func TestFetchRepoMetadata_HappyPath(t *testing.T) {
 	p := &gitlab.Provider{ //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 		Env: envFunc(map[string]string{
 			"GITLAB_TOKEN": "glpat_test", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+			"CI_JOB_TOKEN": "must-not-win",
 		}),
 		APIBaseOverride: srv.URL(),
+		HTTPClient:      srv.Client(),
 	}
 
 	md, err := p.FetchRepoMetadata(context.Background(), "group/sub/project")
@@ -242,8 +273,12 @@ func TestFetchRepoMetadata_FallsBackToCIJobToken(t *testing.T) {
 	t.Parallel()
 	srv := fakegitlabserver.New(t)
 	srv.OnGet("/api/v4/projects/group%2Fproject", func(req fakegitlabserver.Request) fakegitlabserver.Response {
-		if got := req.Header.Get("Private-Token"); got != "ci-job-token-abc" {
-			t.Errorf("PRIVATE-TOKEN should fall back to CI_JOB_TOKEN, got %q", got)
+		if got := req.Header.Get("Job-Token"); got != "ci-job-token-abc" {
+			t.Errorf("JOB-TOKEN = %q, want CI_JOB_TOKEN", got)
+		}
+
+		if got := req.Header.Get("Private-Token"); got != "" {
+			t.Errorf("PRIVATE-TOKEN must not carry CI_JOB_TOKEN, got %q", got)
 		}
 
 		return fakegitlabserver.Response{Body: `{}`}
@@ -254,6 +289,7 @@ func TestFetchRepoMetadata_FallsBackToCIJobToken(t *testing.T) {
 			"CI_JOB_TOKEN": "ci-job-token-abc",
 		}),
 		APIBaseOverride: srv.URL(),
+		HTTPClient:      srv.Client(),
 	}
 	if _, err := p.FetchRepoMetadata(context.Background(), "group/project"); err != nil {
 		t.Fatal(err)
@@ -263,7 +299,7 @@ func TestFetchRepoMetadata_FallsBackToCIJobToken(t *testing.T) {
 func TestFetchRepoMetadata_EmptyRepoNoCall(t *testing.T) {
 	t.Parallel()
 	srv := fakegitlabserver.New(t)
-	p := &gitlab.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL()}
+	p := &gitlab.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL(), HTTPClient: srv.Client()}
 
 	md, err := p.FetchRepoMetadata(context.Background(), "")
 	if err != nil {
@@ -285,11 +321,11 @@ func TestFetchRepoMetadata_HTTPErrorPropagates(t *testing.T) {
 	srv.OnGet("/api/v4/projects/group%2Fproject", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
 		return fakegitlabserver.Response{Status: 401, Body: `{"message":"401 Unauthorized"}`}
 	})
-	p := &gitlab.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL()}
+	p := &gitlab.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL(), HTTPClient: srv.Client()}
 
 	_, err := p.FetchRepoMetadata(context.Background(), "group/project")
-	if err == nil {
-		t.Fatal("expected error on 401")
+	if !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want the 401 class propagated (ErrPermissionDenied)", err)
 	}
 }
 
@@ -304,9 +340,34 @@ func TestValidateToken_HappyPath(t *testing.T) {
 		return fakegitlabserver.Response{Body: `{}`}
 	})
 
-	p := &gitlab.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL()}
+	p := &gitlab.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL(), HTTPClient: srv.Client()}
 	if err := p.ValidateToken(context.Background(), "glpat_test", "group/project"); err != nil {
 		t.Fatalf("ValidateToken: %v", err)
+	}
+}
+
+// TestValidateToken_StatusKeepsItsExitClass pins what a caller scripts
+// against: a refused credential exits no-permission (77) and a repository the
+// token cannot see exits no-input (66), matching the Forgejo adapter.
+func TestValidateToken_StatusKeepsItsExitClass(t *testing.T) {
+	t.Parallel()
+
+	for status, want := range map[int]errs.ExitCodeType{401: errs.ExitCodeNoPerm, 403: errs.ExitCodeNoPerm, 404: errs.ExitCodeNoInput} {
+		srv := fakegitlabserver.New(t)
+		srv.OnGet("/api/v4/projects/group%2Fproject", func(fakegitlabserver.Request) fakegitlabserver.Response {
+			return fakegitlabserver.Response{Status: status, Body: `{"message":"refused"}`}
+		})
+
+		p := &gitlab.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL(), HTTPClient: srv.Client()}
+
+		err := p.ValidateToken(context.Background(), "glpat_test", "group/project")
+		if got := errs.ExitCodeFromError(err); got != want {
+			t.Errorf("HTTP %d exits %d, want %d", status, got, want)
+		}
+
+		if strings.Contains(err.Error(), "glpat_test") {
+			t.Errorf("HTTP %d refusal echoes the token: %v", status, err)
+		}
 	}
 }
 
@@ -314,8 +375,8 @@ func TestValidateToken_EmptyToken(t *testing.T) {
 	t.Parallel()
 
 	p := &gitlab.Provider{Env: envFunc(nil)}
-	if err := p.ValidateToken(context.Background(), "", "group/project"); err == nil {
-		t.Fatal("expected empty-token error")
+	if err := p.ValidateToken(context.Background(), "", "group/project"); !errors.Is(err, errs.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
 	}
 }
 
@@ -328,7 +389,15 @@ func TestValidateBotPermissions_AllProbesPass(t *testing.T) {
 		"/api/v4/projects/group%2Fproject",
 		"/api/v4/projects/group%2Fproject/repository/branches",
 	} {
-		srv.OnGet(path, func(_ fakegitlabserver.Request) fakegitlabserver.Response {
+		srv.OnGet(path, func(req fakegitlabserver.Request) fakegitlabserver.Response {
+			if got := req.Header.Get("Private-Token"); got != "glpat_test" {
+				t.Errorf("PRIVATE-TOKEN = %q, want GITLAB_TOKEN", got)
+			}
+
+			if got := req.Header.Get("Job-Token"); got != "" {
+				t.Errorf("JOB-TOKEN must not be sent to user-level probes, got %q", got)
+			}
+
 			return fakegitlabserver.Response{Body: `{}`}
 		})
 	}
@@ -336,6 +405,7 @@ func TestValidateBotPermissions_AllProbesPass(t *testing.T) {
 	p := &gitlab.Provider{
 		Env:             envFunc(map[string]string{"GITLAB_TOKEN": "glpat_test"}),
 		APIBaseOverride: srv.URL(),
+		HTTPClient:      srv.Client(),
 	}
 
 	bp, err := p.ValidateBotPermissions(context.Background(), "group/project")
@@ -348,26 +418,23 @@ func TestValidateBotPermissions_AllProbesPass(t *testing.T) {
 	}
 }
 
-func TestValidateBotPermissions_FallsBackToCIJobToken(t *testing.T) {
+func TestValidateBotPermissions_RequiresGitLabTokenForUserAPI(t *testing.T) {
 	t.Parallel()
 	srv := fakegitlabserver.New(t)
-	srv.OnGet("/api/v4/user", func(req fakegitlabserver.Request) fakegitlabserver.Response {
-		if got := req.Header.Get("Private-Token"); got != "ci-job-tok" {
-			t.Errorf("PRIVATE-TOKEN = %q (should fall back to CI_JOB_TOKEN)", got)
-		}
-
-		return fakegitlabserver.Response{Body: `{}`}
-	})
-	srv.OnGet("/api/v4/projects/g%2Fp", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
-		return fakegitlabserver.Response{Body: `{}`}
-	})
 
 	p := &gitlab.Provider{
 		Env:             envFunc(map[string]string{"CI_JOB_TOKEN": "ci-job-tok"}),
 		APIBaseOverride: srv.URL(),
+		HTTPClient:      srv.Client(),
 	}
-	if _, err := p.ValidateBotPermissions(context.Background(), "g/p"); err != nil {
-		t.Fatal(err)
+
+	_, err := p.ValidateBotPermissions(context.Background(), "g/p")
+	if !errors.Is(err, errs.ErrPermissionDenied) || !strings.Contains(err.Error(), "GITLAB_TOKEN") {
+		t.Fatalf("err = %v, want GITLAB_TOKEN permission error", err)
+	}
+
+	if len(srv.Requests()) != 0 {
+		t.Fatalf("unsupported CI_JOB_TOKEN probe made %d HTTP requests", len(srv.Requests()))
 	}
 }
 
@@ -416,6 +483,7 @@ func TestCreateRelease_PostsRelease(t *testing.T) {
 	p := &gitlab.Provider{
 		Env:             envFunc(map[string]string{"GITLAB_TOKEN": "glpat_test"}),
 		APIBaseOverride: srv.URL(),
+		HTTPClient:      srv.Client(),
 	}
 
 	err := p.CreateRelease(context.Background(), "group/project", provider.ReleaseSpec{
@@ -442,6 +510,14 @@ func TestUploadReleaseAsset_UploadsProjectFileAndLinksRelease(t *testing.T) {
 		return fakegitlabserver.Response{Body: `[]`}
 	})
 	srv.OnPost("/api/v4/projects/group%2Fproject/uploads", func(req fakegitlabserver.Request) fakegitlabserver.Response {
+		if got := req.Header.Get("Private-Token"); got != "glpat_test" {
+			t.Errorf("upload PRIVATE-TOKEN = %q, want GITLAB_TOKEN", got)
+		}
+
+		if got := req.Header.Get("Job-Token"); got != "" {
+			t.Errorf("upload JOB-TOKEN must be empty, got %q", got)
+		}
+
 		if !strings.Contains(req.Header.Get("Content-Type"), "multipart/form-data") {
 			t.Errorf("upload content-type = %q", req.Header.Get("Content-Type"))
 		}
@@ -464,13 +540,38 @@ func TestUploadReleaseAsset_UploadsProjectFileAndLinksRelease(t *testing.T) {
 	p := &gitlab.Provider{
 		Env: envFunc(map[string]string{
 			"GITLAB_TOKEN":    "glpat_test",
+			"CI_JOB_TOKEN":    "must-not-win",
 			"CI_PROJECT_PATH": "group/project",
 		}),
 		APIBaseOverride: srv.URL(),
+		HTTPClient:      srv.Client(),
 	}
 
 	if err := p.UploadReleaseAsset(context.Background(), "v1.2.3", asset); err != nil {
 		t.Fatalf("UploadReleaseAsset: %v", err)
+	}
+}
+
+func TestUploadReleaseAsset_RejectsCIJobTokenBeforeRequest(t *testing.T) {
+	t.Parallel()
+
+	srv := fakegitlabserver.New(t)
+	p := &gitlab.Provider{
+		Env: envFunc(map[string]string{
+			"CI_JOB_TOKEN":    "ci-job-token",
+			"CI_PROJECT_PATH": "group/project",
+		}),
+		APIBaseOverride: srv.URL(),
+		HTTPClient:      srv.Client(),
+	}
+
+	err := p.UploadReleaseAsset(context.Background(), "v1.2.3", "artifact.tar.gz")
+	if !errors.Is(err, errs.ErrPermissionDenied) || !strings.Contains(err.Error(), "GITLAB_TOKEN") {
+		t.Fatalf("err = %v, want GITLAB_TOKEN permission error", err)
+	}
+
+	if len(srv.Requests()) != 0 {
+		t.Fatalf("unsupported project upload made %d HTTP requests", len(srv.Requests()))
 	}
 }
 
@@ -479,21 +580,19 @@ func TestUploadReleaseAsset_ClobbersExistingLink(t *testing.T) {
 
 	srv := fakegitlabserver.New(t)
 	asset := writeTestAsset(t, "artifact.tar.gz", "replacement")
-	deleted := false
+
+	var updated string
 
 	srv.OnGet("/api/v4/projects/group%2Fproject/releases/v1.2.3/assets/links", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
 		return fakegitlabserver.Response{Body: `[{"id":42,"name":"artifact.tar.gz"},{"id":7,"name":"other.txt"}]`}
 	})
-	srv.On("DELETE", "/api/v4/projects/group%2Fproject/releases/v1.2.3/assets/links/42", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
-		deleted = true
+	srv.OnPut("/api/v4/projects/group%2Fproject/releases/v1.2.3/assets/links/42", func(req fakegitlabserver.Request) fakegitlabserver.Response {
+		updated = string(req.Body)
 
-		return fakegitlabserver.Response{Status: 204}
+		return fakegitlabserver.Response{Status: 200, Body: `{"id":42}`}
 	})
 	srv.OnPost("/api/v4/projects/group%2Fproject/uploads", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
 		return fakegitlabserver.Response{Status: 201, Body: `{"full_path":"/group/project/uploads/def/artifact.tar.gz"}`}
-	})
-	srv.OnPost("/api/v4/projects/group%2Fproject/releases/v1.2.3/assets/links", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
-		return fakegitlabserver.Response{Status: 201, Body: `{}`}
 	})
 
 	p := &gitlab.Provider{
@@ -502,14 +601,25 @@ func TestUploadReleaseAsset_ClobbersExistingLink(t *testing.T) {
 			"CI_PROJECT_PATH": "group/project",
 		}),
 		APIBaseOverride: srv.URL(),
+		HTTPClient:      srv.Client(),
 	}
 
 	if err := p.UploadReleaseAsset(context.Background(), "v1.2.3", asset); err != nil {
 		t.Fatalf("UploadReleaseAsset: %v", err)
 	}
 
-	if !deleted {
-		t.Fatal("existing release asset link was not deleted")
+	// The same-name link is repointed at the new upload in place, so the
+	// release never lacks the asset between a delete and a create.
+	if want := `{"name":"artifact.tar.gz","url":"` + srv.URL() + `/group/project/uploads/def/artifact.tar.gz"}`; updated != want {
+		t.Fatalf("link update body = %s, want %s", updated, want)
+	}
+
+	// Nothing is deleted or created, least of all link 7 ("other.txt"), which
+	// belongs to a different asset.
+	for _, req := range srv.Requests() {
+		if req.Method == http.MethodDelete || (req.Method == http.MethodPost && strings.HasSuffix(req.Path, "/links")) {
+			t.Errorf("clobber sent %s %s", req.Method, req.Path)
+		}
 	}
 }
 
@@ -530,8 +640,8 @@ func TestCreateRelease_EmptyTagErrors(t *testing.T) {
 	p := &gitlab.Provider{}
 
 	err := p.CreateRelease(context.Background(), "group/p", provider.ReleaseSpec{})
-	if err == nil {
-		t.Fatal("expected empty-tag error")
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "tag is empty") {
+		t.Fatalf("err = %v, want ErrUsage naming the empty tag", err)
 	}
 }
 
@@ -541,11 +651,11 @@ func TestCreateRelease_HTTP500Propagates(t *testing.T) {
 	srv.OnPost("/api/v4/projects/group%2Fproject/releases", func(_ fakegitlabserver.Request) fakegitlabserver.Response {
 		return fakegitlabserver.Response{Status: 500, Body: `{"message":"boom"}`}
 	})
-	p := &gitlab.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL()}
+	p := &gitlab.Provider{Env: envFunc(nil), APIBaseOverride: srv.URL(), HTTPClient: srv.Client()}
 
 	err := p.CreateRelease(context.Background(), "group/project", provider.ReleaseSpec{Tag: "v1.0.0"})
-	if err == nil {
-		t.Fatal("expected 500 error")
+	if !errors.Is(err, errs.ErrDependencyUnavailable) {
+		t.Fatalf("err = %v, want the 500 class propagated (ErrDependencyUnavailable)", err)
 	}
 }
 
@@ -556,7 +666,7 @@ func TestFetchRepoMetadata_ReadsCIServerURL(t *testing.T) {
 		return fakegitlabserver.Response{Body: `{}`}
 	})
 	// No APIBaseOverride — must read CI_SERVER_URL.
-	p := &gitlab.Provider{Env: envFunc(map[string]string{"CI_SERVER_URL": srv.URL()})}
+	p := &gitlab.Provider{Env: envFunc(map[string]string{"CI_SERVER_URL": srv.URL()}), HTTPClient: srv.Client()}
 	if _, err := p.FetchRepoMetadata(context.Background(), "group/project"); err != nil {
 		t.Fatal(err)
 	}

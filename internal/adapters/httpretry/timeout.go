@@ -19,15 +19,21 @@ const DefaultClientTimeout = 30 * time.Second
 // timeoutEnv overrides DefaultClientTimeout with a Go duration string.
 const timeoutEnv = "REUSABLE_CI_HTTP_TIMEOUT"
 
-// ClientTimeout resolves the per-request HTTP timeout for API clients:
-// REUSABLE_CI_HTTP_TIMEOUT parsed as a Go duration ("45s", "2m") when set
-// and positive, otherwise DefaultClientTimeout. A malformed or
-// non-positive override is ignored with a warning rather than failing the
-// run — the default is always safe, and a slow link should not be fatal.
-// clig.dev §Robustness asks to allow network timeouts to be configured
-// with a reasonable default so it does not hang forever.
+// ClientTimeout resolves the per-request HTTP timeout for API clients from
+// REUSABLE_CI_HTTP_TIMEOUT; see ParseClientTimeout for the rules.
 func ClientTimeout() time.Duration {
-	raw := strings.TrimSpace(os.Getenv(timeoutEnv))
+	return ParseClientTimeout(os.Getenv(timeoutEnv))
+}
+
+// ParseClientTimeout turns a REUSABLE_CI_HTTP_TIMEOUT value into a timeout: a
+// Go duration ("45s", "2m") when set and positive, otherwise
+// DefaultClientTimeout. A malformed or non-positive override is ignored with a
+// warning rather than failing the run — the default is always safe, and a slow
+// link should not be fatal. clig.dev §Robustness asks to allow network
+// timeouts to be configured with a reasonable default so it does not hang
+// forever.
+func ParseClientTimeout(raw string) time.Duration {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return DefaultClientTimeout
 	}

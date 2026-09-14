@@ -4,32 +4,30 @@
 package clicolor_test
 
 import (
-	"bytes"
-	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
 )
 
-func TestCheckCross_PlainForNonTerminalWriter(t *testing.T) {
-	// A bytes.Buffer is not a TTY, so output must be plain — this is the
-	// invariant that keeps ANSI out of pipes, CI logs, files, and summaries.
-	var buf bytes.Buffer
+// The non-terminal rule is asserted in policy_internal_test.go rather than
+// here. A black-box test cannot reach the process-wide colour policy, which is
+// initialised from the ambient NO_COLOR / TERM before any test runs, so the
+// version that used to live in this file passed without exercising the
+// terminal check at all on any machine that sets either — measured: with
+// isTerminal forced to true it failed on a plain host and passed under
+// NO_COLOR=1, while the internal test caught the same mutation in both.
 
-	if got := clicolor.Check(&buf); got != "✓" {
-		t.Errorf("Check(non-tty) = %q, want plain ✓", got)
-	}
+// TestGlyphConstants_PinTheSuccessAndFailureMarks guards the CLI-side glyphs.
+//
+// domain/summary hardcodes the same two marks in StatusIcon rather than
+// importing these, and that duplication is required, not an oversight: ADR 0004
+// layering says every arrow points inward at domain, so domain cannot import a
+// CLI package. Each side therefore needs its own pin, and merging them would
+// break the layering guard. If these ever drift apart, the CLI and the step
+// summary disagree about what a passing check looks like.
+func TestGlyphConstants_PinTheSuccessAndFailureMarks(t *testing.T) {
+	t.Parallel()
 
-	if got := clicolor.Cross(&buf); got != "✗" {
-		t.Errorf("Cross(non-tty) = %q, want plain ✗", got)
-	}
-
-	if strings.ContainsRune(clicolor.Check(&buf), '\033') {
-		t.Error("Check must not emit ANSI for a non-terminal writer")
-	}
-}
-
-func TestConstants(t *testing.T) {
 	if clicolor.Success != "✓" || clicolor.Failure != "✗" {
 		t.Errorf("glyph constants drifted: %q / %q", clicolor.Success, clicolor.Failure)
 	}

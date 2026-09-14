@@ -9,10 +9,10 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/container"
 )
 
-// TestUnsafeCosignErrorLine covers the filter that decides which cosign
+// TestUnsafeCosignErrorLine_FlagsCredentialMarkersCaseInsensitively covers the filter that decides which cosign
 // stderr lines may be echoed into a CI log when image verification fails.
 // It had no test at all.
-func TestUnsafeCosignErrorLine(t *testing.T) {
+func TestUnsafeCosignErrorLine_FlagsCredentialMarkersCaseInsensitively(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -48,15 +48,7 @@ func TestUnsafeCosignErrorLine(t *testing.T) {
 	}
 }
 
-// TestUnsafeCosignErrorLine_DenylistMisses records what a five-word
-// denylist cannot see. These lines carry credential material and are
-// echoed verbatim, because none of them contains "authorization",
-// "bearer", "token", "password" or "secret".
-//
-// The filter is a last line of defence on an error path, not the primary
-// control, so this is a limit rather than a defect -- see
-// docs/open-questions.md.
-func TestUnsafeCosignErrorLine_DenylistMisses(t *testing.T) {
+func TestUnsafeCosignErrorLine_FiltersCredentialShapes(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct{ name, line string }{
@@ -67,8 +59,8 @@ func TestUnsafeCosignErrorLine_DenylistMisses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			if container.UnsafeCosignErrorLine(tc.line) {
-				t.Errorf("line is now filtered — the denylist has been widened; update docs/open-questions.md: %q", tc.line)
+			if !container.UnsafeCosignErrorLine(tc.line) {
+				t.Errorf("credential-bearing line was not filtered: %q", tc.line)
 			}
 		})
 	}

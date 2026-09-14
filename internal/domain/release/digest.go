@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
@@ -30,7 +31,7 @@ import (
 // DistDigest computes the canonical digest of the tree in fsys: the SHA-256
 // of the concatenated "<sha256>  <path>\n" lines for every regular file,
 // sorted by the path written into the manifest. Byte-compatible with
-// forgejo-ci's dist-digest.sh:
+// the reusable-workflow dist digest contract:
 //
 //	find <dir> -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum
 //
@@ -84,7 +85,7 @@ func WalkSafe(fsys fs.FS) error {
 			return err
 		}
 
-		if strings.ContainsAny(path, "\n\r") {
+		if strings.ContainsFunc(path, unicode.IsControl) {
 			return fmt.Errorf("path contains control characters: %q: %w", path, errs.ErrValidation)
 		}
 

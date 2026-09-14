@@ -4,11 +4,13 @@
 package summary
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
@@ -26,10 +28,8 @@ type BuildSBOMStatusInput struct {
 
 // BuildSBOMStatus appends the standard Build SBOM summary block to the
 // step summary, locating the produced files via the ecosystem preset
-// (paths + filename patterns). The Outcome value here is informational
-// only — the actual workflow gate is enforced by the SBOM step having
-// no `continue-on-error`, so a missing SBOM fails the build before this
-// summary writer runs.
+// (paths + filename patterns). Explicitly disabled generation is a supported
+// opt-out, while a failed enabled generation blocks the release.
 func BuildSBOMStatus(ctx context.Context, sink ci.SummarySink, in BuildSBOMStatusInput) error {
 	preset, err := buildSBOMPreset(in.Ecosystem)
 	if err != nil {
@@ -45,26 +45,32 @@ func BuildSBOMStatus(ctx context.Context, sink ci.SummarySink, in BuildSBOMStatu
 
 	_, _ = fmt.Fprintf(&b, "### Build SBOM\n")
 
-	if in.Outcome == string(domainsummary.ResultSuccess) {
-		bom := firstMatchingPath(workDir, preset.patterns)
+	switch in.Outcome {
+	case string(domainsummary.ResultSuccess):
+		bom := locateBuildSBOM(workDir, preset)
 		if bom != "" {
 			_, _ = fmt.Fprintf(&b, "- ✓ %s: `%s`\n", preset.successLabel, bom)
 		} else {
 			_, _ = fmt.Fprintf(&b, "- ⚠️ %s\n", preset.missingMessage)
 		}
-	} else {
-		// The SBOM step is mandatory — a non-success outcome means the
-		// workflow has already failed before this summary block ran (the
-		// status report is invoked under `if: always()` so it surfaces
-		// the failure in the step summary too).
-		_, _ = fmt.Fprintf(&b, "- ✗ Generation step did not succeed — release blocked\n")
+	case string(domainsummary.ResultSkipped):
+		_, _ = fmt.Fprintf(&b, "- ⊘ Generation disabled; release continues without a build SBOM\n")
+	default:
+		_, _ = fmt.Fprintf(&b, "- ⚠️ Generation failed; release blocked until the Build SBOM succeeds or is explicitly disabled\n")
 	}
 
 	return sink.Append(ctx, b.String())
 }
 
 type buildSBOMStatusPreset struct {
-	patterns       []string
+	// patterns are slash paths relative to the working directory, tried in
+	// order when modules is false.
+	patterns []string
+	// modules also accepts a pattern below a module directory, as Gradle
+	// writes app/build/reports/...; without it only the exact paths count, so
+	// an npm dependency's bom.json or a Maven module's target/bom.json is never
+	// reported as the project's SBOM.
+	modules        bool
 	successLabel   string
 	missingMessage string
 }
@@ -88,12 +94,14 @@ func buildSBOMPreset(ecosystem string) (buildSBOMStatusPreset, error) {
 	case projecttype.Gradle:
 		return buildSBOMStatusPreset{
 			patterns:       []string{"build/reports/bom.json", "build/reports/cyclonedx/bom.json"},
+			modules:        true,
 			successLabel:   "CycloneDX",
 			missingMessage: "Generated but file not located - check plugin output path",
 		}, nil
 	case projecttype.GradleAndroid:
 		return buildSBOMStatusPreset{
-			patterns:       []string{"build/reports/bom.json"},
+			patterns:       []string{"build/reports/bom.json", "build/reports/cyclonedx/bom.json"},
+			modules:        true,
 			successLabel:   "CycloneDX",
 			missingMessage: "Generated but file not located - check plugin output path",
 		}, nil
@@ -102,20 +110,53 @@ func buildSBOMPreset(ecosystem string) (buildSBOMStatusPreset, error) {
 	}
 }
 
-func firstMatchingPath(root string, patterns []string) string {
-	var matches []string
+// locateBuildSBOM returns the SBOM the preset names under root, or "" when
+// there is none. Only regular files count, so a dangling or redirecting
+// symlink is not reported as an SBOM.
+func locateBuildSBOM(root string, preset buildSBOMStatusPreset) string {
+	if !preset.modules {
+		for _, pattern := range preset.patterns {
+			path := filepath.Join(root, filepath.FromSlash(pattern))
+			if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
+				return path
+			}
+		}
+
+		return ""
+	}
+
+	return shallowestModuleMatch(root, preset.patterns)
+}
+
+// shallowestModuleMatch walks root for the patterns at any module depth and
+// prefers the fewest module directories, then the path, so the root project's
+// report wins over a module's and the choice does not depend on walk order.
+func shallowestModuleMatch(root string, patterns []string) string {
+	type match struct {
+		path  string
+		depth int
+	}
+
+	var matches []match
 
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		// Skip per-entry errors; the walker accumulates whichever
 		// matches it could read.
-		if err != nil || d.IsDir() {
+		if err != nil || !d.Type().IsRegular() {
 			return nil //nolint:nilerr // skip unreadable entry, keep walking
 		}
 
-		slashPath := filepath.ToSlash(path)
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil //nolint:nilerr // a path outside root is not a candidate
+		}
+
+		slashRel := filepath.ToSlash(rel)
 		for _, suffix := range patterns {
-			if slashPath == suffix || strings.HasSuffix(slashPath, "/"+suffix) {
-				matches = append(matches, path)
+			if slashRel == suffix || strings.HasSuffix(slashRel, "/"+suffix) {
+				// Depth counts the module directories before the pattern, so a
+				// root report under a longer pattern still beats a module's.
+				matches = append(matches, match{path: path, depth: strings.Count(strings.TrimSuffix(slashRel, suffix), "/")})
 
 				break
 			}
@@ -124,11 +165,13 @@ func firstMatchingPath(root string, patterns []string) string {
 		return nil
 	})
 
-	sort.Strings(matches)
-
 	if len(matches) == 0 {
 		return ""
 	}
 
-	return matches[0]
+	slices.SortFunc(matches, func(a, b match) int {
+		return cmp.Or(cmp.Compare(a.depth, b.depth), strings.Compare(a.path, b.path))
+	})
+
+	return matches[0].path
 }

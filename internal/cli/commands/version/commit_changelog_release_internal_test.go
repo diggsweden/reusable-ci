@@ -8,6 +8,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -20,7 +22,7 @@ const testFingerprint = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 // mockSSHTooling stands in for ssh-keyscan and ssh-keygen. keyscanOut is
 // what the scan returns; fingerprint is what `ssh-keygen -lf` reports for
 // it, so a test can make the two disagree.
-func mockSSHTooling(t *testing.T, keyscanOut, fingerprint string) {
+func mockSSHTooling(t *testing.T, keyscanOut, fingerprint string) *mockbinary.Mock {
 	t.Helper()
 
 	m := mockbinary.New(t) //nolint:varnamelen // idiomatic short name.
@@ -31,6 +33,8 @@ case "$1" in
   -lf) printf '256 `+fingerprint+` host (ED25519)\n' ;;
 esac
 `)
+
+	return m
 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
@@ -48,7 +52,7 @@ func TestSetupChangelogReleaseSSH_PinsTheHostKey(t *testing.T) {
 		mockSSHTooling(t, "codeberg.org ssh-ed25519 AAAAHOSTKEY", "SHA256:DIFFERENTDIFFERENTDIFFERENTDIFFERENTDIFF")
 		t.Setenv("RUNNER_TEMP", t.TempDir())
 
-		_, _, cleanup, err := setupChangelogReleaseSSH(context.Background(), "PRIVATE-KEY-BODY", "codeberg.org", 22, "ed25519", testFingerprint)
+		_, _, cleanup, err := setupChangelogReleaseSSH(context.Background(), "PRIVATE-KEY-BODY", "codeberg.org", 22, defaultHostKeyType, testFingerprint)
 		defer cleanup()
 
 		if !errors.Is(err, errs.ErrValidation) {
@@ -57,8 +61,8 @@ func TestSetupChangelogReleaseSSH_PinsTheHostKey(t *testing.T) {
 
 		// The message names both fingerprints so an operator can tell a
 		// rotation from an attack.
-		if !strings.Contains(err.Error(), testFingerprint) {
-			t.Errorf("error should name the expected fingerprint: %v", err)
+		if !strings.Contains(err.Error(), "scanned SHA256:DIFFERENTDIFFERENTDIFFERENTDIFFERENTDIFF, pinned "+testFingerprint) {
+			t.Errorf("error should name the scanned and the pinned fingerprint: %v", err)
 		}
 
 		// The signing key was written before the scan; a refused setup
@@ -70,7 +74,7 @@ func TestSetupChangelogReleaseSSH_PinsTheHostKey(t *testing.T) {
 		mockSSHTooling(t, "codeberg.org ssh-ed25519 AAAAHOSTKEY", testFingerprint)
 		t.Setenv("RUNNER_TEMP", t.TempDir())
 
-		sshCommand, keyPath, cleanup, err := setupChangelogReleaseSSH(context.Background(), "PRIVATE-KEY-BODY", "codeberg.org", 22, "ed25519", testFingerprint)
+		sshCommand, keyPath, cleanup, err := setupChangelogReleaseSSH(context.Background(), "PRIVATE-KEY-BODY", "codeberg.org", 22, defaultHostKeyType, testFingerprint)
 		if err != nil {
 			t.Fatalf("setup: %v", err)
 		}
@@ -130,5 +134,50 @@ func assertNoLeftoverSSHDir(t *testing.T, base string) {
 		if strings.HasPrefix(e.Name(), "reusable-ci-ssh.") {
 			t.Errorf("ssh temp dir %q was left behind", e.Name())
 		}
+	}
+}
+
+// TestSetupChangelogReleaseSSH_UsesTheConfiguredPort runs the setup for the
+// default and a custom SSH port. The scan asks for exactly the pinned key type
+// on that host, adding -p only for a non-default port so the scanned
+// known_hosts entry matches what ssh looks up, and the generated config
+// connects to the same port as git over the pinned identity.
+func TestSetupChangelogReleaseSSH_UsesTheConfiguredPort(t *testing.T) {
+	for _, tc := range []struct {
+		port     int
+		wantScan []string
+	}{
+		{22, []string{"-t", defaultHostKeyType, "codeberg.org"}},
+		{2222, []string{"-p", "2222", "-t", defaultHostKeyType, "codeberg.org"}},
+	} {
+		t.Run(strconv.Itoa(tc.port), func(t *testing.T) {
+			bins := mockSSHTooling(t, "codeberg.org ssh-ed25519 AAAAHOSTKEY", testFingerprint)
+			t.Setenv("RUNNER_TEMP", t.TempDir())
+
+			_, keyPath, cleanup, err := setupChangelogReleaseSSH(context.Background(), "PRIVATE-KEY-BODY", "codeberg.org", tc.port, defaultHostKeyType, testFingerprint)
+			if err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+
+			defer cleanup()
+
+			scans := bins.Invocations("ssh-keyscan")
+			if len(scans) != 1 || !slices.Equal(scans[0].Args, tc.wantScan) {
+				t.Errorf("ssh-keyscan invocations = %+v, want one with %v", scans, tc.wantScan)
+			}
+
+			dir := filepath.Dir(keyPath)
+
+			config, readErr := os.ReadFile(filepath.Join(dir, "config"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+
+			want := "Host *\n  HostName codeberg.org\n  Port " + strconv.Itoa(tc.port) + "\n  User git\n  IdentityFile " + keyPath +
+				"\n  IdentitiesOnly yes\n  UserKnownHostsFile " + filepath.Join(dir, "known_hosts") + "\n  StrictHostKeyChecking yes\n"
+			if string(config) != want {
+				t.Errorf("ssh config:\n%s\nwant:\n%s", config, want)
+			}
+		})
 	}
 }

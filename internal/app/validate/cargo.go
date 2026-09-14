@@ -5,7 +5,7 @@ package validate
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -38,7 +38,11 @@ type CargoPrerequisitesInput struct {
 // crates that ship as standalone binaries get the same scrutiny as
 // container-first ones embedded in a runtime image.
 //
-//nolint:cyclop // validates each required Cargo manifest field + Cargo.lock invariant.
+// Every working directory is checked for safety before any is inspected, so
+// an unsafe directory anywhere in the plan refuses the run with nothing
+// reported and no cargo call. A missing file is a configuration failure; a
+// cargo that cannot report its version keeps its own class, so a runner
+// without cargo is not reported as a broken project.
 func CargoPrerequisites(ctx context.Context, cargo CargoTool, w io.Writer, annot output.Annotator, in CargoPrerequisitesInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	artifacts, err := plannedCargoArtifacts(in.ConfigPlanJSON, in.PublishStagePlanJSON)
 	if err != nil {
@@ -51,53 +55,57 @@ func CargoPrerequisites(ctx context.Context, cargo CargoTool, w io.Writer, annot
 		return nil
 	}
 
-	ok := true
-	seen := map[string]bool{}
+	dirs, err := plannedWorkingDirs(artifacts)
+	if err != nil {
+		return err
+	}
 
-	for _, artifact := range artifacts {
-		dir, dirErr := safeWorkingDir(artifact.WorkingDirectory)
-		if dirErr != nil {
-			return dirErr
-		}
+	var failures []error
 
-		if seen[dir] {
-			continue
-		}
-
-		seen[dir] = true
-		if !fileExists(filepath.Join(dir, "Cargo.lock")) {
-			annot.Errorf("Cargo.lock not found in %s", displayDir(dir))
-			annot.Errorf("Cargo.lock must be committed for reproducible releases")
-
-			ok = false
-		} else {
-			annot.Noticef("Cargo.lock present in %s", displayDir(dir))
-		}
-
-		if !fileExists(filepath.Join(dir, "rust-toolchain.toml")) && !fileExists(filepath.Join(dir, "rust-toolchain")) {
-			annot.Errorf("No rust-toolchain.toml or rust-toolchain pin found in %s", displayDir(dir))
-			annot.Errorf("Pin the toolchain so CI and local dev produce byte-identical binaries")
-
-			ok = false
-		} else {
-			annot.Noticef("Toolchain pin present in %s", displayDir(dir))
-		}
+	for _, dir := range dirs {
+		failures = append(failures, checkCargoDir(annot, dir)...)
 	}
 
 	version, err := cargo.Version(ctx)
 	if err != nil {
-		annot.Errorf("cargo is not installed on the runner")
+		annot.Errorf("cargo is not usable on the runner: %v", err)
 
-		ok = false
+		failures = append(failures, err)
 	} else if version != "" && w != nil {
 		_, _ = fmt.Fprintln(w, version)
 	}
 
-	if !ok {
-		return fmt.Errorf("cargo prerequisites failed: %w", errs.ErrInvalidConfig)
+	if len(failures) > 0 {
+		return fmt.Errorf("cargo prerequisites failed: %w", errors.Join(failures...))
 	}
 
 	return nil
+}
+
+// checkCargoDir reports the committed lockfile and toolchain pin in dir and
+// returns one configuration failure per missing file.
+func checkCargoDir(annot output.Annotator, dir string) []error {
+	var failures []error
+
+	if !fileExists(filepath.Join(dir, "Cargo.lock")) {
+		annot.Errorf("Cargo.lock not found in %s", displayDir(dir))
+		annot.Errorf("Cargo.lock must be committed for reproducible releases")
+
+		failures = append(failures, fmt.Errorf("missing Cargo.lock in %s: %w", displayDir(dir), errs.ErrInvalidConfig))
+	} else {
+		annot.Noticef("Cargo.lock present in %s", displayDir(dir))
+	}
+
+	if !fileExists(filepath.Join(dir, "rust-toolchain.toml")) && !fileExists(filepath.Join(dir, "rust-toolchain")) {
+		annot.Errorf("No rust-toolchain.toml or rust-toolchain pin found in %s", displayDir(dir))
+		annot.Errorf("Pin the Rust toolchain to keep compiler selection consistent and support reproducible builds")
+
+		failures = append(failures, fmt.Errorf("rust toolchain pin missing in %s: %w", displayDir(dir), errs.ErrInvalidConfig))
+	} else {
+		annot.Noticef("Toolchain pin present in %s", displayDir(dir))
+	}
+
+	return failures
 }
 
 // plannedCargoArtifacts pulls every cargo artifact (both build-modes)
@@ -109,13 +117,9 @@ func CargoPrerequisites(ctx context.Context, cargo CargoTool, w io.Writer, annot
 // on this code path).
 func plannedCargoArtifacts(configPlanJSON, publishStagePlanJSON string) ([]pipeline.PlannedArtifact, error) {
 	if strings.TrimSpace(configPlanJSON) != "" {
-		var plan pipeline.ConfigPlan
-		if err := json.Unmarshal([]byte(configPlanJSON), &plan); err != nil {
-			return nil, fmt.Errorf("parse config-plan-json: %w: %w", err, errs.ErrInvalidConfig)
-		}
-
-		if plan.Version != pipeline.ConfigPlanVersion {
-			return nil, fmt.Errorf("config-plan-json has unsupported version %d: %w", plan.Version, errs.ErrInvalidConfig)
+		plan, err := parseConfigPlan(configPlanJSON)
+		if err != nil {
+			return nil, err
 		}
 
 		return plan.Artifacts.Cargo, nil
@@ -126,8 +130,8 @@ func plannedCargoArtifacts(configPlanJSON, publishStagePlanJSON string) ([]pipel
 	}
 
 	var plan pipeline.ReleasePublishStagePlan
-	if err := json.Unmarshal([]byte(publishStagePlanJSON), &plan); err != nil {
-		return nil, fmt.Errorf("parse publish-stage-plan-json: %w: %w", err, errs.ErrInvalidConfig)
+	if err := pipeline.DecodeStagePlan(publishStagePlanJSON, "publish-stage-plan-json", &plan); err != nil {
+		return nil, err
 	}
 
 	if plan.Version != pipeline.ReleasePlanVersion {

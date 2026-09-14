@@ -7,11 +7,18 @@ package build
 
 import (
 	"bytes"
+	"encoding/xml"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/vifraa/gopom"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 // IsSnapshot reports whether a Maven version string is a -SNAPSHOT.
@@ -40,8 +47,9 @@ type POMParent struct {
 }
 
 // ParsePOM extracts the typed fields the build/sbom use cases need from a
-// pom.xml. Parsing is delegated to github.com/vifraa/gopom (Renovate-tracked)
-// so all of the XML/namespace edge cases are handled by a focused library.
+// pom.xml. The complete XML document envelope is checked before
+// github.com/vifraa/gopom extracts the typed fields; this is not Maven schema
+// validation.
 //
 // On top of the raw parse we apply Maven's inheritance rule: when
 // <groupId>/<version> is omitted at the top level, the value from <parent>
@@ -51,10 +59,73 @@ type POMParent struct {
 // here — the caller decides whether to fall back to `mvn help:evaluate`
 // when POMHasUnresolvedProperty(field) reports true. ~95% of POMs use
 // literal values; the fallback path stays available for the rest.
-func ParsePOM(body []byte) (POM, error) {
+func ParsePOM(body []byte) (POM, error) { //nolint:cyclop,gocognit // bounded XML envelope state machine followed by typed extraction and parent fallback.
+	body = bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))
+	// xml.Unmarshal (used by gopom) stops at the first root. Scan through EOF
+	// so valid coordinates cannot hide a second root or malformed suffix.
+	decoder := xml.NewDecoder(bytes.NewReader(body))
+	depth, seenRoot := 0, false
+	firstToken, seenDoctype := true, false
+
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+
+		if err != nil {
+			return POM{}, fmt.Errorf("parse pom.xml: %w: %w", err, errs.ErrInvalidConfig)
+		}
+
+		switch node := token.(type) {
+		case xml.StartElement:
+			if depth == 0 {
+				if seenRoot {
+					return POM{}, fmt.Errorf("parse pom.xml: multiple root elements: %w", errs.ErrInvalidConfig)
+				}
+
+				seenRoot = true
+			}
+
+			depth++
+		case xml.EndElement:
+			depth--
+		case xml.CharData:
+			if depth == 0 && len(bytes.Trim(node, " \t\r\n")) != 0 {
+				return POM{}, fmt.Errorf("parse pom.xml: text outside root element: %w", errs.ErrInvalidConfig)
+			}
+		case xml.ProcInst:
+			if strings.EqualFold(node.Target, "xml") && (node.Target != "xml" || !firstToken) {
+				return POM{}, fmt.Errorf("parse pom.xml: XML declaration must be lowercase and first: %w", errs.ErrInvalidConfig)
+			}
+		case xml.Directive:
+			kindEnd := bytes.IndexAny(node, " \t\r\n")
+			if kindEnd != len("DOCTYPE") || string(node[:kindEnd]) != "DOCTYPE" || len(bytes.Trim(node[kindEnd:], " \t\r\n")) == 0 {
+				return POM{}, fmt.Errorf("parse pom.xml: unsupported directive: %w", errs.ErrInvalidConfig)
+			}
+
+			if seenRoot || seenDoctype {
+				return POM{}, fmt.Errorf("parse pom.xml: DOCTYPE must occur once before the root: %w", errs.ErrInvalidConfig)
+			}
+			// The DTD stays opaque; neither decoder resolves external references.
+			seenDoctype = true
+		}
+
+		firstToken = false
+	}
+
+	if !seenRoot {
+		return POM{}, fmt.Errorf("parse pom.xml: missing root element: %w", errs.ErrInvalidConfig)
+	}
+
 	project, err := gopom.ParseFromReader(bytes.NewReader(body))
 	if err != nil {
-		return POM{}, fmt.Errorf("parse pom.xml: %w", err)
+		// A pom.xml that will not parse is the adopter's project
+		// configuration, so it exits EX_CONFIG (78). No caller classifies
+		// this on our behalf — two propagate it verbatim and one swallows it
+		// — so an unclassified error here reached the operator as
+		// EX_SOFTWARE (70), "file a bug".
+		return POM{}, fmt.Errorf("parse pom.xml: %w: %w", err, errs.ErrInvalidConfig)
 	}
 
 	pom := POM{
@@ -117,9 +188,10 @@ func RenderMavenSummary(in MavenSummaryInput, now time.Time) string {
 
 	_, _ = fmt.Fprintf(&b, "## Maven Build Summary 🔨\n")
 	_, _ = fmt.Fprintf(&b, "\n")
-	_, _ = fmt.Fprintf(&b, "- **Type:** %s\n", in.BuildType)
-	_, _ = fmt.Fprintf(&b, "- **Artifact:** `%s:%s:%s`\n", in.GroupID, in.ArtifactID, in.Version)
-	_, _ = fmt.Fprintf(&b, "- **Java:** %s\n", in.JavaVersion)
+	_, _ = fmt.Fprintf(&b, "- **Type:** %s\n", summary.LiteralText(in.BuildType))
+	_, _ = fmt.Fprintf(&b, "- **Artifact:** %s\n",
+		summary.InlineCode(in.GroupID+":"+in.ArtifactID+":"+in.Version))
+	_, _ = fmt.Fprintf(&b, "- **Java:** %s\n", summary.LiteralText(in.JavaVersion))
 
 	if in.SkipTests {
 		_, _ = fmt.Fprintf(&b, "- **Tests:** ⊘ Skipped\n")

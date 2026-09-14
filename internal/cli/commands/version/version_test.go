@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/cli"
 	versioncmd "github.com/diggsweden/reusable-ci/v3/internal/cli/commands/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testenv"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
@@ -53,8 +55,20 @@ func TestBumpCmd_RequiresProjectTypeAndVersion(t *testing.T) {
 	cmd := versioncmd.New()
 
 	err := cmd.Run(context.Background(), []string{"version", "bump"}) //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
-	if err == nil || !strings.Contains(err.Error(), `Required flags "project-type, version" not set`) {
-		t.Errorf("err = %v", err)
+	// Both flags named in one refusal, not just the first: an operator who
+	// supplies only --version should not have to run twice to learn the rest.
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+
+	if want := `Required flags "project-type, version" not set`; !strings.Contains(err.Error(), want) {
+		t.Errorf("err = %v, want %q", err, want)
+	}
+
+	// urfave's refusal carries no sentinel until main.go classifies it; the
+	// exit code is what the operator's shell actually sees.
+	if got := errs.ExitCodeFromError(cli.ClassifyError(err)); got != errs.ExitCodeUsage {
+		t.Errorf("exit code = %d, want usage (%d)", got, errs.ExitCodeUsage)
 	}
 }
 

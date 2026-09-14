@@ -1,21 +1,25 @@
 // SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 // SPDX-License-Identifier: EUPL-1.2 OR GPL-3.0-or-later
 
-package cienv
+package cienv_test
 
 import (
 	"slices"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testenv"
 )
 
 // TestNonEmptyEnvSource_SkipsSetButEmpty is the regression guard for the
 // urfave/cli empty-shadow bug: a forge-neutral var blanked to "" by a
 // workflow must NOT shadow a populated fallback.
 func TestNonEmptyEnvSource_SkipsSetButEmpty(t *testing.T) {
+	testenv.New(t)
 	t.Setenv("REF_NAME", "")          // neutral var set-but-empty (the trap)
 	t.Setenv("GITHUB_REF_NAME", "v1") // populated fallback
 
-	chain := RefName()
+	chain := cienv.RefName()
 
 	got, ok := chain.Lookup()
 	if !ok || got != "v1" {
@@ -23,15 +27,15 @@ func TestNonEmptyEnvSource_SkipsSetButEmpty(t *testing.T) {
 	}
 }
 
-// TestReleaseToken_EmptyReleaseTokenFallsThrough guards the write-token
-// chain: a RELEASE_TOKEN blanked to "" (an unset `${{ secrets.* }}`) must
-// fall through to the forge's ambient token, not shadow it — and the chain
-// must be forge-generic (FORGEJO_TOKEN works when no GitHub token is set).
+// TestNonEmptyEnvSource_FirstNonEmptyWins: the project-neutral variable is
+// consulted before the runner's own, so a workflow can name the repository
+// explicitly and have that beat whatever the runner injected.
 func TestNonEmptyEnvSource_FirstNonEmptyWins(t *testing.T) {
+	testenv.New(t)
 	t.Setenv("REPOSITORY", "owner/explicit")
 	t.Setenv("GITHUB_REPOSITORY", "owner/runner")
 
-	chain := Repository()
+	chain := cienv.Repository()
 
 	got, ok := chain.Lookup()
 	if !ok || got != "owner/explicit" {
@@ -40,11 +44,13 @@ func TestNonEmptyEnvSource_FirstNonEmptyWins(t *testing.T) {
 }
 
 func TestNonEmptyEnvSource_AllUnsetIsAbsent(t *testing.T) {
+	testenv.New(t)
+
 	for _, k := range []string{"REF", "GITHUB_REF"} {
 		t.Setenv(k, "")
 	}
 
-	chain := Ref()
+	chain := cienv.Ref()
 	if _, ok := chain.Lookup(); ok {
 		t.Fatal("Ref() should be absent when every source is empty/unset")
 	}
@@ -54,12 +60,13 @@ func TestNonEmptyEnvSource_AllUnsetIsAbsent(t *testing.T) {
 // GitHub runner, not only when the neutral CI_SERVER_URL is set — the clone
 // URL that `platform checkout` builds depends on it.
 func TestServerURL_ForgeFallbacks(t *testing.T) {
+	testenv.New(t)
 	t.Run("forgejo-native", func(t *testing.T) {
 		t.Setenv("CI_SERVER_URL", "")
 		t.Setenv("FORGEJO_SERVER_URL", "https://codeberg.org")
 		t.Setenv("GITHUB_SERVER_URL", "https://github.com")
 
-		chain := ServerURL()
+		chain := cienv.ServerURL()
 
 		got, ok := chain.Lookup()
 		if !ok || got != "https://codeberg.org" {
@@ -72,7 +79,7 @@ func TestServerURL_ForgeFallbacks(t *testing.T) {
 		t.Setenv("FORGEJO_SERVER_URL", "")
 		t.Setenv("GITHUB_SERVER_URL", "https://github.com")
 
-		chain := ServerURL()
+		chain := cienv.ServerURL()
 
 		got, ok := chain.Lookup()
 		if !ok || got != "https://github.com" {
@@ -86,11 +93,12 @@ func TestServerURL_ForgeFallbacks(t *testing.T) {
 // commit — what lets `platform checkout` replace `actions/checkout` with
 // `ref: <branch>`.
 func TestCheckoutRef_ExplicitOverrideWinsOverCommit(t *testing.T) {
+	testenv.New(t)
 	t.Run("explicit_ref_wins", func(t *testing.T) {
 		t.Setenv("CHECKOUT_REF", "main")
 		t.Setenv("GITHUB_SHA", "abc1234")
 
-		chain := CheckoutRef()
+		chain := cienv.CheckoutRef()
 
 		got, ok := chain.Lookup()
 		if !ok || got != "main" {
@@ -102,7 +110,7 @@ func TestCheckoutRef_ExplicitOverrideWinsOverCommit(t *testing.T) {
 		t.Setenv("CHECKOUT_REF", "")
 		t.Setenv("GITHUB_SHA", "abc1234")
 
-		chain := CheckoutRef()
+		chain := cienv.CheckoutRef()
 
 		got, ok := chain.Lookup()
 		if !ok || got != "abc1234" {
@@ -111,15 +119,40 @@ func TestCheckoutRef_ExplicitOverrideWinsOverCommit(t *testing.T) {
 	})
 }
 
-// TestChainsExposeEnvKeys proves the custom source still advertises its keys
+// TestChains_ExposeEnvKeys proves the custom source still advertises its keys
 // to --help / the generated reference (implements cli.EnvValueSource).
-func TestChainsExposeEnvKeys(t *testing.T) {
-	chain := Repository()
+func TestChains_ExposeEnvKeys(t *testing.T) {
+	chain := cienv.Repository()
 
 	keys := chain.EnvKeys()
 	for _, want := range []string{"REPOSITORY", "CI_REPO", "GITHUB_REPOSITORY"} {
 		if !slices.Contains(keys, want) {
 			t.Errorf("EnvKeys()=%v missing %q (docs/help would drop it)", keys, want)
 		}
+	}
+}
+
+// TestChains_RepositoryPrecedenceIsPinnedLiterally keeps
+// TestAccessors_BindTheirOwnersCompleteOrderedChain from being a tautology.
+//
+// That test already compares every accessor's chain against its owning
+// runcontext variable, in order — which is the parity guard, and it is a real
+// one: reversing the chain or dropping a fallback fails it. What it cannot
+// catch is a reordering INSIDE runcontext, because both sides derive from the
+// same list and would move together. Order here is precedence, so one chain is
+// written out literally as the anchor.
+//
+// The membership-only test next to it named three of these five keys, which is
+// how the two Forgejo names came to be unpinned.
+func TestChains_RepositoryPrecedenceIsPinnedLiterally(t *testing.T) {
+	// Orchestrated name first, then the forge-neutral one, then the
+	// forge-specific ones. The membership-only test this replaces named
+	// three of these five, so the two Forgejo names could have been dropped
+	// or reordered without anything noticing.
+	want := []string{"REPOSITORY", "CI_REPO", "FORGEJO_REPOSITORY", "FORGEJO_REPO", "GITHUB_REPOSITORY"}
+	chain := cienv.Repository()
+
+	if got := chain.EnvKeys(); !slices.Equal(got, want) {
+		t.Errorf("Repository EnvKeys() = %v, want %v (order is precedence)", got, want)
 	}
 }

@@ -30,9 +30,9 @@ import (
 // nonEmptyEnvSource is a cli.ValueSource that treats a set-but-EMPTY
 // environment variable as ABSENT. urfave/cli's built-in env source resolves
 // via os.LookupEnv, which reports a variable set to "" as found — so a
-// forge-neutral var blanked by a workflow's `${{ env.X || ” }}` expression
-// would short-circuit the chain and shadow a populated fallback. Skipping
-// empties makes the next source win, which is what every call site wants.
+// forge-neutral var blanked to an empty string by a workflow expression would
+// short-circuit the chain and shadow a populated fallback. Skipping empties
+// makes the next source win, which is what every call site wants.
 //
 // This mirrors runcontext.Var.Resolve, which skips empties for the same
 // reason: the two bindings of a concept must agree on what "absent" means.

@@ -1,0 +1,42 @@
+{
+  "schema": "reusable-ci-neutral-v2-corpus",
+  "version": 1,
+  "cases": [
+    {
+      "name": "compose-accepted",
+      "path": "neutral-targets-v2-compose.json",
+      "sha256": "fe2f623552b2cfc6733ab004d2fd951f62846fb9a9415679d16a5eec1af0ad90",
+      "expect": {"accepted": true}
+    },
+    {
+      "name": "github-accepted",
+      "path": "neutral-targets-v2-github.json",
+      "sha256": "65f08c37a7824c4d899b8560077fa92ccbae96af33d7c5c2b36b151c37810959",
+      "expect": {"accepted": true}
+    },
+    {
+      "name": "empty-size-error",
+      "path": "neutral-v2/empty.json",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "expect": {"error": "size"}
+    },
+    {
+      "name": "malformed-json-error",
+      "path": "neutral-v2/invalid-json.json",
+      "sha256": "66487c37dbd527fa5a632f3b52bacd9cd0c15808a25c1f75e5d39b6b051efa0c",
+      "expect": {"error": "json"}
+    },
+    {
+      "name": "wrong-version-error",
+      "path": "neutral-v2/wrong-version.json",
+      "sha256": "50208d78350a7a160dec59a82df1499b6ca7da33e54c5eb11c97e342118e68bb",
+      "expect": {"error": "version"}
+    },
+    {
+      "name": "invalid-shape-error",
+      "path": "neutral-v2/invalid-shape.json",
+      "sha256": "aab41f219a4fbdfdfc305d8b58700f569a96ed6112a6b62a95a7929dc3da3471",
+      "expect": {"error": "shape"}
+    }
+  ]
+}

@@ -5,10 +5,15 @@ package container
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
+	"github.com/diggsweden/reusable-ci/v3/internal/secrettext"
 )
+
+//nolint:gochecknoglobals // immutable compiled expressions.
+var credentialURLPattern = regexp.MustCompile(`(?i)https?://[^/\s:@]+:[^/\s@]+@`)
 
 // Well-known cosign --type names for the attestation predicates this
 // pipeline attaches to images: SLSA Provenance v1 and CycloneDX SBOMs.
@@ -22,13 +27,13 @@ const (
 // echoed into CI logs or step summaries.
 func UnsafeCosignErrorLine(line string) bool {
 	lower := strings.ToLower(line)
-	for _, marker := range []string{"authorization", "bearer", "token", "password", "secret"} {
+	for _, marker := range []string{"authorization", "bearer", "token", "password", "secret", "auth ", "auth=", "credential", "cookie", "api-key", "api_key", "apikey"} {
 		if strings.Contains(lower, marker) {
 			return true
 		}
 	}
 
-	return false
+	return credentialURLPattern.MatchString(line) || secrettext.ContainsJWT([]byte(line))
 }
 
 // ImageSignRequest is the port-level request for signing an OCI image.
@@ -104,7 +109,7 @@ type ImageSignRequest struct {
 // why says what a mutable tag costs for this particular operation; the
 // operations differ enough that one message would be vague.
 func requireDigestRef(op, ref, why string) error {
-	if !strings.Contains(ref, "@sha256:") {
+	if !ValidDigestReference(ref) {
 		return fmt.Errorf("%s: image reference %q must be a digest reference (registry/image@sha256:...); %s: %w",
 			op, ref, why, errs.ErrUsage)
 	}
@@ -118,7 +123,7 @@ func requireDigestRef(op, ref, why string) error {
 // drift.
 func requireKeylessConsistency(op string, keyless bool, keyRef, oidcIssuer string) error {
 	if keyless && keyRef != "" {
-		return fmt.Errorf("%s: keyless mode forbids --key (got %q): %w", op, keyRef, errs.ErrUsage)
+		return fmt.Errorf("%s: keyless mode forbids --key: %w", op, errs.ErrUsage)
 	}
 
 	if !keyless && keyRef == "" {
@@ -147,6 +152,10 @@ func (in ImageSignRequest) Validate() error {
 
 	if err := requireKeylessConsistency("cosign sign image", in.Keyless, in.KeyRef, in.OIDCIssuer); err != nil {
 		return err
+	}
+
+	if !in.Keyless && (in.FulcioURL != "" || in.RekorURL != "" || in.TrustedRootPath != "") {
+		return fmt.Errorf("cosign sign image: Sigstore service/trust fields require keyless mode: %w", errs.ErrUsage)
 	}
 
 	return nil
@@ -218,6 +227,10 @@ func (in ImageAttestRequest) Validate() error {
 		return err
 	}
 
+	if !in.Keyless && (in.FulcioURL != "" || in.RekorURL != "" || in.TrustedRootPath != "") {
+		return fmt.Errorf("cosign attest: Sigstore service/trust fields require keyless mode: %w", errs.ErrUsage)
+	}
+
 	return nil
 }
 
@@ -268,7 +281,7 @@ func (in ImageVerifyRequest) Validate() error {
 		return fmt.Errorf("cosign verify image: non-keyless mode requires --key: %w", errs.ErrUsage)
 	}
 
-	return nil
+	return requireKeylessIdentity(in.CertIdentityRegexp, in.CertOIDCIssuer)
 }
 
 // AttestationVerifyRequest is the port-level request for verifying a
@@ -324,6 +337,14 @@ func (in AttestationVerifyRequest) Validate() error {
 
 	if in.KeyRef == "" {
 		return fmt.Errorf("cosign verify-attestation: non-keyless mode requires --key: %w", errs.ErrUsage)
+	}
+
+	return requireKeylessIdentity(in.CertIdentityRegexp, in.CertOIDCIssuer)
+}
+
+func requireKeylessIdentity(identity, issuer string) error {
+	if identity != "" || issuer != "" {
+		return fmt.Errorf("certificate identity fields require keyless mode: %w", errs.ErrUsage)
 	}
 
 	return nil

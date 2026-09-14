@@ -3,19 +3,21 @@
 
 package container
 
-import "testing"
+import (
+	"github.com/stretchr/testify/require"
+	"testing"
+)
 
 func TestReleaseImagesGroupExposesBoundaryCommands(t *testing.T) {
 	t.Parallel()
 
-	found := map[string]bool{}
-	for _, cmd := range releaseImagesGroup().Commands {
-		found[cmd.Name] = true
+	commands := releaseImagesGroup().Commands
+
+	found := make([]string, 0, len(commands))
+	for _, cmd := range commands {
+		found = append(found, cmd.Name)
+		require.Empty(t, cmd.Aliases)
 	}
 
-	for _, name := range []string{"sign", "promote", "rollback", "cleanup"} {
-		if !found[name] {
-			t.Errorf("release-images command %q not exposed", name)
-		}
-	}
+	require.ElementsMatch(t, []string{"sign", "validate", "promote", "rollback", "cleanup"}, found)
 }

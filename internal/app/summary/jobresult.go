@@ -33,6 +33,10 @@ func JobResult(ctx context.Context, store ci.JobResultStore, in JobResultInput) 
 		return fmt.Errorf("--name is required: %w", errs.ErrUsage)
 	}
 
+	if !domainsummary.ValidResultName(job) {
+		return fmt.Errorf("--name %q must be a flat result name without separators or controls: %w", job, errs.ErrUsage)
+	}
+
 	env := domainsummary.JobResultEnvelope{
 		Job:    job,
 		Result: domainsummary.NormalizeJobStatus(strings.TrimSpace(in.Status)),

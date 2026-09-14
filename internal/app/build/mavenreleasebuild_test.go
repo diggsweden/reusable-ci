@@ -9,7 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"testing"
 
 	appbuild "github.com/diggsweden/reusable-ci/v3/internal/app/build"
@@ -43,7 +43,7 @@ func mavenSteps(t *testing.T, runs [][]string, opts []string) [][]string {
 	out := make([][]string, 0, len(runs))
 
 	for _, r := range runs {
-		if len(r) < len(opts) || !reflect.DeepEqual(r[:len(opts)], opts) {
+		if len(r) < len(opts) || !slices.Equal(r[:len(opts)], opts) {
 			t.Errorf("CLI opts not forwarded to mvn call: %v", r)
 
 			continue
@@ -88,8 +88,8 @@ func TestMavenReleaseBuild_RunsStepsInOrder(t *testing.T) {
 			},
 		},
 		{
-			// A library compiles, tests, then packages separately, so the
-			// sources and javadoc jars are built from a tested tree.
+			// A library compiles, tests, then packages separately. Its selected
+			// profile is forwarded to every lifecycle phase.
 			name:      "lib with a profile",
 			buildType: "lib",
 			profile:   "central-release",
@@ -135,7 +135,7 @@ func TestMavenReleaseBuild_RunsStepsInOrder(t *testing.T) {
 			// joined string for three fragments, so they saw neither order
 			// nor the steps they did not name -- and the "SBOM did not run"
 			// check passed equally on a run where nothing ran.
-			if got := mavenSteps(t, ops.runs, opts); !reflect.DeepEqual(got, tc.want) {
+			if got := mavenSteps(t, ops.runs, opts); !slices.EqualFunc(got, tc.want, slices.Equal) {
 				t.Errorf("mvn steps =\n%v\nwant\n%v", got, tc.want)
 			}
 		})

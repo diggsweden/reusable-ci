@@ -23,6 +23,7 @@ import (
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 	domainsbom "github.com/diggsweden/reusable-ci/v3/internal/domain/sbom"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 const (
@@ -89,22 +90,41 @@ func Assemble(out io.Writer, in AssembleInput) (*domainrelease.Assembly, error) 
 	outputFile := defaultString(in.OutputFile, domainrelease.DefaultAssemblyFile)
 	releaseFilesDir := defaultString(in.ReleaseFilesDir, domainrelease.DefaultReleaseFilesDir)
 	releaseArtifactsDir := defaultString(in.ReleaseArtifactsDir, domainrelease.DefaultReleaseArtifactsDir)
+
 	sbomDir := defaultString(in.SBOMDir, domainrelease.DefaultSBOMArtifactsDir)
+	if err := validateAssemblyName(in.ProjectName); err != nil {
+		return nil, err
+	}
+
+	if err := validateAssemblyName(in.Version); err != nil {
+		return nil, err
+	}
+
+	if outputFile != cliio.StdSentinel {
+		if err := validateReleasePathComponents(outputFile); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+	}
 
 	if err := validateRelativeDir(releaseFilesDir, "release-files-dir"); err != nil {
 		return nil, err
 	}
 
+	for _, dir := range append([]string{releaseArtifactsDir, sbomDir}, plannedSBOMRoots(cfg)...) {
+		if !pathsafe.Relative(dir) {
+			return nil, fmt.Errorf("assembly source directory must be workspace-relative: %q: %w", dir, errs.ErrValidation)
+		}
+
+		root, rootErr := pathsafe.OpenRoot(dir)
+		if rootErr == nil {
+			_ = root.Close()
+		} else if !errors.Is(rootErr, fs.ErrNotExist) {
+			return nil, rootErr
+		}
+	}
+
 	assetsDir := filepath.Join(releaseFilesDir, "assets")
 	sbomsDir := filepath.Join(releaseFilesDir, "sboms")
-
-	if err := recreateDir(assetsDir); err != nil {
-		return nil, err
-	}
-
-	if err := recreateDir(sbomsDir); err != nil {
-		return nil, err
-	}
 
 	collector := &assemblyCollector{
 		assetsDir:           assetsDir,
@@ -125,6 +145,10 @@ func Assemble(out io.Writer, in AssembleInput) (*domainrelease.Assembly, error) 
 	}
 
 	if err := collectAssemblySBOMs(collector, cfg, sbomDir); err != nil {
+		return nil, err
+	}
+
+	if err := collector.stage(); err != nil {
 		return nil, err
 	}
 
@@ -150,18 +174,74 @@ func Assemble(out io.Writer, in AssembleInput) (*domainrelease.Assembly, error) 
 	return asm, nil
 }
 
+// stage validates both destinations and source overlap before clearing either.
+//
+//nolint:cyclop // validates destinations, then recreates and copies the already-collected plan.
+func (c *assemblyCollector) stage() error {
+	if root, rootErr := pathsafe.OpenRoot(c.releaseFilesDir); rootErr == nil {
+		defer func() { _ = root.Close() }()
+
+		for _, name := range []string{"assets", "sboms"} {
+			info, statErr := root.Lstat(name)
+			if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+				return statErr
+			}
+
+			if statErr == nil && !info.IsDir() {
+				return fmt.Errorf("assembly staging directory must be real: %w", errs.ErrValidation)
+			}
+		}
+	} else if !errors.Is(rootErr, fs.ErrNotExist) {
+		return rootErr
+	}
+
+	files := append(append([]domainrelease.AssemblyFile(nil), c.assets...), c.sboms...)
+	for _, file := range files {
+		for _, dir := range []string{c.assetsDir, c.sbomsDir} {
+			rel, err := filepath.Rel(absOrSelf(dir), absOrSelf(file.SourcePath))
+			if err != nil {
+				return err
+			}
+
+			if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+				return fmt.Errorf("assembly source overlaps staging: %w", errs.ErrValidation)
+			}
+		}
+	}
+
+	if err := recreateDir(c.assetsDir); err != nil {
+		return err
+	}
+
+	if err := recreateDir(c.sbomsDir); err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		if err := copyRegularFile(file.SourcePath, file.Path); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func parseAssemblyConfigPlan(raw string) (pipeline.ConfigPlan, error) {
 	if strings.TrimSpace(raw) == "" {
 		return pipeline.ConfigPlan{}, fmt.Errorf("config-plan-json is required: %w", errs.ErrUsage)
 	}
 
-	var plan pipeline.ConfigPlan
-	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-		return pipeline.ConfigPlan{}, fmt.Errorf("parse config-plan-json: %w: %w", err, errs.ErrInvalidConfig)
+	plan, err := pipeline.DecodeConfigPlan(raw)
+	if err != nil {
+		return pipeline.ConfigPlan{}, err
 	}
 
 	if plan.Version != pipeline.ConfigPlanVersion {
 		return pipeline.ConfigPlan{}, fmt.Errorf("config-plan-json has unsupported version %d: %w", plan.Version, errs.ErrInvalidConfig)
+	}
+
+	if err := pipeline.ValidateConfigPlan(plan); err != nil {
+		return pipeline.ConfigPlan{}, err
 	}
 
 	return plan, nil
@@ -331,9 +411,13 @@ func (c *assemblyCollector) addAsset(src, kind, sourceArtifact string, required 
 	}
 
 	dst := filepath.Join(c.assetsDir, name)
-	if err := copyRegularFile(src, dst); err != nil {
+
+	input, err := openReleaseFile(src)
+	if err != nil {
 		return err
 	}
+
+	_ = input.Close()
 
 	file := domainrelease.AssemblyFile{
 		Path:           filepath.ToSlash(dst),
@@ -367,9 +451,13 @@ func (c *assemblyCollector) addSBOM(src, kind, sourceArtifact string, required b
 	}
 
 	dst := filepath.Join(c.sbomsDir, name)
-	if err := copyRegularFile(src, dst); err != nil {
+
+	input, err := openReleaseFile(src)
+	if err != nil {
 		return err
 	}
+
+	_ = input.Close()
 
 	file := domainrelease.AssemblyFile{
 		Path:           filepath.ToSlash(dst),
@@ -528,27 +616,20 @@ func validateAssemblyName(name string) error {
 }
 
 func copyRegularFile(src, dst string) error {
-	info, err := os.Lstat(src)
-	if err != nil {
-		return fmt.Errorf("stat %q: %w", src, err)
-	}
-
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%q is not a regular file: %w", src, errs.ErrValidation)
-	}
-
-	in, err := os.Open(src) //nolint:gosec // release assembly copies planned, workspace-local artifacts.
+	in, err := openReleaseFile(src)
 	if err != nil {
 		return fmt.Errorf("open %q: %w", src, err)
 	}
 
 	defer func() { _ = in.Close() }()
 
-	if mkdirErr := os.MkdirAll(filepath.Dir(dst), 0o755); mkdirErr != nil { //nolint:gosec,mnd // public release staging dir.
-		return fmt.Errorf("mkdir %q: %w", filepath.Dir(dst), mkdirErr)
+	root, err := pathsafe.MkdirRoot(filepath.Dir(dst), 0o755)
+	if err != nil {
+		return err
 	}
+	defer func() { _ = root.Close() }()
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644) //nolint:gosec,mnd // public release asset.
+	out, err := root.OpenFile(filepath.Base(dst), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("create %q: %w", dst, err)
 	}
@@ -571,11 +652,18 @@ func recreateDir(dir string) error {
 		return err
 	}
 
-	if err := os.RemoveAll(dir); err != nil {
+	root, err := pathsafe.MkdirRoot(filepath.Dir(dir), 0o755)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
+	base := filepath.Base(dir)
+	if err := root.RemoveAll(base); err != nil {
 		return fmt.Errorf("remove %q: %w", dir, err)
 	}
 
-	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec,mnd // public release staging dir.
+	if err := root.Mkdir(base, 0o755); err != nil {
 		return fmt.Errorf("mkdir %q: %w", dir, err)
 	}
 
@@ -615,6 +703,12 @@ func writeAssembly(path string, asm *domainrelease.Assembly) error {
 }
 
 func readAssembly(path string) (domainrelease.Assembly, error) {
+	if path != cliio.StdSentinel {
+		if err := validateReleasePathComponents(path); err != nil {
+			return domainrelease.Assembly{}, err
+		}
+	}
+
 	body, err := cliio.ReadFile(path)
 	if err != nil {
 		return domainrelease.Assembly{}, fmt.Errorf("read release assembly %s: %w", path, err)
@@ -629,7 +723,50 @@ func readAssembly(path string) (domainrelease.Assembly, error) {
 		return domainrelease.Assembly{}, fmt.Errorf("release assembly has unsupported version %d: %w", asm.Version, errs.ErrInvalidConfig)
 	}
 
+	if err := validateAssemblyPaths(asm); err != nil {
+		return domainrelease.Assembly{}, err
+	}
+
 	return asm, nil
+}
+
+func validateAssemblyPaths(asm domainrelease.Assembly) error {
+	for _, files := range [][]domainrelease.AssemblyFile{asm.Assets, asm.SBOMs} {
+		for _, file := range files {
+			if err := validateAssemblyPath(file.Path, true); err != nil {
+				return err
+			}
+
+			if file.Name != "" && (filepath.Base(file.Name) != file.Name || strings.ContainsAny(file.Name, `/\`)) {
+				return fmt.Errorf("assembly entry name must be a basename: %q: %w", file.Name, errs.ErrValidation)
+			}
+		}
+	}
+
+	for _, output := range []string{asm.ChecksumFile, asm.SBOMZipFile} {
+		if output == "" {
+			continue
+		}
+
+		if err := validateAssemblyPath(output, false); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func validateAssemblyPath(path string, required bool) error {
+	if !pathsafe.Relative(path) {
+		return fmt.Errorf("assembly path must be workspace-relative: %q: %w", path, errs.ErrValidation)
+	}
+
+	err := validateReleasePathComponents(path)
+	if !required && errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+
+	return err
 }
 
 func sortAssemblyFiles(files []domainrelease.AssemblyFile) {
@@ -647,19 +784,17 @@ func defaultString(value, fallback string) string {
 }
 
 func regularFileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-
-	return info.Mode().IsRegular()
+	return regularReleaseFile(path)
 }
 
 func regularFileNonEmpty(path string) bool {
-	info, err := os.Stat(path)
+	file, err := openReleaseFile(path)
 	if err != nil {
 		return false
 	}
+	defer func() { _ = file.Close() }()
 
-	return info.Mode().IsRegular() && info.Size() > 0
+	info, err := file.Stat()
+
+	return err == nil && info.Size() > 0
 }

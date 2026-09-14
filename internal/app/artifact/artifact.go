@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path"
 
 	domainartifact "github.com/diggsweden/reusable-ci/v3/internal/domain/artifact"
 	domainci "github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
@@ -22,7 +23,7 @@ import (
 // Download validates the request, delegates to the provider's
 // RunArtifactDownloader, and records the result. The resolved name and
 // totals are written to the sink; a one-line summary goes to w (stderr).
-func Download(ctx context.Context, dl provider.RunArtifactDownloader, sink domainci.OutputSink, w io.Writer, in provider.RunArtifactDownload) (provider.RunArtifactInfo, error) { //nolint:varnamelen // idiomatic short names (testing/http/io conventions).
+func Download(ctx context.Context, dl provider.RunArtifactDownloader, sink domainci.OutputSink, w io.Writer, in provider.RunArtifactDownload) (provider.RunArtifactInfo, error) { //nolint:cyclop,varnamelen // selector and pattern guards precede every provider/output effect.
 	// Pattern selects a set of artifacts by glob; a single named artifact
 	// is the exact-match case. Exactly one of the two must be given.
 	switch {
@@ -39,6 +40,16 @@ func Download(ctx context.Context, dl provider.RunArtifactDownloader, sink domai
 		}
 	}
 
+	if in.Pattern != "" {
+		if err := domainartifact.ValidateName(in.Pattern); err != nil {
+			return provider.RunArtifactInfo{}, fmt.Errorf("artifact pattern: %w", err)
+		}
+
+		if _, err := path.Match(in.Pattern, ""); err != nil {
+			return provider.RunArtifactInfo{}, fmt.Errorf("malformed artifact pattern: %w: %w", err, errs.ErrUsage)
+		}
+	}
+
 	if in.Dir == "" {
 		return provider.RunArtifactInfo{}, fmt.Errorf("destination dir is required: %w", errs.ErrUsage)
 	}
@@ -48,7 +59,9 @@ func Download(ctx context.Context, dl provider.RunArtifactDownloader, sink domai
 		return provider.RunArtifactInfo{}, err
 	}
 
-	emit(ctx, sink, w, info, "Downloaded", in.Dir)
+	if err := emit(ctx, sink, w, info, "Downloaded", in.Dir); err != nil {
+		return provider.RunArtifactInfo{}, err
+	}
 
 	return info, nil
 }
@@ -64,6 +77,13 @@ func Upload(ctx context.Context, up provider.RunArtifactUploader, sink domainci.
 		return provider.RunArtifactInfo{}, fmt.Errorf("upload needs --dir, --path, or at least one --file: %w", errs.ErrUsage)
 	}
 
+	// Zero asks for the forge default; a negative retention has no meaning on
+	// either forge and used to become one day on Forgejo and the repository
+	// default on GitHub without a word.
+	if in.RetentionDays < 0 {
+		return provider.RunArtifactInfo{}, fmt.Errorf("retention days must be zero (forge default) or positive, got %d: %w", in.RetentionDays, errs.ErrUsage)
+	}
+
 	if in.IfNoFiles == "" {
 		in.IfNoFiles = provider.IfNoFilesError
 	}
@@ -73,30 +93,39 @@ func Upload(ctx context.Context, up provider.RunArtifactUploader, sink domainci.
 		return provider.RunArtifactInfo{}, err
 	}
 
-	emit(ctx, sink, w, info, "Uploaded", "")
+	if err := emit(ctx, sink, w, info, "Uploaded", ""); err != nil {
+		return provider.RunArtifactInfo{}, err
+	}
 
 	return info, nil
 }
 
 // emit writes the machine-readable result to the sink and a single human
 // summary line to w. Sink keys are stable for downstream steps.
-func emit(ctx context.Context, sink domainci.OutputSink, out io.Writer, info provider.RunArtifactInfo, verb, dir string) {
+func emit(ctx context.Context, sink domainci.OutputSink, out io.Writer, info provider.RunArtifactInfo, verb, dir string) error {
 	if sink != nil {
-		_ = sink.Set(ctx, "artifact-name", info.Name)
+		if err := sink.Set(ctx, "artifact-name", info.Name); err != nil {
+			return fmt.Errorf("emit artifact-name: %w", err)
+		}
+
 		if info.ID != "" {
-			_ = sink.Set(ctx, "artifact-id", info.ID)
+			if err := sink.Set(ctx, "artifact-id", info.ID); err != nil {
+				return fmt.Errorf("emit artifact-id: %w", err)
+			}
 		}
 	}
 
 	if out == nil {
-		return
+		return nil
 	}
 
 	if dir != "" {
 		_, _ = fmt.Fprintf(out, "%s %s (%d files, %d bytes) → %s\n", verb, info.Name, info.FileCount, info.Bytes, dir)
 
-		return
+		return nil
 	}
 
 	_, _ = fmt.Fprintf(out, "%s %s (%d files, %d bytes)\n", verb, info.Name, info.FileCount, info.Bytes)
+
+	return nil
 }

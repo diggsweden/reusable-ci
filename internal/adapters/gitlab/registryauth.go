@@ -18,7 +18,14 @@ func (p *Provider) ResolveRegistryAuth() (provider.RegistryAuth, error) {
 	env := p.envFunc()
 
 	registry := strings.TrimSpace(env("CI_REGISTRY"))
-	token := env("CI_REGISTRY_PASSWORD")
+
+	// Trimmed like the other two fields. It was not, which made a
+	// CI_REGISTRY_PASSWORD of whitespace -- what a job that pipes a token file
+	// into the variable produces when the file is empty -- pass the emptiness
+	// check and reach `docker login` as a credential made of spaces. The
+	// failure then surfaces at the registry as a rejected login rather than
+	// here as a missing variable.
+	token := strings.TrimSpace(env("CI_REGISTRY_PASSWORD"))
 
 	if registry == "" || token == "" {
 		return provider.RegistryAuth{}, errs.RuntimeRequired(

@@ -84,9 +84,37 @@ func (r BuildRequest) Validate() error {
 	}
 
 	for _, s := range r.Secrets {
-		if !strings.HasPrefix(s, "id=") {
-			return fmt.Errorf("malformed build secret %q (want id=NAME,src=PATH): %w", s, errs.ErrUsage)
+		if err := validateBuildSecret(s); err != nil {
+			return err
 		}
+	}
+
+	return nil
+}
+
+func validateBuildSecret(value string) error {
+	fields := map[string]string{}
+
+	for _, part := range strings.Split(value, ",") {
+		key, val, ok := strings.Cut(part, "=")
+		if !ok || strings.TrimSpace(val) == "" || fields[key] != "" || strings.ContainsAny(val, "\r\n\x00") {
+			return fmt.Errorf("build secret must contain one nonempty id and src field: %w", errs.ErrUsage)
+		}
+
+		switch key {
+		case "id", "src":
+			fields[key] = val
+		default:
+			return fmt.Errorf("build secret contains an unsupported field: %w", errs.ErrUsage)
+		}
+	}
+
+	if len(fields) != 2 {
+		return fmt.Errorf("build secret requires id and src: %w", errs.ErrUsage)
+	}
+
+	if strings.ContainsAny(fields["id"], " /\\\t") {
+		return fmt.Errorf("build secret id must be a single name: %w", errs.ErrUsage)
 	}
 
 	return nil

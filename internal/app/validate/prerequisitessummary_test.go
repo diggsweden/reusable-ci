@@ -100,10 +100,9 @@ func TestWritePrerequisitesSummary_LiftsWarningsIntoACallout(t *testing.T) {
 
 	// Both, not just the first: two validators can each skip a check,
 	// and a callout naming one of them understates what was skipped.
-	for _, want := range []string{"enforcement skipped", "could not be verified"} {
-		if !strings.Contains(body, "> ⚠️") || !strings.Contains(body, want) {
-			t.Errorf("warning %q missing from the callout:\n%s", want, body)
-		}
+	want := "> [!WARNING]\n> ⚠️ No GPG signer allowlist present (.reusable-ci/allowed&#95;gpg&#95;keys.asc) — enforcement skipped\n> ⚠️ GPG signature could not be verified against the allowlist\n"
+	if !strings.Contains(body, want) || strings.Count(body, "enforcement skipped") != 1 || strings.Count(body, "could not be verified") != 1 {
+		t.Fatalf("warnings escaped or duplicated their callout:\n%s", body)
 	}
 
 	// A run with warnings but no failures is still a pass; the callout
@@ -141,5 +140,66 @@ func TestWritePrerequisitesSummary_FailuresAreListedOnOneLineEach(t *testing.T) 
 
 	if strings.Contains(body, "Can't check signature") {
 		t.Errorf("the whole multi-line error was inlined into the summary:\n%s", body)
+	}
+}
+
+// errSummarySink stands in for a summary file that cannot be appended to.
+var errSummarySink = errors.New("summary sink refused") //nolint:err113 // fixture sentinel.
+
+type refusingSummarySink struct{ calls int }
+
+func (s *refusingSummarySink) Append(context.Context, string) error {
+	s.calls++
+
+	return errSummarySink
+}
+
+// TestWritePrerequisitesSummary_WholeReportForSeveralFailures compares the
+// complete summary for a pass, a skip and two failures with warnings from two
+// checks. Failures are listed in check order, each by the first non-empty line
+// of its error even when the error starts with blank lines, and error text and
+// warning lines are literal: a tag name or tool message carrying links, HTML or
+// emphasis used to become Markdown in the job summary.
+func TestWritePrerequisitesSummary_WholeReportForSeveralFailures(t *testing.T) {
+	t.Parallel()
+
+	body := summaryFor(t,
+		appvalidate.ValidatorOutcome{Name: "ref-type"},
+		appvalidate.ValidatorOutcome{Name: "tag-format", Err: errors.New("\n  \ntag '[v1](https://attacker.invalid)' is not semver\nsecond line")}, //nolint:err113 // fixture error.
+		appvalidate.ValidatorOutcome{Name: "tag-signature", Err: errs.ErrPermissionDenied, Output: "⚠️ allowlist <b>skipped</b> for **v1**\n"},
+		appvalidate.ValidatorOutcome{Name: "maven-central", Skipped: true, SkipReason: "no maven-central target"},
+		appvalidate.ValidatorOutcome{Name: "cargo", Output: "ok\n  ⚠️ toolchain pin is a symlink\n"},
+	)
+
+	want := "## Release Prerequisites\n\n" +
+		"| Check | Status |\n" +
+		"|-------|--------|\n" +
+		"| ref-type | ✓ Passed |\n" +
+		"| tag-format | ✗ Failed |\n" +
+		"| tag-signature | ✗ Failed |\n" +
+		"| maven-central | − Skipped (no maven-central target) |\n" +
+		"| cargo | ✓ Passed |\n" +
+		"\n### ✗ One or more prerequisites failed\n\n" +
+		"- **tag-format**: tag &#39;&#91;v1&#93;(https&#58;//attacker.invalid)&#39; is not semver\n" +
+		"- **tag-signature**: permission denied\n" +
+		"\n> [!WARNING]\n" +
+		"> ⚠️ allowlist &#60;b&#62;skipped&#60;/b&#62; for &#42;&#42;v1&#42;&#42;\n" +
+		"> ⚠️ toolchain pin is a symlink\n"
+
+	if body != want {
+		t.Errorf("summary:\n%s\nwant:\n%s", body, want)
+	}
+}
+
+// TestWritePrerequisitesSummary_SinkFailureIsReturned appends once and returns
+// the sink's own error.
+func TestWritePrerequisitesSummary_SinkFailureIsReturned(t *testing.T) {
+	t.Parallel()
+
+	sink := &refusingSummarySink{}
+
+	err := appvalidate.WritePrerequisitesSummary(context.Background(), sink, appvalidate.PrerequisitesResult{Checks: []appvalidate.ValidatorOutcome{{Name: "ref-type"}}})
+	if !errors.Is(err, errSummarySink) || sink.calls != 1 {
+		t.Fatalf("err = %v after %d appends, want the sink error after one", err, sink.calls)
 	}
 }

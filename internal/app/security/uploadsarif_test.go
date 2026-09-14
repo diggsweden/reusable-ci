@@ -6,8 +6,11 @@ package security_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -91,7 +94,7 @@ func TestUploadSARIF_MissingFileSkipsGracefully(t *testing.T) {
 	err := appsecurity.UploadSARIF(context.Background(), prov, io.Discard,
 		output.NewAnnotator(&stderr, output.FormatGitHub),
 		appsecurity.UploadSARIFInput{
-			SARIFFile:  "/nonexistent/results.sarif",
+			SARIFFile:  filepath.Join(t.TempDir(), "missing.sarif"),
 			Token:      "t",
 			Repository: "x/y",
 			SHA:        "s",
@@ -157,8 +160,89 @@ func TestUploadSARIF_MissingRequiredFieldErrors(t *testing.T) {
 			t.Parallel()
 			prov := fakeprovider.New(t)
 			err := appsecurity.UploadSARIF(context.Background(), prov, io.Discard, output.Annotator{}, testCase.given)
-			require.Error(t, err)
+			// Every missing field is a broken invocation: ErrUsage, exit 2.
+			// Without the sentinel these would exit 70 ("file a bug").
+			require.ErrorIs(t, err, errs.ErrUsage)
 			require.Contains(t, err.Error(), testCase.errContains)
+			require.Empty(t, prov.UploadSARIFCalls(), "uploaded despite incomplete input")
 		})
 	}
+}
+
+// TestUploadSARIF_StampsEachRunAndLeavesTheFile covers a document with more
+// than one run, which the happy path above cannot: it has no runs, so the
+// category has nothing to stamp. The run without an analysis ID gets the
+// category with its index; the run that declared its own keeps it. The
+// payload is compared as a UseNumber tree, so a large number keeps its
+// spelling, and the file on disk is not rewritten -- the category exists only
+// in what is sent.
+func TestUploadSARIF_StampsEachRunAndLeavesTheFile(t *testing.T) {
+	t.Parallel()
+
+	const body = `{"version":"2.1.0","runs":[
+{"tool":{"driver":{"name":"trivy"}},"properties":{"rank":123456789012345678901234567890}},
+{"tool":{"driver":{"name":"opengrep"}},"automationDetails":{"id":"producer/own"}}]}`
+
+	path := writeTempSARIF(t, body)
+	prov := fakeprovider.New(t)
+
+	err := appsecurity.UploadSARIF(context.Background(), prov, io.Discard, output.Annotator{}, appsecurity.UploadSARIFInput{
+		SARIFFile: path, Token: "t", Repository: "owner/repo",
+		SHA: "0123456789abcdef0123456789abcdef01234567", Ref: "refs/heads/main", Category: "deps",
+	})
+	require.NoError(t, err)
+
+	calls := prov.UploadSARIFCalls()
+	require.Len(t, calls, 1)
+
+	want := decodeSARIFTree(t, []byte(`{"version":"2.1.0","runs":[
+{"tool":{"driver":{"name":"trivy"}},"properties":{"rank":123456789012345678901234567890},"automationDetails":{"id":"deps/0"}},
+{"tool":{"driver":{"name":"opengrep"}},"automationDetails":{"id":"producer/own"}}]}`))
+
+	require.Equal(t, want, decodeSARIFTree(t, calls[0].SARIF))
+
+	onDisk, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+
+	if !bytes.Equal(onDisk, []byte(body)) {
+		t.Errorf("SARIF on disk changed:\n%s", onDisk)
+	}
+}
+
+// TestUploadSARIF_FailureNeverShowsTheToken feeds a provider error that
+// quotes the token. Neither the returned error nor the annotation may carry
+// it, while the rest of the message and its error class survive -- a
+// redaction that dropped everything would pass an absence check alone.
+func TestUploadSARIF_FailureNeverShowsTheToken(t *testing.T) {
+	t.Parallel()
+
+	const token = "ghs_SyntheticUploadToken0123456789" //nolint:gosec // synthetic token that must never appear in output.
+
+	prov := fakeprovider.New(t).WithUploadSARIFError(
+		fmt.Errorf("HTTP 401: bad credentials for %s: %w", token, errs.ErrPermissionDenied))
+
+	var stderr bytes.Buffer
+
+	err := appsecurity.UploadSARIF(context.Background(), prov, io.Discard, output.NewAnnotator(&stderr, output.FormatGitHub), appsecurity.UploadSARIFInput{
+		SARIFFile: writeTempSARIF(t, `{"runs":[]}`), Token: token, Repository: "owner/repo",
+		SHA: "0123456789abcdef0123456789abcdef01234567", Ref: "refs/heads/main",
+	})
+	require.ErrorIs(t, err, errs.ErrPermissionDenied)
+
+	for name, text := range map[string]string{"error": err.Error(), "annotation": stderr.String()} {
+		require.NotContains(t, text, token, name)
+		require.Contains(t, text, "HTTP 401: bad credentials for [redacted]", name)
+	}
+}
+
+func decodeSARIFTree(t *testing.T, body []byte) map[string]any {
+	t.Helper()
+
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+
+	var doc map[string]any
+	require.NoError(t, decoder.Decode(&doc))
+
+	return doc
 }

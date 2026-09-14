@@ -39,7 +39,10 @@ func freshnessInput(enforce bool) baseimages.CheckFreshnessInput {
 	}
 }
 
-func TestCheckFreshnessCurrent(t *testing.T) {
+// TestCheckFreshness_MatchingDigestReportsCurrent: when the source tag still
+// resolves to the pinned digest there is nothing to do, and the run says so
+// both to the operator and to the output sink the workflow reads.
+func TestCheckFreshness_MatchingDigestReportsCurrent(t *testing.T) {
 	t.Parallel()
 
 	resolver := &fakeFreshnessResolver{digests: map[string]string{
@@ -63,7 +66,11 @@ func TestCheckFreshnessCurrent(t *testing.T) {
 	}
 }
 
-func TestCheckFreshnessStale(t *testing.T) {
+// TestCheckFreshness_StaleDigestBlocksOnlyWhenEnforcing: a drifted digest is
+// the same finding in both modes; enforce decides whether it stops the build.
+// The old name said only "Stale", which is the input rather than the
+// behaviour, and hid that the mode is what this test is actually about.
+func TestCheckFreshness_StaleDigestBlocksOnlyWhenEnforcing(t *testing.T) {
 	t.Parallel()
 
 	resolver := &fakeFreshnessResolver{digests: map[string]string{
@@ -107,7 +114,10 @@ func TestCheckFreshnessStale(t *testing.T) {
 	})
 }
 
-func TestCheckFreshnessFetchFailure(t *testing.T) {
+// TestCheckFreshness_UnreachableRegistryFailsClosedWhenEnforcing: a registry
+// that cannot be reached is not evidence that the pin is current, so enforcing
+// treats it as a dependency failure rather than a pass. Warn-only skips it.
+func TestCheckFreshness_UnreachableRegistryFailsClosedWhenEnforcing(t *testing.T) {
 	t.Parallel()
 
 	resolver := &fakeFreshnessResolver{err: errRegistryBlip}
@@ -139,7 +149,7 @@ func TestCheckFreshnessFetchFailure(t *testing.T) {
 	})
 }
 
-func TestCheckFreshnessConfigErrorsFailInBothModes(t *testing.T) {
+func TestCheckFreshness_ConfigErrorsFailInBothModes(t *testing.T) {
 	t.Parallel()
 
 	resolver := &fakeFreshnessResolver{}

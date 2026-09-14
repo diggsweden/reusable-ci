@@ -5,8 +5,6 @@
 package livetest
 
 import (
-	"time"
-
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/forgejo"
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/gitlab"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
@@ -32,7 +30,7 @@ func Provider(tb TB, target Target, repo string) provider.Provider {
 
 	env := targetEnv(target, repo)
 
-	client, err := targetHTTPClient(target, time.Minute)
+	client, err := targetHTTPClient(target, apiTimeout())
 	if err != nil {
 		tb.Fatalf("livetest: configure target HTTP trust: %v", err)
 	}

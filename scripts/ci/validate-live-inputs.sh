@@ -35,7 +35,7 @@ validate_contract() {
 validate_tools() {
 	local tool
 	local -a missing=()
-	for tool in cosign syft buildah skopeo sha256sum; do
+	for tool in base64 cosign jq syft buildah skopeo git sha256sum; do
 		command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
 	done
 	((${#missing[@]} == 0)) || {

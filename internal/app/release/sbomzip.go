@@ -12,11 +12,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	domainrelease "github.com/diggsweden/reusable-ci/v3/internal/domain/release"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/sbom"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/version"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // SBOMZipInput drives `reusable-ci release sbom-zip`.
@@ -41,26 +43,17 @@ type SBOMZipResult struct {
 // zip. Returns ZipName="" when nothing was found. signer is consulted only when in.SignArtifacts is
 // set and signer is non-nil.
 func CreateSBOMZip(ctx context.Context, signer Signer, in SBOMZipInput, out io.Writer) (*SBOMZipResult, error) {
+	if err := checkSBOMZipSigner(signer, in.SignArtifacts); err != nil {
+		return nil, err
+	}
+
 	if in.AssemblyFile != "" {
 		return createSBOMZipFromAssembly(ctx, signer, in, out)
 	}
 
-	if in.WorkingDir == "" {
-		in.WorkingDir = "."
-	}
+	in, ver := withSBOMZipDefaults(in)
 
-	if in.SBOMDir == "" {
-		in.SBOMDir = domainrelease.DefaultSBOMArtifactsDir
-	}
-
-	ver := in.Version
-	if ver == "" {
-		ver = "unknown"
-	}
-
-	ver = version.StripVPrefix(ver)
-
-	wdMatches, containerMatches, err := discoverSBOMs(in.WorkingDir, in.SBOMDir)
+	wdMatches, containerMatches, err := discoverSBOMs(in.WorkingDir, in.SBOMDir, in.ProjectName)
 	if err != nil {
 		return nil, err
 	}
@@ -145,15 +138,43 @@ func createSBOMZipFromAssembly(ctx context.Context, signer Signer, in SBOMZipInp
 // discoverSBOMs lists SBOMs in the working dir (keeps relative path) and
 // in the container SBOM dir (flattened later when written into the zip).
 // First return is working-dir matches; second is container matches.
-func discoverSBOMs(workingDir, sbomDir string) ([]string, []string, error) {
+//
+// When projectName is set, only SBOMs named "<projectName>-*" are taken.
+// The zip is published and signed under the project's name, so an
+// unscoped glob would sweep any *-sbom.*.json another tool left in the
+// working directory into the release. Matching on the basename prefix
+// rather than splicing projectName into the glob keeps a name carrying
+// glob metacharacters inert.
+func discoverSBOMs(workingDir, sbomDir, projectName string) ([]string, []string, error) {
 	wdMatches, err := globAll(workingDir, domainrelease.SBOMFilePatterns)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	containerMatches, _ := globAll(sbomDir, []string{domainrelease.AnalyzedContainerSBOMPattern})
+	containerMatches, err := globAll(sbomDir, []string{domainrelease.AnalyzedContainerSBOMPattern})
+	if err != nil {
+		return nil, nil, err
+	}
 
-	return wdMatches, containerMatches, nil
+	return scopeToProject(wdMatches, projectName), scopeToProject(containerMatches, projectName), nil
+}
+
+// scopeToProject keeps the matches whose basename belongs to projectName.
+// An empty projectName keeps every match (the caller asked for no scope).
+func scopeToProject(matches []string, projectName string) []string {
+	if projectName == "" {
+		return matches
+	}
+
+	kept := matches[:0]
+
+	for _, match := range matches {
+		if strings.HasPrefix(filepath.Base(match), projectName+"-") {
+			kept = append(kept, match)
+		}
+	}
+
+	return kept
 }
 
 // writeSBOMZip creates zipName and copies wdMatches (path relative to
@@ -252,43 +273,89 @@ func writeAssemblySBOMZip(zipName string, entries []domainrelease.AssemblyFile, 
 	return count, nil
 }
 
-func signSBOMZip(ctx context.Context, signer Signer, zipName string, out io.Writer) error {
-	if signer == nil {
-		return fmt.Errorf("sbom-zip: sign requested but signer is nil: %w", errs.ErrValidation)
+// withSBOMZipDefaults fills the discovery directories and returns the version
+// used in the ZIP name, without a v prefix.
+func withSBOMZipDefaults(in SBOMZipInput) (SBOMZipInput, string) {
+	if in.WorkingDir == "" {
+		in.WorkingDir = "."
 	}
 
-	if err := signer.SignFile(ctx, zipName); err != nil {
+	if in.SBOMDir == "" {
+		in.SBOMDir = domainrelease.DefaultSBOMArtifactsDir
+	}
+
+	ver := in.Version
+	if ver == "" {
+		ver = "unknown"
+	}
+
+	return in, version.StripVPrefix(ver)
+}
+
+// checkSBOMZipSigner checks a signing request before any SBOM is read or the
+// ZIP written, so a missing or misconfigured signer leaves no unsigned ZIP
+// behind.
+func checkSBOMZipSigner(signer Signer, sign bool) error {
+	if !sign {
+		return nil
+	}
+
+	if signer == nil {
+		return fmt.Errorf("sbom-zip: signing requested but no signer is configured: %w", errs.ErrUsage)
+	}
+
+	_, err := signerExtensions(signer)
+
+	return err
+}
+
+func signSBOMZip(ctx context.Context, signer Signer, zipName string, out io.Writer) error {
+	if err := signFileWithSidecars(ctx, signer, zipName); err != nil {
 		return fmt.Errorf("sign sbom zip: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(out, "Signed SBOM ZIP: %s.asc\n", zipName)
+	_, _ = fmt.Fprintf(out, "Signed SBOM ZIP: %s\n", zipName)
 
 	return nil
 }
 
 func globAll(dir string, patterns []string) ([]string, error) {
-	if _, err := os.Stat(dir); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			// Missing directory → empty result, matching bash's silent
-			// skip; only this specific error swallows.
-			return nil, nil
-		}
-
-		return nil, fmt.Errorf("stat %s: %w", dir, err)
+	root, err := pathsafe.OpenRoot(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
 	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() { _ = root.Close() }()
 
 	var out []string
 
 	for _, p := range patterns {
-		matches, err := filepath.Glob(filepath.Join(dir, p))
+		matches, err := fs.Glob(root.FS(), p)
 		if err != nil {
 			return nil, fmt.Errorf("glob %q: %w", p, err)
 		}
 
-		for _, m := range matches {
-			if info, err := os.Stat(m); err == nil && !info.IsDir() {
-				out = append(out, m)
+		for _, name := range matches {
+			path := filepath.Join(dir, filepath.FromSlash(name))
+
+			info, err := root.Lstat(filepath.FromSlash(name))
+			if err != nil {
+				return nil, err
 			}
+
+			if info.IsDir() {
+				continue
+			}
+
+			if err := validateReleasePathComponents(path); err != nil {
+				return nil, err
+			}
+
+			out = append(out, path)
 		}
 	}
 
@@ -296,19 +363,19 @@ func globAll(dir string, patterns []string) ([]string, error) {
 }
 
 func addToZip(w *zip.Writer, srcPath, archivePath string) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	f, err := os.Open(srcPath) //nolint:gosec,varnamelen // srcPath is built from CLI inputs + globbed SBOM matches.
+	file, err := openReleaseFile(srcPath)
 	if err != nil {
 		return fmt.Errorf("open %q: %w", srcPath, err)
 	}
 
-	defer func() { _ = f.Close() }()
+	defer func() { _ = file.Close() }()
 
 	zw, err := w.Create(archivePath)
 	if err != nil {
 		return fmt.Errorf("zip create %q: %w", archivePath, err)
 	}
 
-	if _, err := io.Copy(zw, f); err != nil {
+	if _, err := io.Copy(zw, file); err != nil {
 		return fmt.Errorf("zip copy %q: %w", srcPath, err)
 	}
 
