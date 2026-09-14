@@ -16,9 +16,11 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"runtime/debug"
+	"reflect"
+	"runtime"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/cli"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
@@ -46,12 +48,20 @@ var (
 // errs.ExitCodeFromError.
 const exitInterrupted = 130
 
-// osExit is a test seam: production code goes straight to os.Exit, but
-// signals_test.go swaps this so the force-quit path can be exercised
-// without terminating the test process.
+// newCommand lets owned test children add an inert action while exercising
+// main and run unchanged, including the real root hooks and error classifier.
 //
-//nolint:gochecknoglobals // test seam needs package-var indirection.
-var osExit = os.Exit
+//nolint:gochecknoglobals // overridden only inside self-owned test processes.
+var newCommand = cli.New
+
+// exitProcess is os.Exit, indirected for the same reason newCommand is: the
+// force-quit path ends the process, and a test that cannot substitute it can
+// only choose between never reaching the path or taking the test binary down
+// with it. In production this is os.Exit and nothing about the lifetime
+// changes.
+//
+//nolint:gochecknoglobals // overridden only inside self-owned test processes.
+var exitProcess = os.Exit
 
 func main() {
 	// Process-level hardening: disable core dumps and ptrace exposure.
@@ -91,7 +101,7 @@ func run() int {
 
 	go watchSignals(ctx, sigCh, cancel, os.Stderr)
 
-	cmd := cli.New(cli.BuildInfo{
+	cmd := newCommand(cli.BuildInfo{
 		Version: version,
 		Commit:  commit,
 		Date:    date,
@@ -146,7 +156,7 @@ func watchSignals(ctx context.Context, sigCh <-chan os.Signal, cancel context.Ca
 	// (normal completion path).
 	select {
 	case <-sigCh:
-		_, _ = fmt.Fprintln(stderr, "\n^C interrupted; press Ctrl-C again to force-quit.")
+		_, _ = fmt.Fprintln(stderr, "\ninterrupted; send another signal to force-quit.")
 
 		cancel()
 	case <-ctx.Done():
@@ -161,7 +171,7 @@ func watchSignals(ctx context.Context, sigCh <-chan os.Signal, cancel context.Ca
 
 	_, _ = fmt.Fprintln(stderr, "Force-quit.")
 
-	osExit(exitInterrupted)
+	exitProcess(exitInterrupted)
 }
 
 // recoverPanic is main's panic boundary. Any panic that escapes run()
@@ -175,37 +185,77 @@ func recoverPanic() {
 		return
 	}
 
-	formatPanic(os.Stderr, r, debug.Stack(), version, commit, os.Args)
+	formatPanic(os.Stderr, r, panicStack(), version, commit, os.Args)
 	os.Exit(int(errs.ExitCodeSoftware))
 }
 
-// formatPanic renders the panic message, stack trace, diagnostic
-// context, and bug-report URL to w. Split out from recoverPanic so the
-// rendering is testable without invoking os.Exit. The URL is the final
-// line so the operator's eye lands on the actionable bit (clig.dev
-// §Errors: "important info at the end").
-func formatPanic(w io.Writer, panicValue any, stack []byte, vsn, sha string, args []string) {
-	_, _ = fmt.Fprintf(w, "reusable-ci: internal error: %v\n\n%s\n", panicValue, stack)
-	_, _ = fmt.Fprintf(w, "Context: version=%s  commit=%s  command=%s\n\n", vsn, sha, strings.Join(args, " "))
-	_, _ = fmt.Fprintln(w, "This is a bug in reusable-ci — please report it (the link pre-fills the details above):")
-	_, _ = fmt.Fprintln(w, "  "+bugReportLink(panicValue, vsn, sha, args))
+// panicStack reports code locations, not debug.Stack's raw argument words,
+// which can contain sensitive scalar values. It never reads source files.
+func panicStack() []byte {
+	var pcs [64]uintptr
+
+	count := runtime.Callers(2, pcs[:])
+	frames := runtime.CallersFrames(pcs[:count])
+
+	var stack strings.Builder
+	stack.WriteString("Stack trace (argument values omitted):\n")
+
+	for {
+		frame, more := frames.Next()
+		_, _ = fmt.Fprintf(&stack, "%s\n\t%s:%d\n", frame.Function, frame.File, frame.Line)
+
+		if !more {
+			break
+		}
+	}
+
+	if count == len(pcs) {
+		stack.WriteString("[stack truncated]\n")
+	}
+
+	return []byte(stack.String())
+}
+
+// formatPanic renders the panic category, trusted stack/build metadata,
+// and bug-report URL to writer. Payload contents and all argv are deliberately
+// omitted: credentials may come from env, stdin, files or arbitrary values,
+// so neither token-only replacement nor calling Error/String/Format is safe here.
+// Split out from recoverPanic so rendering is testable without invoking os.Exit.
+// The URL is the final line so the operator's eye lands on the actionable bit
+// (clig.dev §Errors: "important info at the end").
+func formatPanic(writer io.Writer, panicValue any, stack []byte, vsn, sha string, args []string) {
+	kind := reflect.Invalid
+	if panicValue != nil {
+		kind = reflect.TypeOf(panicValue).Kind()
+	}
+
+	summary := kind.String() + " value [redacted]"
+	_, _ = fmt.Fprintf(writer, "reusable-ci: internal error: %s\n\n%s\n", summary, stack)
+	_, _ = fmt.Fprintf(writer, "Context: version=%s  commit=%s  command=[redacted] (%d arguments)\n\n", vsn, sha, len(args))
+	_, _ = fmt.Fprintln(writer, "This is a bug in reusable-ci — please report it (the link pre-fills the details above):")
+	_, _ = fmt.Fprintln(writer, "  "+bugReportLink(summary, vsn, sha, args))
 }
 
 // bugReportLink builds a GitHub "new issue" URL pre-populated with the
 // panic summary (title) and the environment (body), so filing a crash
 // report is one click plus pasting the stack trace — clig.dev §Errors:
 // "provide a URL and have it pre-populate as much information as
-// possible." The full panic value + stack still print to the terminal,
-// so the title is truncated to keep the URL manageable.
-func bugReportLink(panicValue any, vsn, sha string, args []string) string {
-	title := fmt.Sprintf("panic: %v", panicValue)
+// possible." summary must be trusted diagnostic text, never a raw panic
+// payload. The title has a UTF-8-safe byte budget to keep the URL manageable.
+func bugReportLink(summary, vsn, sha string, args []string) string {
+	title := strings.ToValidUTF8("panic: "+summary, "?")
 	if len(title) > 120 {
-		title = title[:117] + "..."
+		end := 117
+		for !utf8.RuneStart(title[end]) {
+			end--
+		}
+
+		title = title[:end] + "..."
 	}
 
 	body := fmt.Sprintf(
-		"Environment:\n- version: %s\n- commit: %s\n- command: %s\n\nStack trace (paste from the terminal output above):\n",
-		vsn, sha, strings.Join(args, " "))
+		"Environment:\n- version: %s\n- commit: %s\n- command: [redacted] (%d arguments)\n\nStack trace (paste from the terminal output above):\n",
+		vsn, sha, len(args))
 
 	query := url.Values{"title": {title}, "body": {body}}
 

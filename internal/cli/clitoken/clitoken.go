@@ -37,8 +37,8 @@ func Resolve(cmd *cli.Command) runcontext.Credential {
 	return runcontext.Token().Resolve(os.Getenv)
 }
 
-// ResolveRelease is Resolve for the write-scoped release token chain, which
-// prefers a dedicated $RELEASE_TOKEN before the forge's ambient one.
+// ResolveRelease is Resolve for release operations. Its chain prefers a
+// dedicated $RELEASE_TOKEN before the forge's ambient one.
 func ResolveRelease(cmd *cli.Command) runcontext.Credential {
 	if v := cmd.String("token"); v != "" {
 		return runcontext.OperatorCredential(v)

@@ -68,7 +68,7 @@ func requireRole[R any](d *Deps, capability string) (R, error) {
 }
 
 // RequireTokenValidator returns the TokenValidator role when the
-// active provider implements it. github and gitlab do; local does
+// active provider implements it. GitHub, GitLab and Forgejo do; local does
 // not — invoking a CLI command that needs this on local surfaces a
 // typed error here rather than a runtime ErrUnsupported deep in the
 // use case.
@@ -77,7 +77,7 @@ func (d *Deps) RequireTokenValidator() (provider.TokenValidator, error) {
 }
 
 // RequireReleaseCreator returns the ReleaseCreator role when the
-// active provider implements it. github and gitlab do; local does not.
+// active provider implements it. GitHub, GitLab and Forgejo do; local does not.
 func (d *Deps) RequireReleaseCreator() (provider.ReleaseCreator, error) {
 	return requireRole[provider.ReleaseCreator](d, "release creation")
 }
@@ -161,7 +161,7 @@ func (d *Deps) RequireSARIFUploader() (provider.SARIFUploader, error) {
 
 // RequireTagDeleter returns the TagDeleter role when the active provider
 // implements it. Forge-specific: deleting a container tag goes through
-// each forge's package API (forgejo does; github/gitlab/local not yet),
+// each forge's package API (Forgejo and GitLab do; GitHub and local not yet),
 // because a generic OCI delete is unsafe on the shared-digest promotion
 // model. Callers (e.g. `container ledger cleanup`) gate here.
 func (d *Deps) RequireTagDeleter() (provider.TagDeleter, error) {
@@ -416,12 +416,25 @@ func DescriberForDetected() provider.Describer {
 }
 
 // SigningIdentityForDetected returns the SigningIdentityResolver for the
-// auto-detected forge and true when that forge implements the role. The local
+// execution runner and true when its forge implements the role. The local
 // forge (and any without OIDC support) does not implement it, returning false
 // so sign/verify callers keep their previous behaviour (operator supplies the
 // keyless constraints explicitly) instead of getting a derived default.
 func SigningIdentityForDetected() (provider.SigningIdentityResolver, bool) {
-	p, err := providerFor(platform.Detect())
+	var forge provider.ForgeAPI
+
+	switch platform.DetectRunner() {
+	case provider.RunnerGitHub:
+		forge = provider.ForgeGitHub
+	case provider.RunnerForgejo:
+		forge = provider.ForgeForgejo
+	case provider.RunnerGitLab:
+		forge = provider.ForgeGitLab
+	default:
+		return nil, false
+	}
+
+	p, err := providerFor(forge)
 	if err != nil {
 		return nil, false
 	}

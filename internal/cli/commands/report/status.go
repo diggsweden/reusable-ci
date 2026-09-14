@@ -161,7 +161,7 @@ func statusPrerequisitesCmd() *cli.Command {
 			&cli.StringFlag{Name: "build-types", Sources: cli.EnvVars("BUILD_TYPES"), Usage: "comma-separated build types planned (library/application/...)"},
 			&cli.StringFlag{Name: "registry", Sources: cli.EnvVars("CONTAINER_REGISTRY"), Usage: "container registry the release will push to"},
 			&cli.BoolFlag{Name: "sign-artifacts", Sources: cli.EnvVars("SIGN_ARTIFACTS"), Usage: "GPG signing was requested for release artifacts"},
-			&cli.BoolFlag{Name: "require-allowlisted-signer", Sources: cli.EnvVars("REQUIRE_ALLOWLISTED_SIGNER"), Usage: "the signer-allowlist gate is enforced for non-SNAPSHOT releases"},
+			&cli.BoolFlag{Name: "require-allowlisted-signer", Sources: cli.EnvVars("REQUIRE_ALLOWLISTED_SIGNER"), Usage: "the signer-allowlist gate is enforced for this release"},
 			&cli.StringFlag{Name: "job-status", Sources: cli.EnvVars("JOB_STATUS"), Usage: "validator job outcome (success/failure/cancelled)"},
 			&cli.StringFlag{Name: "publish-to", Sources: cli.EnvVars("PUBLISH_TO"), Usage: "comma/space/newline-separated publish targets in the plan (maven-central/npm/…)"},
 			&cli.BoolFlag{Name: "has-release-gpg-private-key", Sources: cli.EnvVars("HAS_RELEASE_GPG_PRIVATE_KEY"), Usage: "the GPG private-key secret is configured"},

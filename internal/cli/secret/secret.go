@@ -9,12 +9,10 @@ package secret
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"strings"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
-	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
 // Resolve loads a secret value, preferring a file path (with `-` reading
@@ -37,28 +35,21 @@ func Resolve(filePath, envVar string) (string, error) {
 	return strings.TrimRight(os.Getenv(envVar), "\r\n"), nil
 }
 
+// readFile loads the secret through cliio.ReadFile, which owns three things
+// this package should not re-implement: the "-" stdin sentinel with its
+// character-device guard (clig.dev — a command expecting piped stdin must not
+// hang on a TTY), a bound on how much is read, and the sentinel classification
+// that decides the exit code. A missing --*-file path is the operator's
+// mistake (EX_NOINPUT) and an unreadable one is a permission problem
+// (EX_NOPERM); reading it here with a bare os.ReadFile left both unclassified,
+// so they exited EX_SOFTWARE (70) — "file a bug" — for a mistyped path.
 func readFile(path string) (string, error) {
-	if path == "-" {
-		// Refuse to read from a character device (TTY or /dev/null) —
-		// clig.dev says commands expecting piped stdin should not hang
-		// on a TTY. Stat-based detection treats /dev/null the same as
-		// a TTY; either way the value would be empty, so the error
-		// here is more informative than the downstream "required"
-		// error the empty value would trigger.
-		if cliio.StdinIsCharDevice() {
-			return "", fmt.Errorf("%q expects piped or redirected input, not a terminal: %w", path, errs.ErrUsage)
-		}
-
-		body, err := io.ReadAll(os.Stdin)
-		if err != nil {
+	body, err := cliio.ReadFile(path)
+	if err != nil {
+		if path == cliio.StdSentinel {
 			return "", fmt.Errorf("read secret from stdin: %w", err)
 		}
 
-		return strings.TrimRight(string(body), "\r\n"), nil
-	}
-
-	body, err := os.ReadFile(path) //nolint:gosec // path is the --*-file CLI flag — operator-supplied secret path.
-	if err != nil {
 		return "", fmt.Errorf("read secret from %q: %w", path, err)
 	}
 

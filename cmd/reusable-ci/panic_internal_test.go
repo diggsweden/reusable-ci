@@ -23,9 +23,9 @@ func TestFormatPanic_IncludesValueStackContextAndURL(t *testing.T) {
 	out := buf.String()
 
 	for _, want := range []string{
-		"reusable-ci: internal error: nil pointer dereference",
+		"reusable-ci: internal error: string value [redacted]",
 		"goroutine 1 [running]:",
-		"Context: version=1.2.3  commit=abc1234  command=reusable-ci version bump --project-type=npm --version=1.0.0",
+		"Context: version=1.2.3  commit=abc1234  command=[redacted] (5 arguments)",
 		"please report it",
 		bugReportURL,
 	} {
@@ -59,7 +59,7 @@ func TestBugReportLink_PrePopulatesTitleAndEnvironment(t *testing.T) {
 	// The decoded body carries the environment so the reporter doesn't
 	// have to hand-copy it.
 	body := q.Get("body")
-	for _, want := range []string{"version: 1.2.3", "commit: abc1234", "command: reusable-ci release sign"} {
+	for _, want := range []string{"version: 1.2.3", "commit: abc1234", "command: [redacted] (3 arguments)"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q\nbody:\n%s", want, body)
 		}
@@ -94,13 +94,12 @@ func TestFormatPanic_URLIsLast(t *testing.T) {
 }
 
 func TestFormatPanic_HandlesNonStringPanicValue(t *testing.T) {
-	// %v handles any panic payload (error, struct, int, …). Smoke-test
-	// that an error value flows through the same path.
+	// Report the category without calling Error or disclosing the message.
 	var buf bytes.Buffer
 	formatPanic(&buf, sentinelError{msg: "structured failure"}, []byte("stack"), "v", "c", []string{"reusable-ci"})
 
-	if !strings.Contains(buf.String(), "structured failure") {
-		t.Errorf("formatPanic should render the panic value via %%v; got:\n%s", buf.String())
+	if !strings.Contains(buf.String(), "struct value [redacted]") || strings.Contains(buf.String(), "structured failure") {
+		t.Errorf("formatPanic should report only the category; got:\n%s", buf.String())
 	}
 }
 

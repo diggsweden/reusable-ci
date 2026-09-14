@@ -49,7 +49,7 @@ func extractedBinariesCmd() *cli.Command {
 func swiftLintCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "swift-lint",
-		Usage: "write the aggregated Swift lint table to the step summary and exit non-zero when an enabled linter failed",
+		Usage: "write the aggregated Swift lint table to the step summary and exit non-zero when an enabled linter did not succeed or skip",
 		Description: `EXAMPLE:
    reusable-ci report swift-lint --enable-swiftlint --swiftlint-result success`,
 		Flags: []cli.Flag{

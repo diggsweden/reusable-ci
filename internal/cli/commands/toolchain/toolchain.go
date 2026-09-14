@@ -177,9 +177,10 @@ func installChangelogRendererCmd() *cli.Command {
 		Description: `Installs pinned mise, creates an isolated mise data/cache/state tree,
 installs either git-chglog or git-cliff with mise --no-config, symlinks the real
 renderer binary into ~/.local/bin, and appends that bin directory to the runner
-PATH file for subsequent steps. Every flag may also be fed from the
-$REUSABLE_CI_PLAN plan file under the "toolchain install-changelog-renderer"
-scope (flag > plan > env > default).`,
+PATH file for subsequent steps. The renderer must resolve inside that isolated
+tree; a binary reported anywhere else is refused before it is published.
+Every flag may also be fed from the $REUSABLE_CI_PLAN plan file under the
+"toolchain install-changelog-renderer" scope (flag > plan > env > default).`,
 		Flags: []cli.Flag{
 			&cli.StringFlag{Name: "backend", Required: true, Sources: planfile.Vars(planScopeInstallChangelogRenderer, "backend", "CHANGELOG_BACKEND"), Usage: "changelog renderer backend: git-chglog or git-cliff"},
 			&cli.StringFlag{Name: "git-chglog-version", Sources: planfile.Vars(planScopeInstallChangelogRenderer, "git-chglog-version", "GIT_CHGLOG_VERSION"), Usage: "pinned git-chglog version"},
