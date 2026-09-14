@@ -15,60 +15,64 @@ here answers "how do I release *this kind of project*"; the two
 subdirectories answer a different question, which is why they are not mixed
 in with the list.
 
-### By ecosystem — start here
+### By ecosystem, start here
 
-- **[Maven Application](maven-app/)** — Java service shipped as a
+- **[Maven Application](maven-app/)**: Java service shipped as a
   multi-platform container to GHCR. Pattern A (build artefact +
   container COPY).
-- **[NPM Application](npm-app/)** — Node service published to GitHub
+- **[NPM Application](npm-app/)**: Node service published to GitHub
   Packages and shipped as a container. Pattern A.
-- **[Gradle JVM](gradle-app/)** — JVM-only Gradle build (libraries,
+- **[Gradle JVM](gradle-app/)**: JVM-only Gradle build (libraries,
   plugins, multi-module). Container path not wired; for Android use the
   next example.
-- **[Android Application](android-app/)** — APK / AAB build with
+- **[Android Application](android-app/)**: APK / AAB build with
   product flavors, signed with the keystore in `secrets:`, optional
   Google Play upload. Uses the Android runtime image.
-- **[Rust Application](cargo-app/)** — Cargo workspace shipped as one
+- **[Rust Application](cargo-app/)**: Cargo workspace shipped as one
   or more containers, with `cargo build` inside the Containerfile
   (Pattern B) and a separate cargo-cyclonedx SBOM step at release.
   Shows the private-registry build-secrets pattern.
-- **[Go CLI](go-cli/)** — Standalone binary release via
+- **[Go CLI](go-cli/)**: Standalone binary release via
   `build-go.yml`, cross-compiled per platform with reproducible
   timestamps, attached to the GitHub Release.
-- **[Go Service](go-service/)** — Go service shipped as a multi-arch
+- **[Go Service](go-service/)**: Go service shipped as a multi-arch
   container with `go build`-equivalent compile inside the
   Containerfile (Pattern B). Optional binary extraction for the
   GitHub Release.
-- **[Monorepo](monorepo/)** — Multiple artefacts in one repo, mixed
+- **[Monorepo](monorepo/)**: Multiple artefacts in one repo, mixed
   project types, one container per artefact. Includes a
   `multi-artifact-container.yml` variant that combines multiple
   artefacts into a single image, with `Containerfile.multi-artifact`
   as the matching multi-stage build.
 
-### By signing backend — [`signing/`](signing/)
+### By signing backend: [`signing/`](signing/)
 
 How the release is signed, independent of what is being released. Combine
 either with any ecosystem example above.
 
-- **[Sigstore keyless](signing/sigstore-keyless/)** — the recommended
+- **[Sigstore keyless](signing/sigstore-keyless/)**: the recommended
   default on a keyless-capable forge: no secret management and no key on
   the runner. See [Verification](../docs/verification.md).
-- **[OpenBao KMS](signing/openbao-kms/)** — for deployments where the trust
-  anchor has to stay inside your own infrastructure. Air-gap compatible.
+- **[OpenBao KMS](signing/openbao-kms/)**: for deployments where the trust
+  anchor has to stay inside your own infrastructure. With transparency
+  disabled, signing avoids public Sigstore endpoints but still reaches OpenBao
+  and the normal release services.
 
-### On GitLab — [`gitlab/`](gitlab/)
+### On GitLab: [`gitlab/`](gitlab/)
 
 The same pipeline expressed as GitLab CI/CD Catalog components rather than
 reusable workflows. These are consumer `include:` snippets, so they are
-README-only. Background: [GitLab Support Plan](../docs/gitlabsupportplan.md).
+README-only. Provider capabilities and live acceptance evidence are documented
+in [Providers and runners](../docs/providers.md) and
+[Testing conventions](../docs/testing.md#the-live-tier).
 
 - **[nanolinter](gitlab/nanolinter/)** / **[megalinter](gitlab/megalinter/)**
-  — the lint components.
-- **[pullrequest](gitlab/pullrequest/)** — the merge-request quality
+  These are the lint components.
+- **[pullrequest](gitlab/pullrequest/)**: the merge-request quality
   pipeline.
-- **[release-build](gitlab/release-build/)** — plan-driven fan-out through a
+- **[release-build](gitlab/release-build/)**: plan-driven fan-out through a
   child pipeline.
-- **[stage-summary](gitlab/stage-summary/)** — per-job outcome collection
+- **[stage-summary](gitlab/stage-summary/)**: per-job outcome collection
   into one summary.
 
 ---
@@ -104,9 +108,12 @@ README-only. Background: [GitLab Support Plan](../docs/gitlabsupportplan.md).
 
 5. **Create release:**
    ```bash
-   git tag -s v1.0.0 -m "Release v1.0.0"
-   git push origin v1.0.0
+   git tag -s release-request/v1.0.0 -m "Release v1.0.0"
+   git push origin release-request/v1.0.0
    ```
+
+   The workflow validates this request and creates the final `v1.0.0` tag after
+   release preparation. Do not create or push the final tag directly.
 
 ---
 
@@ -203,7 +210,7 @@ containers:
 
 Every container gate defaults to **on**. Explicit per-container overrides
 in `artifacts.yml` propagate through the typed `PlannedContainer` plan
-to `publish-container.yml` — no workflow input plumbing needed:
+to `publish-container.yml`, with no workflow input plumbing needed:
 
 ```yaml
 containers:
@@ -217,7 +224,7 @@ containers:
 # exclude `analyzed-container`, e.g. `sboms: build,analyzed-artifact`.
 ```
 
-**Note:** Disabling gates removes the corresponding pipeline guarantee —
+**Note:** Disabling gates removes the corresponding pipeline guarantee. It is
 not recommended for production unless you have a compensating control
 elsewhere (e.g. policy-as-code in the registry).
 
@@ -247,6 +254,7 @@ jobs:
   snapshot-release:
     uses: diggsweden/reusable-ci/.github/workflows/release-snapshot-orchestrator.yml@v3.0.0
     with:
+      branch: ${{ github.ref_name }}
       reusable-ci-binary-ref: v3.0.0
       artifacts-config: .reusable-ci/artifacts.yml
     permissions:
@@ -263,10 +271,18 @@ git push origin feat/test-config
 
 ### 3. Create Test Release
 
+The production release orchestrator accepts stable `vMAJOR.MINOR.PATCH`
+requests only. Use a disposable stable version when validating the full signed
+release path, or use the unsigned branch-only snapshot workflow above when no
+permanent release is wanted:
+
 ```bash
-git tag -s v0.0.1-rc.1 -m "Test configuration"
-git push origin v0.0.1-rc.1
+git tag -s release-request/v0.0.1 -m "Test configuration"
+git push origin release-request/v0.0.1
 ```
+
+SemVer prerelease requests such as `release-request/v0.0.1-rc.1` are rejected
+before release planning or repository mutation.
 
 ---
 
@@ -294,8 +310,9 @@ containers:
 **Problem:** Missing publishing configuration
 
 **Solution:** Add a supported publishing target for package-registry outputs, or
-configure `containers:` for container publishing. Maven applications generally
-publish as containers, not GitHub Packages.
+configure `containers:` for container publishing. Maven application JARs can be
+GitHub Release assets, but applications are not published to Maven package
+registries by reusable-ci; containers are configured separately when wanted.
 
 ```yaml
 publish-to:

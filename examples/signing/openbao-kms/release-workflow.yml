@@ -17,25 +17,22 @@ jobs:
     permissions:
       contents: write
       packages: write
-      # id-token: write is required to mint the GHA OIDC token that
-      # OpenBao's JWT auth method consumes for authentication. The
-      # token never leaves the runner — it's exchanged for a short-
-      # lived OpenBao token inside the signing step.
+      # id-token: write lets an organization-owned wrapper mint a GitHub OIDC
+      # JWT and send it to the private OpenBao auth endpoint in exchange for a
+      # short-lived VAULT_TOKEN. The JWT crosses the network to OpenBao; the
+      # OpenBao signing key never leaves the server.
       id-token: write
       actions: read
-      attestations: write
     secrets: inherit
     with:
+      branch: main
       reusable-ci-binary-ref: v3.0.0
       artifacts-config: .reusable-ci/artifacts.yml
       changelog-creator: git-cliff
       release-publisher: github-cli
       release.attachartifacts: target/*.jar
-    # VAULT_ADDR must reach the OpenBao instance from the runner.
-    # The signing step does the OIDC → Vault-token exchange itself
-    # (or via a thin wrapper) before invoking cosign with the
-    # hashivault:// key URI from artifacts.yml.
-    #
-    # NOTE: env on `uses:` jobs is not natively supported by GHA;
-    # surface VAULT_ADDR via repository-level Variables instead
-    # (Settings → Secrets and variables → Actions → Variables).
+    # This generic orchestrator does not perform the OpenBao JWT exchange and a
+    # `uses:` job cannot receive `env:` from this caller. Before adopting this
+    # example, use an organization-owned wrapper/fork that authenticates to
+    # OpenBao and exposes VAULT_ADDR + the short-lived VAULT_TOKEN to every
+    # cosign signing/attestation step. Do not use a long-lived Vault token.

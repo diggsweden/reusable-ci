@@ -6,7 +6,7 @@ CI/CD Catalog component**.
 
 `.gitlab-ci.yml` here pulls in `nanolinter` and selects a flavour image. The
 component runs `nanolinter verify` against your project's `nanolinter.toml`
-verify plan — the project lint gate, which bundles the whole check toolchain
+verify plan, the project lint gate, which bundles the whole check toolchain
 (opengrep SAST, osv-scanner, secrets, trivy-fs, ecosystem linters) baked into the
 flavour image, so no `just`/justfile is required. The job fails on blocking
 findings, the security SARIF is kept as an artifact, and it is converted to a
@@ -14,7 +14,7 @@ GitLab SAST report published as `artifacts:reports:sast`.
 
 > The SARIF → GitLab-SAST conversion runs `reusable-ci security report
 > to-gitlab-sast`, which the component installs at runtime (cosign-verified).
-> Findings land on the merge-request **Security tab** — its display needs GitLab
+> Findings land on the merge-request **Security tab**. Its display needs GitLab
 > Ultimate, but producing the report is harmless on any tier. Set
 > `enable-gitlab-sast: false` to keep the SARIF as a plain artifact only.
 

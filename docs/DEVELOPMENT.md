@@ -22,20 +22,14 @@
    ```
 
    Then restart your terminal.
-3. Install pipx (needed for reuse license linting):
-
-   ```bash
-   # Debian/Ubuntu
-   sudo apt install pipx
-   ```
-
-4. Install project tools:
+3. Install project tools, including the uv-backed REUSE checker and the `jq`
+   test-fixture dependency:
 
    ```bash
    mise install
    ```
 
-5. Run quality checks:
+4. Run quality checks:
 
    ```bash
    just verify
@@ -69,19 +63,14 @@
    brew install bash
    ```
 
-4. Install pipx (needed for reuse license linting):
-
-   ```bash
-   brew install pipx
-   ```
-
-5. Install project tools:
+4. Install project tools, including the uv-backed REUSE checker and the `jq`
+   test-fixture dependency:
 
    ```bash
    mise install
    ```
 
-6. Run quality checks:
+5. Run quality checks:
 
    ```bash
    just verify
@@ -90,6 +79,52 @@
 ## Available Commands
 
 Run `just` to see all available commands.
+
+## Local verification tools
+
+Project contributors get the repository's pinned toolchain with `mise install`.
+For ad-hoc verification outside that toolchain, mise's aqua backend can install
+the portable release verifiers:
+
+```bash
+mise use -g aqua:sigstore/cosign
+mise use -g aqua:cli/cli             # gh
+mise use -g aqua:containers/skopeo
+```
+
+`gpg`, `git`, `sha256sum`, and `ssh-keygen` come from the host distribution.
+Check `cosign version`, `gh --version`, and `skopeo --version` before diagnosing
+a verification failure as an artifact problem.
+
+### Local Git signature setup
+
+SSH verification needs an `allowed_signers` file whose principal is the signer
+email and whose key material comes from a trusted, independently reviewed
+source. GitHub exposes public SSH keys at
+`https://github.com/<username>.keys`; it exposes public OpenPGP keys at
+`https://github.com/<username>.gpg`. Confirm identity/fingerprints out of band
+before trusting either endpoint.
+
+```bash
+mkdir -p ~/.ssh
+curl -fsS https://github.com/<username>.keys -o /tmp/signer.keys
+while IFS= read -r key; do
+  printf '%s %s\n' 'developer@example.com' "$key"
+done < /tmp/signer.keys >> ~/.ssh/allowed_signers
+git config --global gpg.ssh.allowedSignersFile ~/.ssh/allowed_signers
+
+curl -fsS https://github.com/<username>.gpg -o /tmp/signer.gpg
+gpg --show-keys /tmp/signer.gpg       # verify fingerprint first
+gpg --import /tmp/signer.gpg
+```
+
+Repository release policy uses the reviewed files under `.reusable-ci/`, not a
+developer's global file. The setup above is only for local inspection with
+`git verify-tag`, `git verify-commit`, and `git log --show-signature`.
+
+References: [Git signing](https://git-scm.com/book/en/v2/Git-Tools-Signing-Your-Work),
+[Sigstore](https://docs.sigstore.dev/), [SLSA](https://slsa.dev/), and
+[GitHub Actions hardening](https://docs.github.com/en/actions/security-guides/security-hardening-for-github-actions).
 
 ## Where code goes
 
@@ -119,18 +154,82 @@ direction, not by nesting. Two rules cover most decisions:
 
 `internal/archguard` enforces this at test time and names the fix when it
 fails. The full rule, including why `platform` is an adapter and why pure
-functions like `openpgp.VerifyDetachedArmored` are exempt, is in
+OpenPGP verification lives in `internal/pgp` rather than an exempt adapter, is in
 [ADR 0004](adr/0004-package-layering.md).
+
+## Error classification
+
+Every error that reaches `main` goes through `errs.ExitCodeFromError`. An error
+carrying no `errs.Err*` sentinel falls through to `ExitCodeSoftware` (70),
+whose meaning is *"an error we did not classify. File a bug against
+reusable-ci"*. That default is correct, which is exactly why an unclassified
+error is a defect: it tells an adopter who mistyped a path that our tool is
+broken.
+
+**Classify at the boundary that knows the meaning; add context above it
+without re-classifying.**
+
+| The boundary | Use | Because |
+|---|---|---|
+| Reading an operator-supplied file | `cliio.ReadFile` | Maps absent → `ErrMissingInput` (66), unreadable → `ErrPermissionDenied` (77), a directory → `ErrMissingInput`, and bounds the read |
+| Reading below an already checked root | `cliio.ReadFileInRoot` | Preserves the same file-type and size bounds without reopening through the ambient filesystem |
+| Running an external binary | `safeexec.WrapError` | A non-exit failure is the tool never having run, so `ErrDependencyUnavailable` (69), *"x not found in $PATH"*, not a crash |
+| An HTTP response | `errs.FromHTTPStatus` | 4xx is the request being refused, not an outage |
+| Parsing operator or tool data | `ErrInvalidConfig` (78) / `ErrMalformedInput` (65) | *Their* config vs *some tool's* output |
+
+Two rules follow from it:
+
+- **Attach the sentinel once.** Layers above add context with a single `%w`.
+  Wrapping twice reads back as `"…: invalid configuration: invalid
+  configuration"` in the one line an operator sees. `domain/config.invalidConfig`
+  is the idempotent form when a helper cannot know whether its caller already
+  classified.
+- **One mistake, one exit code.** When two guards can catch the same operator
+  error, they must agree. Comparing `Value == ""` while the layer below trims
+  meant `--sboms ""` and `--sboms "   "` exited differently.
+
+`container ledger merge` classifies a missing local input path as
+`ErrMissingInput` (66), including a path disappearing during discovery. This
+classification belongs at the local-input boundary; network failures still map
+to dependency unavailable (69).
+
+Plan lookup and merging share `planfile.Decode`: plan and scope containers must
+be JSON objects, and JSON number spellings are retained without float64 conversion.
+`plan write` stores the whitespace-normalized command scope it validated.
+
+Environment-sourced credentials remove trailing CR/LF only. Leading/interior
+whitespace and explicit token flags are unchanged; this is not general token
+sanitization. Default keyless verification identity follows the execution runner,
+independently of the forge selected for API operations.
+
+Repository sync guards read governed inputs with `reporoot.ReadFile` and
+`reporoot.ReadDir`, rejecting symlink components instead of following them.
+Generated-file failures report bounded difference context, sizes, hashes and the
+refresh command. Artifact vocabulary checks use named documentation blocks;
+mentions elsewhere in prose cannot satisfy them.
+
+The shell-source guard discovers `.sh`, `.bash`, `.sh.tmpl`, and extensionless
+files with a supported `sh`/`bash` shebang. It skips Git metadata, dependency and
+build-output directories. Embedded workflow/Go/just recipes are separate scopes;
+the existing printf rule is a lexical alarm, not a complete shell parser.
+
+Note the sentinels are project-chosen, not BSD `sysexits` throughout:
+`ErrUsage` is **2** (POSIX CLI convention), not 64. `errs.ExitCodeConstants`
+and its test are the reference.
+
+`internal/archguard` enforces the exec-adapter half at test time. The rest is
+enforced by tests asserting the sentinel: `errors.Is(err, errs.ErrX)`, never
+a bare `err != nil`, which passes whatever the classification turns into.
 
 ## Test discipline
 
-The pipeline's verdict is definitive — passing means deploy, failing means
+The pipeline's verdict is definitive: passing means deploy, failing means
 fix. That contract only holds if individual tests are reproducible, so the
 codebase follows the standard non-determinism discipline:
 
 - **No flaky tests.** A failure is either a real bug or a missing test
   guarantee; "just re-run it" is not an acceptable fix. Quarantine the
-  test (`t.Skip("…tracking <issue>")`) until it is fixed or deleted —
+  test (`t.Skip("…tracking <issue>")`) until it is fixed or deleted:
   never leave a `// flaky` comment behind a green build.
 - **Time is injected.** Anywhere a test output depends on the wall clock,
   the production code takes a `now func() time.Time` (see
@@ -193,6 +292,7 @@ jobs:
   release:
     uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@abcdef0123456789abcdef0123456789abcdef01
     with:
+      branch: main
       artifacts-config: .reusable-ci/artifacts.yml
       reusable-ci-binary-ref: abcdef0123456789abcdef0123456789abcdef01
       runtime-image: ghcr.io/diggsweden/reusable-ci-runtime-base:sha-abcdef0

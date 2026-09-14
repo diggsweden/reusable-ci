@@ -93,8 +93,8 @@ one rather than a filing choice:
 They share verb names (`promote`, `cleanup`) because the operations rhyme, but
 almost nothing else: a release image is named by a tag you chose, while a base
 image is named by a hash of its inputs, so "the same inputs" and "the same
-image" are the same statement. That is why a build never picks a stale base —
-it computes the hash and either finds that image or builds it — and why
+image" are the same statement. That is why a build never picks a stale base:
+it computes the hash and either finds that image or builds it. It is also why
 retention is safe to run at all.
 
 Note that "base image" here is the consumer's own layer, not the
@@ -120,6 +120,28 @@ hanging off the side.
   the promoted tags really serve the digest.
 - **rollback**: undoes a promotion by replaying a journal written before
   anything moved.
+
+#### Stage ladder and registry routing
+
+The shipped ladder promotes one recorded digest through `:dev`, `:staging`, and
+`:release`. Each rung resolves the source digest before copying and the
+destination digest afterward; promotion never rebuilds or re-signs the image.
+
+- With no `--stage-repo`, the destination stays in the source repository and
+  the in-process OCI adapter performs the tag copy.
+- `--stage-repo <prefix>` preserves the complete source path below the registry
+  host, so `ghcr.io/org/api` becomes `<prefix>/org/api` and cannot collide with
+  a sibling image.
+- A destination in another repository or registry must use the configured
+  `SignatureCopier` (`cosign copy`) so the image and registry-attached signature
+  travel together. The command refuses a cross-repository copy when no signature
+  copier is available.
+- Release-stage cross-registry promotion also copies the immutable version tag;
+  the moving `:release` pointer and immutable version must resolve to the same
+  ledger digest.
+
+The workflow-level gates and credentials for these rungs are documented in
+[Workflow Architecture](workflows.md#image-promotion-ladder).
 
 ### The trust boundary
 
@@ -184,15 +206,20 @@ the ledger afterwards: whether the immutable final tag already existed, and
 what digest the moving tag pointed at before. It is restricted to the release
 stage with entry release tags, because that is the only case with that
 property. It is JSON Lines, so a partial write is still replayable, and it is
-written before any tag moves.
+written before any tag moves. A retry reuses a matching existing journal
+byte-for-byte; it never replans from partially promoted state and overwrites the
+original rollback evidence. Journals carry an explicit version; legacy
+unversioned journals are refused because their absence fields may have come from
+failed registry reads. Rollback without a current pre-promotion journal is
+refused because current tag state cannot prove which run created a tag.
 
 `SignatureCopier` being nil refuses cross-repository promotion outright rather
 than completing it without signatures.
 
 ### Base-image retention
 
-`cleanup` removes staging tags. It deliberately refuses anything else — it
-matches `<repository>:staging-<base-input-id>-` and nothing more — so promoted
+`cleanup` removes staging tags. It deliberately refuses anything else. It
+matches `<repository>:staging-<base-input-id>-` and nothing more, so promoted
 base images accumulate: one per distinct base-input ID, minted whenever a tool
 pin or the base digest moves. They are the largest artefact a consumer
 publishes, and nothing referenced them after the release that used them.
@@ -212,10 +239,10 @@ derived rather than assumed:
 
 | Situation | Behaviour |
 |---|---|
-| Attestation does not verify, or names no base | **abort** — under-counting the keep-set deletes a live base |
-| No supported release references any base | **refuse** — an empty keep-set is a wrong input, not an instruction to delete everything |
-| More unreferenced than `--max-delete` | **refuse** — bound the blast radius of one pass |
-| Default invocation | **`--dry-run`** — read the list, then pass `--dry-run=false` |
+| Attestation does not verify, or names no base | **abort**; under-counting the keep-set deletes a live base |
+| No supported release references any base | **refuse**; an empty keep-set is a wrong input, not an instruction to delete everything |
+| More unreferenced than `--max-delete` | **refuse**; bound the blast radius of one pass |
+| Default invocation | **`--dry-run`**; read the list, then pass `--dry-run=false` |
 
 `--local-registry` runs the same pass against a plain OCI registry, for bases
 kept beside the runner rather than pushed to a remote package host. Run it on a
@@ -233,7 +260,7 @@ the release tag with it.
 The `--local-registry` path cannot route around that: the OCI distribution
 spec has no delete-tag operation, only delete-manifest. So the crane adapter
 resolves the tag's digest, checks for another tag serving it, and refuses when
-one exists — the same invariant, enforced by a check instead of by the API
+one exists: the same invariant, enforced by a check instead of by the API
 shape.
 
 ## How each flow binds build to signature
@@ -261,11 +288,54 @@ value out of band, over the forge's control plane:
    rejects a `dist/` containing symlinks, non-regular entries, or control
    characters in a path.
 
-The digest never travels inside the artifact it protects. A job that rewrites
-the artifact cannot rewrite the already-emitted output of a completed job, so
-the comparison is evidence rather than a checksum. forgejo-ci's consumer kit
-wires exactly this, and its `check-l3-isolation` action asserts the channel is
-intact as part of the SLSA Build L3 claim.
+The expected digest must not travel inside the artifact it protects. Under the
+forge control-plane trust assumption, rewriting the artifact does not rewrite
+the already-emitted output of a completed job. Comparing against that output
+binds the downloaded bytes to the build output; it does not establish that the
+build itself was trustworthy.
+
+`validate isolation` checks selected static declarations, not execution of this
+protocol or SLSA Build L3 compliance. With the corresponding flags enabled it
+checks the build output declaration and supported `needs` output-reference
+spellings at the signing call site, release identity/secret wiring, and selected
+checkout/cache rules. These are bounded static checks, not universal workflow
+expression evaluation or a proof that the channel is intact at runtime.
+
+For an identified `actions/checkout` step, `persist-credentials` must resolve
+through YAML aliases/merges to the canonical literal `false`, bare or quoted.
+Missing, true, expression-valued (including `${{ false }}`), and uninspectable
+values refuse; an input decode failure must not hide the checkout step. This is
+a static input requirement, not evaluation of checkout expressions.
+
+If a local sibling signer workflow is available, the checker compares its
+`workflow-call-secrets-contract` header when present and flags an absent literal
+`inputs.dist-digest` reference (including the supported quoted-bracket spellings).
+That reference scan is explicitly a lexical hint: a name or description can
+satisfy it without consuming the input. It does not verify that checkout against
+the pinned revision. An absent sibling is explicitly reported as not checked.
+Workflow names, descriptions, comments, and arbitrary scalar substrings are not
+evidence that a digest verifier runs or precedes signing.
+
+The **owner of the pinned signing workflow** must enforce
+the runtime verifier, trusted expected-digest input, refusal on verification
+failure, and ordering before any signing. For example, in Itiquette's integration
+these are responsibilities of the release-ci workflow owner. The engine's
+`VerifyDist`, exposed as `release validate-dist`, still performs the real
+structural and digest checks when invoked. A static isolation pass neither
+invokes it nor proves it is invoked. These security requirements remain
+necessary; their enforcement belongs
+to the thin workflow/typed-engine integration, not a shell interpreter in this
+validator.
+
+Signing-secret diagnostics cover configured literal dot and quoted-bracket
+members inside `${{ ... }}`, not dynamically computed secret names or all
+expression semantics. Effective YAML mappings honor aliases, direct-key
+overrides, and first-source merge precedence; job env overrides workflow env.
+Each distinct matched secret in a containing scalar is reported with its
+consuming job and the scalar's starting source line (the anchor definition for
+an alias). Repeated tokens in one scalar are not separate diagnostics, and
+folded/escaped strings do not promise exact token-line source maps. Cyclic or
+over-limit secret traversals refuse rather than silently passing.
 
 Two consequences worth knowing:
 

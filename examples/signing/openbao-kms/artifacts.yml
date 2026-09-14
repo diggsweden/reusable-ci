@@ -15,9 +15,11 @@
 #   - The runner can authenticate to OpenBao (typically via JWT auth
 #     using the GHA OIDC token; alternatively AppRole)
 #
-# Air-gap compatible: no external Sigstore service is contacted.
+# With transparency disabled, signing contacts no public Sigstore endpoint. The
+# runner still needs private network access to OpenBao and the normal package,
+# registry, and forge endpoints used by the release.
 #
-# See docs/verification.md#signing-methods-for-release-artefacts.
+# See docs/verification.md#signing-methods-for-release-artifacts.
 artifacts:
   - name: my-lib
     project-type: maven
@@ -32,3 +34,4 @@ artifacts:
 sign:
   method: kms
   key: hashivault://transit/keys/release-signing
+  transparency: none

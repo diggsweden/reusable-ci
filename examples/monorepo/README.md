@@ -77,9 +77,10 @@ This directory contains multiple monorepo configuration examples:
 ## Key Features
 
 ### Unified Versioning
-All artifacts share the same version from git tag:
+All artifacts share the version requested by the signed release-request tag.
+Automation creates the final version tag after every bump succeeds:
 ```bash
-git tag -s v1.0.0 -m "Release v1.0.0"
+git tag -s release-request/v1.0.0 -m "Release v1.0.0"
 # All artifacts become version 1.0.0
 ```
 
@@ -89,7 +90,8 @@ Each artifact can publish to different targets:
 artifacts:
   - name: backend
     project-type: maven
-    # Maven applications publish as containers, not Maven packages.
+    # The application JAR is a release asset. Applications are not published
+    # as Maven packages; declare a container separately when wanted.
 
   - name: frontend
     project-type: npm
@@ -153,9 +155,12 @@ and any target-specific credentials such as Maven Central. See
 [Reference Guide](../../docs/reference.md).
 
 ```bash
-git tag -s v1.0.0 -m "Release v1.0.0"
-git push origin v1.0.0
+git tag -s release-request/v1.0.0 -m "Release v1.0.0"
+git push origin release-request/v1.0.0
 ```
+
+Do not push `v1.0.0` directly; the orchestrator creates it once at the prepared
+branch HEAD after all artifact version bumps succeed.
 
 ## Common Patterns
 

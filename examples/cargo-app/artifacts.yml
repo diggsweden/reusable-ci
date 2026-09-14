@@ -43,8 +43,8 @@ containers:
     platforms: linux/amd64,linux/arm64
     # Optional: extract the compiled binary as a CI artefact so it can be
     # attached to the GitHub Release alongside the container image.
-    # Same Containerfile, same compile (cached) — second buildx invocation
-    # just writes the binary to ./extracted-binaries.
+    # Same Containerfile, same compile (cacheable) — a second Buildah invocation
+    # exports the selected stage to ./extracted-binaries.
     extract:
       binary:
         target: export-binary

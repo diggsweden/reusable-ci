@@ -1,6 +1,8 @@
 # Workflow Architecture and Patterns
 
-For workflow design rules and the planned long-term structure, see `docs/workflow-design-policy.md`.
+For workflow design rules, see [Workflow Design Policy](workflow-design-policy.md).
+For the authoritative workflow inventory and direct-call contracts, see
+[Components Reference](components.md).
 
 ## Pull Request Workflow Architecture
 
@@ -49,20 +51,20 @@ graph TD
 
 The PR orchestrator produces typed JSON payloads that drive the quality stage:
 
-**`pr-plan-json`** — runtime context, policy, and stage plans:
+**`pr-plan-json`**: runtime context, policy, and stage plans:
 
 | Field | Source | Purpose |
 |-------|--------|---------|
-| `context.project_type` | `inputs.project-type` | Project ecosystem (maven, npm, gradle, gradle-android, xcode-ios, cargo, go; python is reserved) |
+| `context.project_type` | `inputs.project-type` | Project ecosystem (`maven`, `npm`, `gradle`, `gradle-android`, `xcode-ios`, `cargo`, or `go`) |
 | `context.base_branch` | `inputs.base-branch` or PR target | Base branch for commit linting |
 | `context.reusable_ci_binary_ref` | `inputs.reusable-ci-binary-ref` | `reusable-ci` binary revision used by plain-runner jobs |
 
-**`quality-stage-plan-json`** — quality check target plan:
+**`quality-stage-plan-json`**: quality check target plan:
 
 | Target | Default | Purpose |
 |--------|---------|---------|
-| `targets.nanolinter.runs` | `true` | Run nanolinter — the default lint engine (`lint-engine: nanolinter`) |
-| `targets.megalinter.runs` | `false` | Run MegaLinter — the alternative engine (`lint-engine: megalinter`); mutually exclusive with nanolinter |
+| `targets.nanolinter.runs` | `true` | Run nanolinter, the default lint engine (`lint-engine: nanolinter`) |
+| `targets.megalinter.runs` | `false` | Run MegaLinter, the alternative engine (`lint-engine: megalinter`); mutually exclusive with nanolinter |
 | `targets.swift.runs` | derived | `true` if either Swift linter is enabled (runs standalone on macOS, orthogonal to the lint engine) |
 
 ### Stage Result Contract
@@ -135,7 +137,7 @@ consume those ledgers separately.
 
 Primary high-level entry point: `release-orchestrator.yml`
 
-The workflows shown underneath are mostly helper workflows used by the orchestrator, but several can still be used directly by advanced consumers when finer control is needed.
+The workflows shown underneath are mostly helpers used by the orchestrator. Several can still be used directly by advanced consumers who need finer control.
 
 The current production release flow is intentionally stage-based:
 
@@ -145,8 +147,9 @@ The current production release flow is intentionally stage-based:
 4. `execute-prepare-stage` creates the final `vX.Y.Z` tag
 5. `execute-build-stage` checks out that final tag
 6. `execute-publish-stage` checks out that final tag
-7. `create-release`
-8. `release-summary`
+7. `create-release` and the `promote-dev` → `promote-staging` →
+   `promote-release` ladder run from the published build evidence
+8. `release-summary` joins release creation and all promotion outcomes
 
 The public orchestrator now acts as the release control plane. Build and publish fanout live one layer lower in stage-level reusable workflows.
 Release preparation now follows the same pattern through `release-prepare-stage.yml`.
@@ -157,26 +160,14 @@ graph TD
     B --> C[parse-config]
     C --> D[validate-release-prerequisites.yml]
     D --> E[release-prepare-stage.yml: create vX.Y.Z]
-    E --> F[release-build-stage.yml: checkout vX.Y.Z]
+    E --> F[release-build-stage.yml]
     F --> G[release-publish-stage.yml]
     G --> H[release-create-github.yml]
+    G --> J[promote-dev]
+    J --> K[promote-staging]
+    K --> L[promote-release]
     H --> I[release-summary]
-
-    F --> J[build-maven.yml - Matrix]
-    F --> K[build-npm.yml - Matrix]
-    F --> L[build-gradle-app.yml - Matrix]
-    F --> L2[build-gradle-android.yml - Matrix]
-    F --> M[build-xcode-ios.yml - Matrix]
-    F --> M2[build-go.yml - Matrix]
-    F --> M3[build-cargo.yml - Matrix]
-
-    G --> N[publish-maven-github.yml - Matrix]
-    G --> O[publish-maven-central.yml - Matrix]
-    G --> P[publish-apple-appstore.yml - Matrix]
-    G --> Q[publish-google-play.yml - Matrix]
-    G --> R[publish-container.yml - Matrix]
-    G --> S[sbom-cargo.yml - Matrix]
-    G --> T[sbom-go.yml - Matrix]
+    L --> I
 
     style A fill:#a7c080,stroke:#5c6a4a,color:#2b3339
     style B fill:#e69875,stroke:#9d5c41,color:#2b3339
@@ -188,19 +179,8 @@ graph TD
     style H fill:#83c092,stroke:#5c856a,color:#2b3339
     style I fill:#7fbbb3,stroke:#5a8a82,color:#2b3339
     style J fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style K fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style L fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style L2 fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style M fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style M2 fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style M3 fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style N fill:#83c092,stroke:#5c856a,color:#2b3339
-    style O fill:#83c092,stroke:#5c856a,color:#2b3339
-    style P fill:#83c092,stroke:#5c856a,color:#2b3339
-    style Q fill:#83c092,stroke:#5c856a,color:#2b3339
-    style R fill:#83c092,stroke:#5c856a,color:#2b3339
-    style S fill:#83c092,stroke:#5c856a,color:#2b3339
-    style T fill:#83c092,stroke:#5c856a,color:#2b3339
+    style K fill:#d699b6,stroke:#93647c,color:#2b3339
+    style L fill:#e69875,stroke:#9d5c41,color:#2b3339
 ```
 
 ### Release Stage Responsibilities
@@ -212,12 +192,33 @@ graph TD
 - `release-create-github.yml` owns release-file assembly, SBOM ZIP creation, checksums, signing, and platform release upload
 - leaf `build-*` and `publish-*` workflows stay focused on one ecosystem or destination each
 
+The exact leaf inventory belongs to [Components Reference](components.md), not
+this architecture page.
+
 Build artifact upload names are part of the typed plan contract. Maven, NPM, and
 Gradle matrix builds upload `<artifact-name>-build-artifacts` and
 `<artifact-name>-build-sbom`; Go artifact-first builds upload
 `<artifact-name>-go-build-artifacts` and `<artifact-name>-go-build-sbom`.
 Publish/container/release jobs consume the plan-provided names instead of
 reconstructing ecosystem defaults in workflow YAML.
+
+### Image Promotion Ladder
+
+`publish-container.yml` uploads a run-scoped image ledger. Three calls to
+`promote-stage.yml` then move the same digest through the environment pointers:
+
+1. `promote-dev` moves `:dev` automatically.
+2. `promote-staging` waits on the configured staging environment.
+3. `promote-release` waits on the production environment and may set
+   `stage-repo` for a sovereignty/cross-registry destination.
+
+Every rung verifies the candidate digest before and destination digest after the
+copy. Same-repository copies use the in-process OCI client. Cross-repository or
+cross-registry copies use `cosign copy`, carry signatures, preserve the source
+repository path under the destination prefix, and require destination registry
+credentials. A failed rung leaves verified pointers for a forward retry rather
+than guessing at rollback ownership. See [Artifact and Image
+Flows](flows.md#stage-ladder-and-registry-routing) for the domain rules.
 
 ### Snapshot Release Workflow Architecture
 
@@ -232,10 +233,10 @@ The snapshot release flow follows the same lighter control-plane pattern:
 
 Unlike the production flow, the snapshot path intentionally skips release creation, signing, and the broader prerequisite/policy layer, and builds no containers (a container is built once on the release path and promoted to `:dev` by the promotion ladder). SBOM generation defaults to `none` for speed, but can be enabled with the snapshot orchestrator `sboms` input for wiring tests.
 It still benefits from one small control-plane interface job so later stage calls depend on `snapshot-release-plan-json`, `snapshot-build-stage-plan-json`, and `snapshot-publish-stage-plan-json` instead of shell-derived context bags.
-The snapshot publish stage plan includes explicit singleton `inputs` for non-matrix jobs such as NPM publish, Cargo SBOM, and Go SBOM, so workflow YAML does not need to index into plan arrays.
+The snapshot publish stage plan includes explicit singleton `inputs` for non-matrix jobs: NPM publish, Cargo SBOM, and Go SBOM. Workflow YAML therefore never indexes into plan arrays.
 Those singleton inputs include the exact NPM build artifact upload name used by the snapshot build stage.
 
-**Idempotent NPM publishing:** Snapshot versions are content-addressed (`{base}-snapshot-{branch}-{sha}`), so the same commit always produces the same version string. The `publish-snapshot-npm.yml` workflow checks the registry before publishing and skips with a warning if the version already exists. This makes re-runs safe — the pipeline succeeds without attempting to overwrite an immutable package.
+**Idempotent NPM publishing:** Snapshot versions are content-addressed (`{base}-snapshot-{branch}-{sha}`), so the same commit always produces the same version string. The `publish-snapshot-npm.yml` workflow checks the registry before publishing and skips with a warning if the version already exists. This makes re-runs safe: the pipeline succeeds without attempting to overwrite an immutable package.
 
 ```mermaid
 graph TD
@@ -245,37 +246,12 @@ graph TD
     D --> E[release-snapshot-publish-stage.yml]
     E --> F[snapshot-release-summary]
 
-    D --> G[build-maven.yml]
-    D --> H[build-npm.yml]
-    D --> I[build-gradle-app.yml]
-    D --> I2[build-gradle-android.yml]
-    D --> I3[build-xcode-ios.yml]
-    D --> I4[build-go.yml]
-    D --> I5[build-cargo.yml]
-
-    E --> K[publish-snapshot-npm.yml]
-    E --> L[sbom-cargo.yml]
-    E --> L2[sbom-go.yml]
-    E --> M[generate-snapshot-sboms]
-
     style A fill:#a7c080,stroke:#5c6a4a,color:#2b3339
     style B fill:#e69875,stroke:#9d5c41,color:#2b3339
     style C fill:#e67e80,stroke:#9d4f50,color:#2b3339
     style D fill:#a7c080,stroke:#5c6a4a,color:#2b3339
     style E fill:#83c092,stroke:#5c856a,color:#2b3339
     style F fill:#7fbbb3,stroke:#5a8a82,color:#2b3339
-    style G fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style H fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style I fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style I2 fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style I3 fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style I4 fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style I5 fill:#a7c080,stroke:#5c6a4a,color:#2b3339
-    style J fill:#83c092,stroke:#5c856a,color:#2b3339
-    style K fill:#83c092,stroke:#5c856a,color:#2b3339
-    style L fill:#83c092,stroke:#5c856a,color:#2b3339
-    style L2 fill:#83c092,stroke:#5c856a,color:#2b3339
-    style M fill:#83c092,stroke:#5c856a,color:#2b3339
 ```
 
 ### Component Interaction Flow
@@ -302,8 +278,8 @@ graph LR
 
 ### Workflow Execution Patterns
 
-Every release shape — a Maven library, an application with a container,
-multi-registry publishing — runs the **same stage skeleton**; the plan only
+Every release shape, whether a Maven library, an application with a container,
+or multi-registry publishing, runs the **same stage skeleton**; the plan only
 changes which leaf jobs each stage activates (see the release diagram above):
 
 ```mermaid

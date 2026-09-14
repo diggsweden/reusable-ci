@@ -4,9 +4,15 @@ reusable-ci produces Software Bills of Materials at multiple points in the pipel
 
 ## Quick start
 
-By default a release enables all SBOM layers supported by each artifact: Build (from the language's CycloneDX tool), Analyzed-artifact (Syft on the built artifact or extracted binary), and Analyzed-container when the artifact feeds a published container image. Snapshot builds skip SBOM generation by default for speed.
+By default, SBOM-capable artifact types request all three layers: Build,
+Analyzed-artifact, and Analyzed-container. Generation still depends on the
+ecosystem and deliverable: notably, Gradle Android does not implement
+Analyzed-artifact scanning, so Android artifacts must explicitly exclude that
+layer. Snapshot builds skip SBOM generation by default for speed.
 
-If those defaults are right for you, **you don't need to configure anything** — leave `sboms` unset everywhere.
+For non-Android artifacts, if those defaults are right for you, **you don't need
+to configure anything**: leave `sboms` unset. Android artifacts must select a
+supported subset as described below.
 
 To change them, set the `sboms` field. That's the entire user-facing surface.
 
@@ -14,13 +20,16 @@ To change them, set the `sboms` field. That's the entire user-facing surface.
 
 A single string field, accepted in two places:
 
-- **Per-artifact** in `artifacts.yml` — what kinds of SBOMs that artifact produces during build/container stages.
-- **Per-orchestrator-call** (input on `release-orchestrator.yml`, `release-snapshot-orchestrator.yml`, `release-create-github.yml`) — a global cap for release/snapshot SBOM aggregation.
+- **Per-artifact** in `artifacts.yml`: what kinds of SBOMs that artifact produces during build/container stages.
+- **Per-orchestrator-call** (input on `release-orchestrator.yml`, `release-snapshot-orchestrator.yml`, `release-create-github.yml`): release/snapshot selection policy.
 
-The per-artifact value controls build-time Build SBOMs and container SBOM
-generation. The orchestrator value is resolved against the pipeline-wide union
-and controls what the release/snapshot aggregation step includes. It does not rewrite
-each artifact's parsed `effective-sboms`.
+The per-artifact value controls artifact-first Build SBOM jobs and container
+SBOM generation. For production releases, `release.sboms` is intersected with
+the pipeline-wide union and controls the release SBOM bundle and downloads. It
+also gates the separate container-first Go/Cargo Build SBOM jobs. It does not
+rewrite each artifact's parsed `effective-sboms`, disable artifact-first Build
+SBOM jobs, or disable registry-attached container SBOM attestations. The
+snapshot `sboms` input has its own workflow-wide generation gates.
 
 ### Accepted values
 
@@ -39,11 +48,15 @@ each artifact's parsed `effective-sboms`.
 
 | Where | Default | Why |
 |---|---|---|
-| Per-artifact (`artifacts.yml`) | `all` for SBOM-capable ecosystems (`maven`, `npm`, `gradle`, `gradle-android`, `cargo`, `go`, `python`; `python` is schema-reserved but does not have workflows yet); `none` for `xcode-ios` and `meta` | Match historical "SBOMs on by default for buildable types" |
+| Per-artifact (`artifacts.yml`) | `all` for SBOM-capable ecosystems (`maven`, `npm`, `gradle`, `gradle-android`, `cargo`, `go`); `none` for `xcode-ios` and `meta` | Match historical "SBOMs on by default for buildable types" |
 | Release orchestrator (`release.sboms`) | `all` | Release fires on tag push, once per release; SBOMs expected for compliance |
 | Snapshot orchestrator (`sboms`) | `none` | Snapshot fires per push/dispatch; SBOMs add 30–60 s/run that most reviews don't need |
 
 The asymmetric defaults are deliberate. Override either side explicitly when your case differs.
+
+Gradle Android is the exception to the general `all` default: `sbom assemble`
+does not support `analyzed-artifact` for APK/AAB files. Set Android artifacts to
+`sboms: build`, or `sboms: build,analyzed-container` when they feed a container.
 
 ### Examples
 
@@ -65,11 +78,12 @@ artifacts:
     project-type: maven
     sboms: none
 
-# Release aggregation cap: include only Build SBOMs in the release SBOM bundle
+# Release selection: include only Build SBOMs in the release SBOM bundle
 jobs:
   release:
     uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@<sha>
     with:
+      branch: main
       artifacts-config: .reusable-ci/artifacts.yml
       release.sboms: build      # release-orchestrator dot-prefix convention
 
@@ -78,26 +92,32 @@ jobs:
   release-snapshot:
     uses: diggsweden/reusable-ci/.github/workflows/release-snapshot-orchestrator.yml@<sha>
     with:
+      branch: ${{ github.ref_name }}
       artifacts-config: .reusable-ci/artifacts.yml
       sboms: all                # release-snapshot-orchestrator uses flat names
 ```
 
 The orchestrator-input naming asymmetry (`release.sboms` vs `sboms`) is a pre-existing convention: `release-orchestrator.yml` groups its inputs with a `release.` prefix (`release.signartifacts`, `release.draft`, …); the snapshot orchestrator does not. SBOMs follow the local convention of each orchestrator.
 
-> **Mandatory by default:** Build SBOM generation is mandatory. Each builder runs the cyclonedx plugin without `continue-on-error`, so a tool failure fails the workflow. Opt out explicitly with `enable-build-sbom: false` per builder, or with `release.sboms: none` at the orchestrator. There is no silent SBOM-missing release. See [Failure semantics](#failure-semantics).
+> **Mandatory when selected:** Each Build SBOM job runs without
+> `continue-on-error`, so a tool failure fails the workflow. Exclude `build` in
+> the artifact's `sboms`, or pass `enable-build-sbom: false` to a directly
+> called builder. `release.sboms: none` is not a universal generation switch:
+> artifact-first builders and container attestations still follow per-artifact
+> policy. See [Failure semantics](#failure-semantics).
 
-## CISA SBOM types — what we produce
+## CISA SBOM types: what we produce
 
 | CISA type | Layer name | Produced by | Accuracy |
 |---|---|---|---|
-| **Build** | `build` | Ecosystem cyclonedx plugin running during the real build | **Highest — fully resolved dependency graph** |
-| Analyzed (artifact) | `analyzed-artifact` | Syft scanning the built JAR/tgz/wheel/binary post-build; Gradle Android APK/AAB scanning is not generated today | Good — inferred from artifact contents |
-| Analyzed (container) | `analyzed-container` | Syft scanning the pushed container image in `publish-container.yml` | Good — inferred from image layers |
+| **Build** | `build` | Ecosystem cyclonedx plugin running during the real build | **Highest: fully resolved dependency graph** |
+| Analyzed (artifact) | `analyzed-artifact` | Syft scanning the built JAR/tgz/wheel/binary post-build; Gradle Android APK/AAB scanning is not generated today | Good, inferred from artifact contents |
+| Analyzed (container) | `analyzed-container` | Syft scanning the pushed container image in `publish-container.yml` | Good, inferred from image layers |
 | Design / Deployed / Runtime | — | Not generated; require non-CI information (architecture, live infra, runtime agents) | n/a |
 
 ### Why Build SBOM is special
 
-Source-layer Syft scans are not generated by the Go port. They see declared dependencies but not the resolved version graph — transitive pins, exclusions, and scope filtering are invisible. Build-layer generation uses ecosystem-native CycloneDX tooling where available; Go uses `reusable-ci sbom build --project-type go`, backed by `cyclonedx-gomod`, for a module-level Build SBOM without compiling every platform.
+Source-layer Syft scans are not generated by the Go port. They see declared dependencies but not the resolved version graph. Transitive pins, exclusions, and scope filtering are invisible. Build-layer generation uses ecosystem-native CycloneDX tooling where available; Go uses `reusable-ci sbom build --project-type go`, backed by `cyclonedx-gomod`, for a module-level Build SBOM without compiling every platform.
 
 ### Per-language Build tools
 
@@ -110,19 +130,19 @@ Source-layer Syft scans are not generated by the Go port. They see declared depe
 | Cargo | `cargo-cyclonedx` (`--all` for workspaces) | `build-cargo.yml` (artifact-first) or `sbom-cargo.yml` (container-first, publish stage; lockfile-derived) | `cargo-build-sbom` or `<artifact-name>-cargo-build-sbom` |
 | Go | `reusable-ci sbom build --project-type go` (`cyclonedx-gomod`) | `build-go.yml` (artifact-first) or `sbom-go.yml` (container-first) | `go-build-sbom` or `<artifact-name>-go-build-sbom` |
 
-The build SBOM lives in its own upload artifact — separate from the code artifact (`<artifact-name>-build-artifacts`, `<artifact-name>-build-sbom`, etc.; direct single-workflow callers keep defaults such as `maven-build-artifacts`). A broken SBOM plugin can't take down the code upload. Tool versions are pinned and tracked by Renovate via `# renovate: datasource=...` comments.
+The build SBOM lives in its own upload artifact, separate from the code artifact (`<artifact-name>-build-artifacts`, `<artifact-name>-build-sbom`, etc.; direct single-workflow callers keep defaults such as `maven-build-artifacts`). When Build SBOM generation is enabled, both generation and upload are mandatory: a plugin failure or a missing expected file fails the job before publication. Tool versions are pinned and tracked by Renovate via `# renovate: datasource=...` comments.
 
 ### Cargo SBOM placement follows build-mode
 
 Cargo is dual-mode (same as Go). Where the Build SBOM is emitted depends on `config.build-mode`:
 
-- **`build-mode: artifact-first`** — `build-cargo.yml` cross-compiles the
+- **`build-mode: artifact-first`**: `build-cargo.yml` cross-compiles the
   binary AND emits the Build SBOM inline (one `cargo cyclonedx` step against
   the lockfile). Matches the build-go.yml shape. The SBOM and the binaries
   upload as sibling artifacts from the same build job.
-- **`build-mode: container-first`** — `sbom-cargo.yml` runs at publish stage
+- **`build-mode: container-first`**: `sbom-cargo.yml` runs at publish stage
   alongside the container build. It deliberately does **not** invoke `cargo
-  build` or `cargo test` — the actual compile happens once inside the
+  build` or `cargo test`, because the actual compile happens once inside the
   Containerfile (`linux/amd64,linux/arm64` via native split-runner builds),
   with the lockfile-derived SBOM shipping next to the image.
 
@@ -136,7 +156,7 @@ build-observed SBOM since `Cargo.lock` is the fully-resolved graph; projects
 using `[target.'cfg(...)'.dependencies]` may see crates listed that aren't in a
 given arch's binary.
 
-This split — artifact-first ecosystems (maven/npm/gradle/go/cargo artifact-first) emit SBOMs as a byproduct of `build-<lang>.yml`; container-first ecosystems (cargo/go container-first) emit SBOMs from `sbom-<lang>.yml` while the actual compile lives in the Containerfile — is documented end-to-end in **[docs/ecosystems.md](ecosystems.md)**, including the per-ecosystem capability matrix.
+The artifact-first / container-first split is documented end-to-end in **[docs/ecosystems.md](ecosystems.md)**, including the per-ecosystem capability matrix. Artifact-first ecosystems (maven/npm/gradle/go/cargo artifact-first) emit SBOMs as a byproduct of `build-<lang>.yml`. Container-first ecosystems (cargo/go container-first) emit SBOMs from `sbom-<lang>.yml`, while the actual compile lives in the Containerfile.
 
 ## How it works internally
 
@@ -144,25 +164,40 @@ This split — artifact-first ecosystems (maven/npm/gradle/go/cargo artifact-fir
 
 The per-artifact `sboms` value drives both **build-time plugin execution** and **release-bundle inclusion**:
 
-- Each builder workflow (`build-maven.yml`, `build-gradle-app.yml`, `build-gradle-android.yml`, `build-npm.yml`, `build-go.yml`, `build-cargo.yml`) accepts an `enable-build-sbom: bool` input. `release-build-stage.yml` derives this from `contains(matrix.artifact["effective-sboms"], 'build')` per artifact.
-- If `build` is in the artifact's effective sboms, the cyclonedx plugin step runs. Otherwise it's skipped entirely — saves CI time, no upload, no downstream artifact. The orchestrator-level `sboms` input caps aggregate release/snapshot SBOM packaging later; it does not change this build-time decision.
-- Analyzed-artifact and analyzed-container layers are gated similarly at release-time aggregation in `release-create-github.yml`.
+- Each artifact-first builder workflow accepts an `enable-build-sbom: bool`
+  input. `release-build-stage.yml` derives it only from the artifact's
+  `effective-sboms`; `release.sboms` does not change that build-time decision.
+- Container-first Go/Cargo Build SBOMs are separate publish-stage jobs. They run
+  only when `build` survives both the per-artifact policy and the
+  `release.sboms` intersection.
+- Analyzed-artifact SBOMs are generated during release assembly from downloaded
+  build artifacts. Analyzed-container SBOMs are generated and attested during
+  container publish from per-artifact policy; `release.sboms` only controls
+  whether those documents are also downloaded into the release bundle.
 
-Setting `sboms: none` on an artifact really means "skip everything for this artifact" — both the build-time plugin and the release-bundle inclusion. Useful for toy artifacts in a monorepo that you don't want spending CI minutes on.
+Setting `sboms: none` on an artifact really means "skip everything for this artifact": both the build-time plugin and the release-bundle inclusion. Useful for toy artifacts in a monorepo that you don't want spending CI minutes on.
 
-When called directly (not from `release-build-stage.yml`), each builder defaults `enable-build-sbom: true` for backward compatibility — direct callers always get a Build SBOM unless they explicitly say otherwise.
+Gradle Android must exclude `analyzed-artifact`: requesting it reaches an
+unsupported project-type branch and fails release assembly. Build SBOMs remain
+supported, as do analyzed-container SBOMs when an Android artifact feeds a
+container.
 
-`sbom-cargo.yml` and `sbom-go.yml` accept the same `enable-build-sbom` input for parity with the other builders, but since the SBOM step is the only thing they do, setting it to `false` from the orchestrator path turns the matrix entry into a no-op. Direct callers can either skip the input (defaults to true) or pass `enable-build-sbom: false` to suppress generation explicitly.
+When called directly (not from `release-build-stage.yml`), each builder defaults `enable-build-sbom: true` for backward compatibility. Direct callers always get a Build SBOM unless they explicitly say otherwise.
+
+`sbom-cargo.yml` and `sbom-go.yml` accept the same `enable-build-sbom` input
+for direct-call parity. The orchestrator omits ineligible matrix entries;
+direct callers can omit the input (defaults to true) or pass
+`enable-build-sbom: false` to make the workflow a no-op.
 
 ### Container scanning is derived, not separately gated
 
-Container SBOM scanning (`analyzed-container` layer) is **derived** from source-artifact `sboms` — `publish-container.yml` runs syft on the pushed image if and only if any of the container's source artifacts (`from: [a, b, …]`) has `analyzed-container` in its effective sboms. With the default `sboms: all` on a buildable artifact, that's always true.
+Container SBOM scanning (`analyzed-container` layer) is **derived** from source-artifact `sboms`. `publish-container.yml` runs syft on the pushed image if and only if any of the container's source artifacts (`from: [a, b, …]`) has `analyzed-container` in its effective sboms. With the default `sboms: all` on a buildable artifact, that's always true.
 
 To skip the container scan: set the source artifact's `sboms` to exclude `analyzed-container` (e.g. `sboms: build,analyzed-artifact`).
 
 This replaces the v2.x `containers[].enable-sbom: bool` field. In v3 strict config parsing rejects that removed field; use artifact `sboms` instead.
 
-> **Note — the snapshot flow builds no containers.** `release-snapshot-publish-stage.yml` produces only artifact-level SBOMs (`build`, `analyzed-artifact`) for npm/cargo/go; there is no container build or `analyzed-container` SBOM on the snapshot path. Container images (and their `analyzed-container` SBOMs) are built once on the release path by `publish-container.yml`.
+> **Note: the snapshot flow builds no containers.** `release-snapshot-publish-stage.yml` produces only artifact-level SBOMs (`build`, `analyzed-artifact`) for npm/cargo/go. There is no container build or `analyzed-container` SBOM on the snapshot path. Container images (and their `analyzed-container` SBOMs) are built once on the release path by `publish-container.yml`.
 
 Snapshot SBOM aggregation uses the snapshot orchestrator's single-project control plane. Multi-artifact release SBOM packaging is handled by the production release orchestrator.
 
@@ -170,25 +205,24 @@ Snapshot SBOM aggregation uses the snapshot orchestrator's single-project contro
 
 CISA Source SBOMs are not part of the Go implementation or the user-facing `sboms` enum. Rationale:
 
-- **Build SBOM is strictly richer** — the cyclonedx plugin participates in the real build and sees the resolved graph. A Source SBOM adds nothing on top.
-- **Analyzed-artifact overlaps** for ecosystems without a richer Build SBOM workflow (Python reserved today) — Syft on the built binary reads the same metadata as a source scan, plus what actually shipped.
+- **Build SBOM is strictly richer**: the cyclonedx plugin participates in the real build and sees the resolved graph. A Source SBOM adds nothing on top.
+- **Analyzed-artifact overlaps** when no richer Build SBOM is available: Syft on the built artifact reads package metadata plus what actually shipped.
 
 ### Aggregation in release flows
 
-`reusable-ci sbom assemble` consolidates per-stack SBOMs into release files using a single CISA-aligned naming pattern: it harvests the language-native build BOM and syft-scans built artifacts/containers, so it runs *after* the build. The short commit SHA is injected for traceability when run inside a git repo:
+`reusable-ci sbom assemble` consolidates per-stack SBOMs into release files under a single CISA-aligned naming pattern. It harvests the language-native build BOM and syft-scans built artifacts and containers, so it runs *after* the build. The short commit SHA is injected for traceability when run inside a git repo:
 
 ```text
 <project>-<version>-<short-sha>-build-sbom.cyclonedx.json
 <artifact-basename>-<short-sha>-analyzed-jar-sbom.{cyclonedx,spdx}.json          # Maven / Gradle (JVM)
 <artifact-basename>-<short-sha>-analyzed-tararchive-sbom.{cyclonedx,spdx}.json   # npm
 <artifact-basename>-<short-sha>-analyzed-binary-sbom.{cyclonedx,spdx}.json       # Go / Rust
-<artifact-basename>-<short-sha>-analyzed-wheel-sbom.{cyclonedx,spdx}.json        # Python
 <project>-<version>-<short-sha>-analyzed-container-sbom.{cyclonedx,spdx}.json
 ```
 
-`<artifact-basename>` is derived from the actual scanned file (so multi-jar projects get unique names per jar). `build` SBOMs use `<project>-<version>` instead — there is one Build SBOM per project, not per output file. Container scans have a single artifact-type so the analyzed-container layer omits the further modifier.
+`<artifact-basename>` is derived from the actual scanned file (so multi-jar projects get unique names per jar). `build` SBOMs use `<project>-<version>` instead, because there is one Build SBOM per project, not per output file. Container scans have a single artifact-type so the analyzed-container layer omits the further modifier.
 
-The aggregator looks for `bom.json` under `./release-artifacts/` (the destination of `actions/download-artifact` with `merge-multiple: true`) and picks the aggregate match — the one with the smallest path depth — so the root project BOM wins over per-module ones. It ignores vendored BOMs under `node_modules/` and compile caches under `target/`. Consumers using a non-root `working-directory` are handled automatically because the lookup uses a path pattern, not fixed locations.
+The aggregator looks for `bom.json` under `./release-artifacts/` (the destination of `actions/download-artifact` with `merge-multiple: true`) and picks the aggregate match, the one with the smallest path depth. The root project BOM therefore wins over per-module ones. It ignores vendored BOMs under `node_modules/` and compile caches under `target/`. Consumers using a non-root `working-directory` are handled automatically because the lookup uses a path pattern, not fixed locations.
 
 ## Failure semantics
 
@@ -196,21 +230,24 @@ SBOM generation is mandatory by default. Each builder runs the cyclonedx plugin
 without `continue-on-error`, so a tool failure (broken plugin, missing
 lockfile, unreadable manifest) fails the workflow on the spot. This matches
 the deterministic-pipeline contract: a passing pipeline implies a complete
-release artifact set, including SBOMs.
+set of the SBOM layers selected by policy.
 
-Two explicit opt-outs exist for adopters who don't need SBOM generation on a
-specific run:
+The supported controls have different scopes:
 
+- **Per-artifact:** exclude a layer in `artifacts.yml`. This is the production
+  workflow's generation policy for artifact-first Build SBOMs and container
+  SBOM attestations.
 - **Per-builder:** pass `enable-build-sbom: false` when calling a builder
   workflow directly. The step is skipped (`steps.sbom.outcome == 'skipped'`),
   the upload is skipped, and the status report records "skipped" in the step
   summary. No silent failure.
-- **At the orchestrator:** set `release.sboms: none` (or omit the `build`
-  layer from a comma-list) and the orchestrator will pass
-  `enable-build-sbom: false` through the build-stage matrix.
+- **At the production orchestrator:** `release.sboms` selects release-bundle
+  layers and gates container-first Go/Cargo Build SBOM jobs. It does not pass
+  `enable-build-sbom: false` to artifact-first builders and does not disable
+  container-image SBOM generation or attestation.
 
-Both opt-outs are visible in the workflow input and traceable in the run UI —
-"no SBOM" is a recorded decision, not a silent gap.
+All controls are visible in committed config or workflow inputs and traceable in
+the run UI.
 
 ## Verifying a Build SBOM was produced
 
@@ -227,6 +264,81 @@ To verify without clicking into the run, the SBOM appears as its own artifact (`
 gh run download <run-id> --name maven-build-sbom
 jq '.metadata.component.name, (.components | length)' bom.json
 ```
+
+## Delivery and verification
+
+Release SBOMs have two delivery paths:
+
+- The build and analyzed SBOMs selected by effective `release.sboms` policy are packaged in a signed
+  `*-sboms.zip` GitHub Release asset. The release checksum manifest covers the
+  ZIP and the other release assets.
+- Each per-architecture container digest receives its analyzed-container
+  CycloneDX document as a signed cosign attestation. This path is registry- and
+  forge-neutral; it does not depend on GitHub's attestation API.
+
+Verify release files in trust order: authenticate the checksum manifest, check
+downloaded files against it, then authenticate the optional detached SBOM ZIP
+signature:
+
+```bash
+gh release download "$TAG" -p 'checksums.sha256*' -p '*-sboms.zip*'
+gpg --verify checksums.sha256.asc checksums.sha256
+sha256sum -c checksums.sha256 --ignore-missing
+gpg --verify PROJECT-1.0.0-sboms.zip.asc PROJECT-1.0.0-sboms.zip
+```
+
+For a container, verify and extract the signed predicate from the exact platform
+digest:
+
+```bash
+cosign verify-attestation --type cyclonedx \
+  --certificate-identity-regexp '^https://github.com/<owner>/<repo>/\.github/workflows/.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/<owner>/<repo>@sha256:PLATFORM_DIGEST
+
+cosign download attestation --predicate-type=https://cyclonedx.org/bom \
+  ghcr.io/<owner>/<repo>@sha256:PLATFORM_DIGEST \
+  | jq -r '.payload | @base64d | fromjson | .predicate'
+```
+
+See [Verification](verification.md#full-verification-guide) for the surrounding
+artifact and provenance checks.
+
+## Consuming SBOMs
+
+Build SBOMs use CycloneDX 1.6. Analyzed-artifact and analyzed-container layers
+are available as CycloneDX 1.6 and SPDX 2.3 so security and legal tooling can use
+the format it already supports.
+
+```bash
+# Vulnerabilities, with a release-relevant severity floor
+trivy sbom --severity HIGH,CRITICAL artifact.cyclonedx.json
+
+# License findings
+trivy sbom --scanners license artifact.cyclonedx.json
+
+# Inspect SPDX package/license data directly
+jq '.packages[] | {name, version: .versionInfo, license: .licenseConcluded}' \
+  artifact.spdx.json
+
+# Convert an existing SBOM to Syft's table view
+syft convert artifact.spdx.json -o table
+```
+
+The generated documents cover the applicable NTIA minimum elements and the
+Build/Analyzed portions of the CISA SBOM taxonomy. Source, Design, Deployed, and
+Runtime SBOMs require information outside this CI pipeline and are not emitted.
+An SBOM supports CRA transparency work, but CRA update and incident-reporting
+obligations remain outside CI.
+
+Further references:
+
+- [CISA SBOM guidance](https://www.cisa.gov/sbom)
+- [CISA SBOM types](https://www.cisa.gov/resources-tools/resources/types-software-bill-materials-sbom)
+- [CycloneDX 1.6](https://cyclonedx.org/specification/overview/)
+- [SPDX 2.3](https://spdx.github.io/spdx-spec/v2.3/)
+- [Syft](https://github.com/anchore/syft)
+- [Trivy](https://github.com/aquasecurity/trivy)
 
 ## Testing
 

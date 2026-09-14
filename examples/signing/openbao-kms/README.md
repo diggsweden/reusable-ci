@@ -4,8 +4,18 @@ A Maven library released with signatures produced by OpenBao's
 Transit secrets engine. The private key lives in OpenBao and never
 leaves it; cosign sends the artefact hash to OpenBao for signing.
 
-Air-gap compatible. No dependency on Sigstore's public Fulcio +
-Rekor. Suitable for sovereignty-conscious or regulated environments.
+This example sets `sign.transparency: none`, so signing does not contact
+Sigstore's public Fulcio, Rekor, or TUF endpoints. It is suitable for a
+private-only signing network, but the release is not offline: the runner must
+reach OpenBao plus the forge, package registry, and container registry used by
+the release.
+
+The generic reusable release workflow does not perform a provider-specific
+OpenBao JWT exchange. An organization-owned wrapper or fork must exchange the
+GitHub OIDC JWT at OpenBao's auth endpoint and expose the resulting short-lived
+`VAULT_TOKEN`, together with `VAULT_ADDR`, to the cosign steps. The OIDC JWT
+therefore leaves the runner for OpenBao; the private signing key does not leave
+OpenBao.
 
 ## One-time OpenBao setup
 
@@ -56,18 +66,19 @@ EOF
 
 ## Files
 
-- `artifacts.yml` declares `sign.method: kms` with the
-  `hashivault://transit/keys/release-signing` URI.
-- `release-workflow.yml` is the caller workflow with `VAULT_ADDR`
-  set and `id-token: write` so the runner can mint the OIDC token
-  that authenticates to OpenBao.
+- `artifacts.yml` declares `sign.method: kms`, the
+  `hashivault://transit/keys/release-signing` URI, and
+  `sign.transparency: none`.
+- `release-workflow.yml` shows the caller permissions and documents the wrapper
+  step the organization must add for OpenBao authentication.
 
 ## What gets produced
 
-A Sigstore v3 bundle file (`<artefact>.bundle`) next to each
-release artefact. The bundle contains the signature only — no
-Fulcio certificate, since this is the KMS path. For container
-images, the signature lives in the OCI registry next to the image.
+A Sigstore v3 bundle file (`<artefact>.bundle`) next to each release artefact.
+The bundle contains the KMS signature and no Fulcio certificate or Rekor proof.
+For container images, the signature lives in the OCI registry next to the
+image. Verification must explicitly allow the intentionally absent transparency
+log proof; see [Verification](../../../docs/verification.md#signtransparency-what-the-signing-run-publishes-about-itself).
 
 ## How to verify
 

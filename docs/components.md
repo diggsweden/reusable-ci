@@ -2,16 +2,43 @@
 
 ## Available Components
 
-This document describes reusable workflow components and how they relate to the supported orchestrator entrypoints.
+This document is the authoritative inventory of reusable workflow components and
+their direct-call contracts. Architecture pages link here instead of maintaining
+parallel workflow lists.
+
+> **Unpublished v3:** `@v3.0.0` references below are prospective. Until the tag
+> and matching runtime images exist, use the reviewed-branch procedure in
+> [Runtime Images](runtime-images.md); do not substitute an unreviewed moving
+> ref in production.
+
+---
 
 > For a per-ecosystem capability matrix and the artifact-first vs container-first framing (when does a language ship via `build-<lang>.yml` vs `sbom-<lang>.yml` + Containerfile compile?), see **[docs/ecosystems.md](ecosystems.md)**.
 
-**Recommended stable GitHub entrypoints:**
+**Supported high-level GitHub entrypoints:**
 - `pullrequest-orchestrator.yml`
 - `release-orchestrator.yml`
 - `release-snapshot-orchestrator.yml`
 
-Leaf helper workflows such as `build-*`, `publish-*`, `lint-*`, `security-*`, `validate-*`, and selected release helpers can still be used directly by advanced consumers and are suitable for custom orchestration. The examples below use external consumer refs; inside this repository's own workflows, the same components are called with local `./.github/workflows/...` paths.
+Leaf helper workflows can still be used directly by advanced consumers, and are suitable for custom orchestration. These are `build-*`, `publish-*`, `lint-*`, `security-*`, `validate-*`, and selected release helpers. The examples below use external consumer refs; inside this repository's own workflows, the same components are called with local `./.github/workflows/...` paths.
+
+### Workflow Inventory
+
+This table is the complete inventory of files in `.github/workflows/` that
+currently expose `workflow_call`. Self-triggered repository workflows are not
+consumer components and are intentionally excluded.
+
+| Role | Workflows | Contract |
+|---|---|---|
+| Supported orchestrators | `pullrequest-orchestrator.yml`, `release-orchestrator.yml`, `release-snapshot-orchestrator.yml` | Recommended consumer entrypoints |
+| Internal composition stages | `pullrequest-quality-stage.yml`, `release-prepare-stage.yml`, `release-build-stage.yml`, `release-publish-stage.yml`, `release-snapshot-build-stage.yml`, `release-snapshot-publish-stage.yml` | Orchestrator internals; callable but less stable |
+| Build leaves | `build-maven.yml`, `build-npm.yml`, `build-go.yml`, `build-cargo.yml`, `build-gradle-app.yml`, `build-gradle-android.yml`, `build-xcode-ios.yml` | Direct-call building blocks |
+| SBOM leaves | `sbom-go.yml`, `sbom-cargo.yml` | Direct-call container-first SBOM building blocks |
+| Publish and promotion leaves | `publish-maven-github.yml`, `publish-maven-central.yml`, `publish-container.yml`, `publish-apple-appstore.yml`, `publish-google-play.yml`, `publish-snapshot-npm.yml`, `promote-stage.yml` | Direct-call privileged building blocks; trigger constraint below applies |
+| Quality and security leaves | `lint-nanolinter.yml`, `lint-megalinter.yml`, `lint-swift.yml`, `security-openssf-scorecard.yml` | Direct-call PR quality building blocks |
+| Release and validation leaves | `version-bump.yml`, `generate-changelog.yml`, `release-create-github.yml`, `validate-release-prerequisites.yml` | Direct-call release building blocks; trigger constraint applies where secrets are handled |
+| Repository runtime support | `build-cli.yml` | Reusable by this repository's self-runtime pipeline; not a general project build workflow |
+| Experimental attestation | `slsa-attestor.yml` | Operator-managed isolation topology; not a turnkey SLSA level upgrade |
 
 > **Trigger constraint for direct callers of publish / release / signing leaves.**
 > Every reusable workflow that handles signing, package-registry, or
@@ -25,14 +52,12 @@ Leaf helper workflows such as `build-*`, `publish-*`, `lint-*`, `security-*`, `v
 > [threat model](threat-model.md#what-reusable-ci-defends-against)
 > describes the property in full. Adopters with a legitimate
 > PR-context publish need (preview deploys) override per-call-site
-> via the `--allowed-events` flag on the guard step — never as an
+> via the `--allowed-events` flag on the guard step, never as an
 > env-var bypass.
 
 The YAML blocks in this page are **job-level snippets**. Place them under
 `jobs.<job-id>` in your workflow and add the permissions/secrets required by the
 component you call.
-
-Stage workflows such as `pullrequest-quality-stage.yml`, `release-prepare-stage.yml`, `release-build-stage.yml`, `release-publish-stage.yml`, `release-snapshot-build-stage.yml`, and `release-snapshot-publish-stage.yml` are internal composition helpers. Advanced consumers may still use them, but they should be treated as less stable direct-use contracts than the orchestrators and leaf helpers.
 
 **When to use components:**
 - You need fine-grained control over builds, publishing, validation, or security checks
@@ -46,7 +71,7 @@ Stage workflows such as `pullrequest-quality-stage.yml`, `release-prepare-stage.
 
 See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts Reference](artifacts-reference.md) for configuration.
 
-### Component Overview Matrix
+### Common Components
 
 #### Artifact Publishers
 
@@ -59,7 +84,7 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 
 | Component | Purpose | Features | Build Time | Use When |
 |-----------|---------|----------|------------|----------|
-| **publish-container** | Production multi-platform container builds | SLSA attestation, SBOM, vulnerability scanning, native split-runner multi-arch (no QEMU) | ~5-10 min | Production releases |
+| **publish-container** | Production multi-platform container builds | SLSA attestation, SBOM, vulnerability scanning, native split-runner multi-arch (no QEMU) | Varies by image/platform | Production releases |
 
 #### Release Tools
 
@@ -90,7 +115,8 @@ with:
 
 Direct callers use `app`/`lib`. In `artifacts.yml`, use
 `application`/`library`; the orchestrator maps those values to this workflow's
-input.
+input. The selection changes the lifecycle and optional profile only; the
+project POM/profile owns attached source and Javadoc artifacts.
 
 #### `build-npm.yml`
 Builds NPM projects.
@@ -147,7 +173,7 @@ with:
 ```
 
 #### `build-gradle-app.yml`
-Builds Gradle JVM projects — libraries, applications, plugins — and uploads their JARs. Android is out of scope; use `build-gradle-android.yml` for APKs/AABs with flavors and Google Play publishing.
+Builds Gradle JVM projects (libraries, applications, plugins) and uploads their JARs. Android is out of scope; use `build-gradle-android.yml` for APKs/AABs with flavors and Google Play publishing.
 ```yaml
 uses: diggsweden/reusable-ci/.github/workflows/build-gradle-app.yml@v3.0.0
 with:
@@ -173,7 +199,7 @@ with:
   # gradle-tasks: ""              # Optional: explicit task list, overrides product-flavor/build-types/include-aab
 ```
 
-**Task derivation.** By default the workflow derives gradle tasks from `product-flavor` + `build-types` + `include-aab` — e.g., `product-flavor: demo`, `build-types: release`, `include-aab: true` → `assembleDemoRelease app:bundleDemoRelease`. No surrounding `build` task is run by default; only the targeted variants/bundles. Set `gradle-tasks` to override the derived list verbatim — useful when you need custom task names or to add lint/test alongside.
+**Task derivation.** By default the workflow derives gradle tasks from `product-flavor` + `build-types` + `include-aab`, for example `product-flavor: demo`, `build-types: release`, `include-aab: true` → `assembleDemoRelease app:bundleDemoRelease`. No surrounding `build` task is run by default; only the targeted variants/bundles. Set `gradle-tasks` to override the derived list verbatim. This is useful when you need custom task names or to add lint/test alongside.
 
 **Artifact naming.** Two modes:
 
@@ -189,6 +215,7 @@ until reusable-ci adds those publishers.
 ```yaml
 uses: diggsweden/reusable-ci/.github/workflows/publish-maven-github.yml@v3.0.0
 with:
+  branch: main
   package-type: maven          # maven or npm
   artifact-source: maven-build-artifacts  # Name of workflow artifact
   working-directory: "."
@@ -199,6 +226,7 @@ Publishes Maven libraries to Maven Central.
 ```yaml
 uses: diggsweden/reusable-ci/.github/workflows/publish-maven-central.yml@v3.0.0
 with:
+  branch: main
   artifact-source: maven-build-artifacts  # Name of workflow artifact
   working-directory: "."
   settings-path: ".mvn/settings.xml"
@@ -211,6 +239,7 @@ Production container builds with full security features. Supports multiple regis
 ```yaml
 uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@v3.0.0
 with:
+  branch: main
   reusable-ci-binary-ref: v3.0.0
   container-file: "Containerfile"
   context: "."
@@ -261,7 +290,7 @@ Orchestrates all quality checks for pull requests. Composes a control-plane inte
 ```yaml
 uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v3.0.0
 with:
-  project-type: maven              # Required: maven, npm, gradle, gradle-android, xcode-ios, cargo, go (python reserved)
+  project-type: maven              # Required: maven, npm, gradle, gradle-android, xcode-ios, cargo, or go
   base-branch: ""                  # Optional: auto-detects PR target
   lint-engine: nanolinter          # General lint engine: nanolinter (default) | megalinter | none — mutually exclusive
   required-lints: secrets,sast     # Mandated lint floor: forced to run + block via `nanolinter verify --require`, unskippable per project
@@ -276,14 +305,14 @@ with:
 ### Lint Workflows
 
 These workflows are automatically called by `pullrequest-orchestrator.yml`. The
-`lint-engine` input picks the single general engine (mutually exclusive — two
+`lint-engine` input picks the single general engine (mutually exclusive, because two
 would duplicate Code Scanning findings); Swift/iOS checks run separately in
 `lint-swift.yml` regardless of the engine.
 
 #### `lint-nanolinter.yml` (default)
 Runs `nanolinter verify` against the consumer's `nanolinter.toml` verify plan,
 inside the nanolinter flavour image (which bakes nanolinter and its check
-toolchain — no `just`/`justfile` required). Fast, node-less. Security findings
+toolchain, so no `just`/`justfile` is required). Fast, node-less. Security findings
 upload to GitHub Code Scanning as SARIF.
 ```yaml
 uses: diggsweden/reusable-ci/.github/workflows/lint-nanolinter.yml@v3.0.0
@@ -291,19 +320,19 @@ uses: diggsweden/reusable-ci/.github/workflows/lint-nanolinter.yml@v3.0.0
 
 **Mandated lint floor.** The job passes `nanolinter verify --require
 "$REQUIRED_LINTS"` (default `secrets,sast`), which forces those checks to *run*
-and *block* regardless of the project's `nanolinter.toml` — a project cannot
+and *block* regardless of the project's `nanolinter.toml`. A project cannot
 drop them from `[verify].checks`, exclude them, nor downgrade them to advisory
 via `[policy].warn`/`warn_all`. So "every project runs SAST and secret
 detection" is enforced, not merely recommended. Override the set with the
-`required-lints` input (org-level; a project can only add via its own config —
-by `extends`-ing a base with `[policy].require` — never remove). Set
+`required-lints` input (org-level; a project can only add via its own config,
+by `extends`-ing a base with `[policy].require`, never remove). Set
 `required-lints: ""` to disable the floor.
 
-Swift/iOS linting runs separately in `lint-swift.yml` (macOS) — nanolinter has
+Swift/iOS linting runs separately in `lint-swift.yml` (macOS), because nanolinter has
 no native macOS binary.
 
 #### `lint-megalinter.yml`
-Runs MegaLinter from the pinned `oxsecurity/megalinter` image — the heavier,
+Runs MegaLinter from the pinned `oxsecurity/megalinter` image: the heavier,
 governance-recognised alternative for teams standardising on MegaLinter. Reads
 the project's own `.mega-linter.yml`. Selected with `lint-engine: megalinter`;
 its security findings reach Code Scanning as SARIF (category
@@ -350,7 +379,7 @@ uses: diggsweden/reusable-ci/.github/workflows/security-openssf-scorecard.yml@v3
 
 | Aspect | Snapshot | Production |
 |--------|----------|------------|
-| Build time | ~3-5 min | ~12-15 min |
+| Relative scope | Lightweight artifact-only branch flow | Full build, policy, signing, publication, and promotion flow |
 | Container image | — (builds none; a release-built image is promoted to `:dev` by the promotion ladder) | ✓ + SLSA + SBOM + vulnerability scan |
 | Build artifacts | ✓ for artifact-first ecosystems | ✓ |
 | SBOMs | Default `none`; opt in with `sboms` | Default `all` |

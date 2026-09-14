@@ -52,13 +52,16 @@ See [pullrequest-workflow.yml](pullrequest-workflow.yml) in this directory.
    - Review any `java-version` publishing config
    - Verify `Containerfile` path
    - Configure release secrets from [Reference Guide](../../docs/reference.md), including `RELEASE_TOKEN` and GPG signing secrets
-   - **Set `<project.build.outputTimestamp>` in `pom.xml` `<properties>`** — required for reproducible jars; `validate jvm-reproducibility` fails the release if missing. See [Reproducible Builds](../../docs/verification.md#reproducible-builds) for the exact snippet.
+   - **Set `<project.build.outputTimestamp>` in `pom.xml` `<properties>`**: required for reproducible jars; `validate jvm-reproducibility` fails the release if missing. See [Reproducible Builds](../../docs/verification.md#reproducible-builds) for the exact snippet.
 
 3. **Create first release:**
    ```bash
-   git tag -s v1.0.0 -m "Release v1.0.0"
-   git push origin v1.0.0
+   git tag -s release-request/v1.0.0 -m "Release v1.0.0"
+   git push origin release-request/v1.0.0
    ```
+
+   Release automation creates the final `v1.0.0` tag after preparation; do not
+   create or push that final tag directly.
 
 ## What Gets Built
 

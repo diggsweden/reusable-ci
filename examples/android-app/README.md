@@ -2,6 +2,11 @@
 
 Example configuration for Android applications with multiple product flavors and build types.
 
+> **Unpublished v3:** `@v3.0.0` references below are prospective. Until the tag
+> and matching runtime images exist, use the reviewed-branch procedure in
+> [Runtime Images](../../docs/runtime-images.md); do not substitute an
+> unreviewed moving ref in production.
+
 ## Use Case
 
 Android applications that need to:
@@ -20,7 +25,10 @@ Development build workflow that creates Android artifacts on push to main.
 Artifact configuration for release builds (used with release-workflow.yml).
 
 ### `release-workflow.yml`
-Production release workflow triggered by version tags. Creates GitHub Release with changelog, version bump, and optionally publishes to Google Play.
+Production release workflow triggered by signed `release-request/vX.Y.Z` tags.
+After validation and version preparation, automation creates the final
+`vX.Y.Z` tag, creates the GitHub Release, and optionally publishes to Google
+Play. Direct final-tag pushes do not trigger this example workflow.
 
 ### `release-snapshot-workflow.yml`
 Manual snapshot/testing release workflow that builds and uploads to Google Play internal track. This mirrors the iOS `release-snapshot-workflow.yml` which uploads to TestFlight.
@@ -220,7 +228,7 @@ The workflow generates separate artifacts for each variant:
 
 | Workflow | iOS | Android |
 |----------|-----|---------|
-| **Release (Production)** | Tag-triggered, version bump, changelog, TestFlight, GitHub Release | Tag-triggered, version bump, changelog, Google Play, GitHub Release |
+| **Release (Production)** | Release-request-triggered, version bump, changelog, TestFlight, GitHub Release | Release-request-triggered, version bump, changelog, Google Play, GitHub Release |
 | **Release Snapshot (Testing)** | Manual trigger, build + TestFlight only | Manual trigger, build + Google Play internal track |
 
 ### Release Snapshot Workflow
@@ -250,6 +258,7 @@ jobs:
     uses: diggsweden/reusable-ci/.github/workflows/publish-google-play.yml@v3.0.0
     secrets: inherit  # Required for GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
     with:
+      branch: ${{ github.ref }}
       aab-artifact-name: ${{ needs.build.outputs.aab-name }}
       package-name: com.example.myapp
       track: internal  # Equivalent to TestFlight

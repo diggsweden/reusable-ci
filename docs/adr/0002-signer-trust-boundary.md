@@ -16,12 +16,12 @@ The central invariant of the whole system is therefore:
 > **Consumer-supplied code or data can never cause code execution, nor scope
 > escalation, inside the locked signer.**
 
-Today this invariant is real and enforced in code, but it is documented only
-in prose scattered across `docs/threat-model.md`, `docs/verification.md`, and
-`docs/signing-convergence.md`. It is the single most important architectural
-rule in the codebase and has no ADR. It is also the rule that decides which
-verbs may move to a consumer's CLI and which must stay in this binary — so it
-needs to be citable, not reconstructed.
+Today this invariant is real and enforced in code, but before this ADR it was
+documented only in prose scattered across `docs/threat-model.md` and
+`docs/verification.md`. It is the single most important architectural rule in
+the codebase. It is also the rule that decides which verbs may move to a
+consumer's CLI and which must stay in this binary, so it needs to be citable,
+not reconstructed.
 
 ## Decision
 
@@ -29,7 +29,7 @@ Record the boundary as a first-class invariant with four concrete rules, each
 already enforced:
 
 1. **The signer executes no consumer-supplied script.** It consumes only
-   *data* — a JSON ledger plus a predicate file plus premade SBOMs — and runs
+   *data* (a JSON ledger plus a predicate file plus premade SBOMs) and runs
    only pinned tools (cosign, syft). There is no code path where a ledger
    entry or predicate field is executed.
 
@@ -55,7 +55,7 @@ already enforced:
 
 5. **What the signer publishes about itself is a written choice.** Signing is
    not only a local act: cosign writes a Rekor entry to the *public* Sigstore
-   transparency log for every signature it makes, on every method — not just
+   transparency log for every signature it makes, on every method, not just
    keyless. The entry is a `hashedrekord` carrying the artifact's SHA-256, the
    signature, the public key, and an integration timestamp. It does not carry
    the artifact's contents or its filename, so what crosses the boundary
@@ -65,10 +65,10 @@ already enforced:
    other rule here, a mistake cannot be corrected afterwards.
 
    The choice is `sign.transparency` (`internal/domain/release/transparency.go`),
-   and the default is `public`. For keyless it is not really a choice — a
+   and the default is `public`. For keyless it is not really a choice, because a
    ~10-minute Fulcio certificate needs a Rekor inclusion proof (or an RFC3161
    TSA timestamp, which this engine does not configure) or the signature
-   becomes unverifiable — so `SignConfig.Validate` rejects
+   becomes unverifiable, so `SignConfig.Validate` rejects
    `method=sigstore` + `transparency=none` rather than letting it fail later
    inside cosign. For `method=kms` it is a genuine trade: the key is
    long-lived, so the signature verifies indefinitely on its own, and the log
@@ -77,16 +77,16 @@ already enforced:
    to adopt Sigstore at all, and because withholding the public record should
    be a decision someone wrote down, not the result of leaving a field blank.
 
-   `transparency=none` is correct for artifacts that are not published —
-   internal-only builds — and for test suites, which must never write to a
+   `transparency=none` is correct for artifacts that are not published,
+   such as internal-only builds, and for test suites, which must never write to a
    permanent public log. It is the wrong setting for anything whose signatures
    are meant to be publicly verifiable; in cosign's own words, "artifacts
    cannot be publicly verified when not included in a log."
 
-**Corollary — the Phase 7.2 port boundary.** A consumer CLI (nanolinter-ci)
+**Corollary: the Phase 7.2 port boundary.** A consumer CLI (nanolinter-ci)
 may compute and emit the ledger, because the ledger is *data* that the signer
-re-validates and confines under rules 2–4. But no signer-side verb —
-`ledger sign`, promotion, the rollback journal — may move out of this pinned
+re-validates and confines under rules 2–4. But no signer-side verb
+(`ledger sign`, promotion, the rollback journal) may move out of this pinned
 binary, because moving it would move code across the boundary. This is why
 `collect` (pure ledger production, no signing) was portable while `ledger
 sign` (still Go, in the signer) is not.
@@ -107,7 +107,7 @@ sign` (still Go, in the signer) is not.
 - Rule 5 is enforced in one place by construction: `cosign.New` /
   `cosign.NewIsolated` resolve `$REUSABLE_CI_COSIGN_TRANSPARENCY`, so a
   signing path cannot opt out by forgetting to thread a flag through one of
-  the ~16 adapter construction sites — the failure mode of a missed one is
+  the ~16 adapter construction sites. The failure mode of a missed one is
   silent publication, which is exactly the mistake that cannot be undone. A
   new cosign write verb inherits the setting for free; the count assertions in
   `internal/adapters/cosign/signingconfig_test.go` trip if one is added
@@ -115,7 +115,7 @@ sign` (still Go, in the signer) is not.
 - One setting drives both halves of rule 5 deliberately. cosign couples them:
   a signature made with no transparency log cannot be verified without
   `--insecure-ignore-tlog`. Two independent knobs that must always agree would
-  be a footgun, not a safeguard — set one without the other and cosign fails
+  be a footgun, not a safeguard: set one without the other and cosign fails
   with "not enough verified log entries", naming none of its causes. Deriving
   both from `Transparency` makes the disagreement unrepresentable.
 - Because a run's transparency choice decides whether it touches
@@ -124,15 +124,24 @@ sign` (still Go, in the signer) is not.
   than re-derived in prose: an allowlist that omits Rekor while the plan
   publishes to it fails the signing step hard, at release time.
 - The isolated environment (`runtimeKeep`) carries the proxy configuration as
-  well as the TLS trust roots. These are the two halves of one thing — how to
-  trust the endpoint, and how to reach it — and keeping only the first left
+  well as the TLS trust roots. These are the two halves of one thing, how to
+  trust the endpoint and how to reach it, and keeping only the first left
   isolated signing broken on a proxy-only network. It broke *only* for `env://`
   keys, since those alone take the isolated path, so a file key would sign
   while an `env://` key did not; forgejo-ci signs with `--key env://COSIGN_KEY`.
   A proxy URL may embed credentials, so this set is no longer strictly
   non-secret. That is a deliberate trade: rule 1 bounds what a cosign
   compromise could *do*, and cosign already holds the signing key, so
-  withholding the proxy config bought no containment — cosign must reach Rekor
-  by design on the public path — while breaking the feature. A run that must
+  withholding the proxy config bought no containment, because cosign must reach
+  Rekor by design on the public path, while breaking the feature. A run that must
   touch no network at all is `transparency=none`, which removes the reason for
   a proxy rather than hiding it.
+
+## Status update (2026-08-29)
+
+This decision is now **Accepted**. Current operational guidance lives in
+[`docs/threat-model.md`](../threat-model.md) and
+[`docs/verification.md`](../verification.md); the original decision remains
+unchanged. The detailed historical signing convergence record was archived
+outside the active repository; current signer-boundary contracts remain fully
+documented in this ADR.

@@ -10,19 +10,20 @@
 # every workspace member's Cargo.toml + src.
 #
 # Three named stages:
-# - builder: compiles the binary. Cache mounts (--mount=type=cache)
-#   persist cargo's registry and target/ across runs via the GHA cache
-#   backend, used by every other ecosystem in reusable-ci. Multi-arch builds
-#   use native per-architecture runners; rust:bookworm-slim ships per-arch
-#   variants.
+# - builder: compiles the binary. Cache mounts (--mount=type=cache) can reuse
+#   cargo's registry and target/ on a persistent Buildah worker. reusable-ci's
+#   cross-run CI cache is a separate registry layer cache.
+#   Multi-arch builds use native per-architecture runners;
+#   rust:bookworm-slim ships per-arch variants.
 # - export-binary: scratch image with the binary at the root. Used by
 #   reusable-ci's `extract.binary.target: export-binary` to upload the
 #   binary as a CI artefact (see ../artifacts.yml).
 # - runtime: the deployable image. Lean Debian base + the binary +
 #   non-root user.
 #
-# Compatible with `docker build` and `podman build` (>= 4.0). Local dev
-# example: `podman build --target runtime --build-arg SERVICE=hsm-worker .`
+# CI uses daemonless Buildah; Podman uses the same Containerfile locally.
+# Local example:
+# `podman build --target runtime --build-arg SERVICE=hsm-worker .`
 
 # syntax=docker/dockerfile:1.7
 

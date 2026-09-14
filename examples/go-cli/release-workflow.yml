@@ -19,9 +19,9 @@ jobs:
       packages: write
       id-token: write
       actions: read
-      attestations: write
     secrets: inherit
     with:
+      branch: main
       reusable-ci-binary-ref: v3.0.0
       artifacts-config: .reusable-ci/artifacts.yml
       changelog-creator: git-cliff

@@ -2,12 +2,17 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-# Example: Go CLI signed with Sigstore keyless (no long-lived key).
+# Example: Go CLI artifacts signed with Sigstore keyless.
 #
 # `sign.method: sigstore` tells `release sign` (and container image
 # signing) to use cosign with the runner's OIDC token. There is no
-# private key to manage — Fulcio issues a 10-minute certificate
-# bound to the workflow identity for each release.
+# long-lived artifact-signing key to manage — Fulcio issues a 10-minute
+# certificate bound to the workflow identity for each release.
+#
+# Git commits and tags are a separate trust domain. This example selects
+# git-native SSH signing, which requires RELEASE_SSH_SIGNING_KEY and a matching
+# principal in .reusable-ci/allowed_signers. reusable-ci does not currently
+# support keyless Git-object signing.
 #
 # Requirements on the caller workflow:
 #   permissions:
@@ -30,3 +35,6 @@ sign:
   # oidc-issuer is auto-detected from the runner (GitHub Actions →
   # https://token.actions.githubusercontent.com). Set it explicitly
   # only for self-hosted Fulcio or non-default platforms.
+
+git-signing:
+  method: ssh

@@ -54,6 +54,7 @@ jobs:
       contents: read
     secrets: inherit
     with:
+      branch: ${{ github.ref }}
       # Pull the AAB upload name straight from the build job's output instead
       # of duplicating the derived format string. Stays correct if the format
       # ever changes.

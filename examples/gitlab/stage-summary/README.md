@@ -1,6 +1,6 @@
 # Example: stage-result aggregation on GitLab CI
 
-How reusable-ci aggregates a multi-job stage's outcome on GitLab — the GitLab
+How reusable-ci aggregates a multi-job stage's outcome on GitLab, the GitLab
 counterpart of GitHub feeding `toJson(needs)` to `report stage-result`. The
 aggregation itself is the *same* shared command on every forge; only how each
 job's outcome reaches it differs, because **a GitLab job cannot read a sibling
@@ -8,8 +8,8 @@ job's status**.
 
 ## The flow
 
-1. **Each job records its own outcome.** In `after_script` — where
-   `$CI_JOB_STATUS` holds the final `success`/`failed`/`canceled` — the job runs:
+1. **Each job records its own outcome.** In `after_script`, where
+   `$CI_JOB_STATUS` holds the final `success`/`failed`/`canceled`, the job runs:
 
    ```sh
    reusable-ci report job-result --name "$CI_JOB_NAME" --status "$CI_JOB_STATUS"
@@ -49,7 +49,7 @@ failure**, so the stage cannot be declared a success behind a missing job.
 
 `stage-result` writes the typed `<stage>-result.json` manifest. The
 human-readable panel comes from `report pr` / `report release`, which read that
-manifest — the same way the GitHub orchestrators do. Add such a step to the
+manifest, the same way the GitHub orchestrators do. Add such a step to the
 summary job to surface the panel via `$CI_SUMMARY_FILE`.
 
 ## Relation to the PR example

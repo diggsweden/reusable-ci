@@ -19,7 +19,7 @@ costs: verb renames need a coordinated bump in a second repo, the shells
 drift stylistically, and Forgejo adopters discover the entry point in a
 different place than GitHub/GitLab adopters. It also has real benefits:
 forgejo-ci carries itiquette-specific policy that does NOT belong in the
-engine repo — the locked signer image, the SLSA L3 isolation gate, the
+engine repo: the locked signer image, the SLSA L3 isolation gate, the
 secret-scoping workflow topology, and the Codeberg-specific operational
 know-how encoded in its self-tests.
 
@@ -42,7 +42,7 @@ explicit). reusable-ci documents it as the official Forgejo entry point.
 
 - Keeps the signing boundary where the audit and self-tests already live;
   respects that the L3 story is itiquette's, not the engine's.
-- Verb/flag changes keep needing the two-repo coordination dance — but
+- Verb/flag changes keep needing the two-repo coordination dance, but
   that dance is already mandatory for the binary pin, so it adds no NEW
   coupling: shells and pin bump together either way.
 
@@ -60,7 +60,7 @@ promotion, L3 gate).
 Proposed: **Option B now, revisit toward C when a second independent
 Forgejo consumer org appears.** The forced coupling argument decides it:
 because the binary is pinned by hash and versioned with the shell, moving
-the shell into this repo would not remove the coordinated-bump step — it
+the shell into this repo would not remove the coordinated-bump step. It
 would only move the audited signing boundary away from where its
 self-tests and ADR history live. The costs Option A removes are smaller
 than the trust-boundary cost it introduces. Option C becomes attractive
@@ -76,3 +76,9 @@ Consequences of B:
   the downstream shell.
 - Runtime images for Forgejo (coherencetake Phase 4.2) are published from
   this repo like all images, and forgejo-ci consumes them by digest.
+
+## Status update (2026-08-29)
+
+This decision is now **Accepted**. Current provider-shell guidance lives in
+[`docs/forgejo.md`](../forgejo.md) and [`docs/providers.md`](../providers.md);
+the proposal and rationale above remain unchanged.

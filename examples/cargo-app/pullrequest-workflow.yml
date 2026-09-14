@@ -30,12 +30,4 @@ jobs:
       project-type: cargo
       lint-engine: nanolinter
 
-  # Workspace-level tests (testcontainers, workspace features) live in the
-  # caller. sbom-cargo.yml does not run cargo test — that path is per-artefact
-  # and can't express workspace features. Uncomment once you've added
-  # .github/workflows/test.yml that runs `cargo test --workspace`.
-  # test:
-  #   permissions:
-  #     contents: read
-  #     packages: read
-  #   uses: ./.github/workflows/test.yml
+  # Workspace-level tests and feature combinations remain caller-owned.

@@ -9,7 +9,15 @@
 # docs/cli-reference.md is GENERATED from the CLI's usage strings
 # (cmd/gen-cli-reference); value placeholders like <server-url> are
 # not inline HTML, and the file is never hand-edited.
-exclude = ["docs/cli-reference.md"]
+# The two test-audit ledgers keep one finding per line on purpose: the counts
+# and the pruning steps in TEST_AUDIT_BACKLOG.md's own Status section depend on
+# that shape, and reflowing them would break both. Same reason as the generated
+# reference above: the file's format is a contract, not a style choice.
+exclude = [
+  "docs/cli-reference.md",
+  "TEST_AUDIT_BACKLOG.md",
+  "TEST_AUDIT_HISTORY.md",
+]
 
 # Disable rules that cause issues or are not appropriate for this project
 disable = [

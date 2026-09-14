@@ -2,17 +2,16 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 #
-# Example: the MegaLinter PR lint gate on GitLab CI — the analog of an example
-# PR workflow that sets `lint-engine: megalinter` on GitHub. MegaLinter is the
-# heavier, governance-recognised alternative to nanolinter; a project includes
-# one lint component, not both.
+# Example: the MegaLinter PR lint gate on GitLab CI. A project includes this or
+# the nanolinter component for its general lint gate.
 #
 # Version is pinned to a Catalog release (GitLab recommends pinning over moving
-# targets like ~latest or a branch). Pick the MegaLinter flavour for your stack.
+# targets like ~latest or a branch). Replace the required image placeholder with
+# a reviewed MegaLinter flavour pinned by digest.
 stages:
   - test
 
 include:
   - component: $CI_SERVER_FQDN/diggsweden/reusable-ci/megalinter@1.0.0
     inputs:
-      megalinter-image: "oxsecurity/megalinter-java:v8"
+      megalinter-image: "REPLACE_WITH_REVIEWED_IMAGE_AT_SHA256_DIGEST"

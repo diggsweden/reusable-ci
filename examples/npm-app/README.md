@@ -56,9 +56,12 @@ See [pullrequest-workflow.yml](pullrequest-workflow.yml) in this directory.
 
 3. **Create first release:**
    ```bash
-   git tag -s v1.0.0 -m "Release v1.0.0"
-   git push origin v1.0.0
+   git tag -s release-request/v1.0.0 -m "Release v1.0.0"
+   git push origin release-request/v1.0.0
    ```
+
+   Release automation creates the final `v1.0.0` tag after preparation; do not
+   create or push that final tag directly.
 
 ## What Gets Built
 

@@ -30,10 +30,4 @@ jobs:
       project-type: go
       lint-engine: nanolinter
 
-  # Keep project-specific Go tests and govulncheck in the caller repository.
-  # Uncomment once .github/workflows/test.yml runs `go test ./...`, `go vet`,
-  # and any org-specific govulncheck policy.
-  # test:
-  #   permissions:
-  #     contents: read
-  #   uses: ./.github/workflows/test.yml
+  # Project-specific Go tests, vet, and vulnerability policy remain caller-owned.

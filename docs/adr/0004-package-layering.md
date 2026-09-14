@@ -89,9 +89,10 @@ structurally, which is what keeps the arrow pointing inward.
 
 ### 3. Leaf utilities are outside the stack
 
-`listval`, `clicolor`, `cliio`, `safeexec`, `retry`, `archive`,
-`runtimetags`, and `testutil` carry no domain knowledge and belong to no
-layer. Any layer may import them. `listval` is imported by `domain` itself,
+`listval`, `clicolor`, `cliio`, `safeexec`, `retry`, `archive`, `pgp`, and
+`runtimetags` are shared utilities. Any layer may import them, but their outgoing
+imports may not reach `app`, `cli`, or `adapters`. `testutil` and `livetest` are
+explicit test-infrastructure exceptions. `listval` is imported by `domain` itself,
 which is precisely why it cannot live inside one of the layered trees. They
 stay at the top of `internal/`.
 
@@ -103,18 +104,13 @@ by the same rule that places `git` and `cosign`. It moves from
 `internal/platform` to `internal/adapters/platform`. The package name and API
 are unchanged; only the import path moves.
 
-### 5. Pure adapter functions are not ports
+### 5. Pure helpers are not adapters
 
-`app` may call a function in an adapter package when that function is pure:
-takes bytes, returns a value, touches no file, network, or subprocess.
-`openpgp.VerifyDetachedArmored` and `openpgp.PrimaryFingerprints` qualify.
-Calling one is using a library, not driving a port, so there is nothing to
-inject and nothing to fake.
-
-This is a narrow exemption, not a loophole. The same `adapters/openpgp`
-package exposes a `*Signer` whose methods do touch the filesystem; `app` code
-must reach those through a port like every other adapter. The exemption is
-listed explicitly in the guard, so widening it is a reviewable act.
+`pgp.VerifyDetachedArmored`, `pgp.PrimaryFingerprints`, and their key-bundle
+parser live in `internal/pgp`. They operate on supplied bytes/readers without
+filesystem, network or subprocess access. App code can use that library directly.
+The file-writing `Signer` remains in `internal/adapters/openpgp` and is reached
+through a port. There is no package-wide app-to-adapter exemption.
 
 ### 6. The guard
 
@@ -123,7 +119,8 @@ listed explicitly in the guard, so widening it is a reviewable act.
 
 - `domain` → `app`, `adapters`, `cli`
 - `adapters` → `app`, `cli`
-- `app` → `adapters` (except the pure-function allowlist), `cli`
+- `app` → `adapters`, `cli`
+- shared utilities → `app`, `adapters`, `cli`
 
 It uses the standard library's `go/parser` rather than `golang.org/x/tools`,
 which is not a direct dependency and should not become one for a test.
@@ -165,7 +162,7 @@ most of which had nothing to say about the CLI.
 
 They now sit in packages named for what each is answerable for. The current
 set, and the rule for choosing between them, is the guard table in
-[`docs/testing.md`](../testing.md) — deliberately not repeated here, so that
+[`docs/testing.md`](../testing.md), deliberately not repeated here, so that
 adding a guard package means editing one document rather than remembering
 this one. `TestGuardPackagesAreDocumented` holds that table to the tree.
 
@@ -182,3 +179,9 @@ Three consequences worth recording:
 - The single-source guards exclude their own declaring file by path, so
   moving them required updating those exclusions. That they failed loudly on
   the first run is the guards working.
+
+## Status update (2026-08-29)
+
+This decision is now **Accepted**. The current guard-package inventory lives in
+[`docs/testing.md`](../testing.md); the original decision and its appended
+2026-08-11 update remain unchanged.

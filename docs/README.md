@@ -3,6 +3,11 @@
 This index separates end-user documentation by purpose. The examples and docs
 target the v3 Go-backed workflow contract.
 
+> **Unpublished v3:** `v3.0.0` and its matching runtime images do not exist yet.
+> Treat `@v3.0.0` snippets as forward-looking; for pre-release testing, follow
+> the reviewed-branch procedure in [Runtime Images](runtime-images.md) instead
+> of substituting an unreviewed moving ref in production.
+
 ## Tutorials
 
 Learn by starting from a working setup.
@@ -17,9 +22,9 @@ Solve a specific task.
 - [Runtime Images](runtime-images.md) - Override runtime images for reproducibility, mirroring, or branch testing.
 - [Verification](verification.md) - Verify release assets, checksums, signatures, attestations, and SBOMs.
 - [SBOM](sbom.md) - Configure SBOM layers and understand release/snapshot defaults.
-- [Forgejo](forgejo.md) - Adopting on Forgejo: the release-ci middle layer, consumer kit, and platform notes.
+- [Forgejo](forgejo.md) - Installing and running the CLI on Forgejo, including platform notes.
 - [Threat Model](threat-model.md) - What reusable-ci defends against, what it deliberately doesn't, and where adopter controls layer on top.
-- [Open Questions](open-questions.md) - Behaviours found by the test review: what is still open, and what has been closed since.
+- [Failed Release Recovery](failed-release-recovery.md) - Safe reruns, immutable-tag rules, cleanup, and rollback.
 
 ## Reference
 
@@ -39,22 +44,21 @@ Understand the design and tradeoffs.
 - [Ecosystem Support](ecosystems.md) - Artifact-first vs container-first ecosystem model and current support status.
 - [Providers and Runners](providers.md) - Forge detection, the runner/forge-API axes, overrides, and the per-forge capability matrix (GitHub, GitLab, Forgejo, local).
 - [CLI Black Box](cli-black-box.md) - The CLI-as-black-box contract between workflows and the binary.
-- [Signing Convergence](signing-convergence.md) - How the signing backends and verification paths converge across forges.
 
 ### Architecture Decisions
 
 Records of decisions that shaped the codebase, kept as written rather than
 edited when things move. Newer decisions append an update note instead.
 
-- [ADR 0001 — Forgejo shell home](adr/0001-forgejo-shell-home.md)
-- [ADR 0002 — Signer trust boundary](adr/0002-signer-trust-boundary.md)
-- [ADR 0003 — CLI verb lexicon](adr/0003-cli-verb-lexicon.md) - the bar a guard test has to clear to earn its keep.
-- [ADR 0004 — Package layering](adr/0004-package-layering.md) - the hexagonal layering, and the guard that enforces it.
+- [ADR 0001: Provider workflow shell boundary](adr/0001-forgejo-shell-home.md)
+- [ADR 0002: Signer trust boundary](adr/0002-signer-trust-boundary.md)
+- [ADR 0003: CLI verb lexicon](adr/0003-cli-verb-lexicon.md) - the bar a guard test has to clear to earn its keep.
+- [ADR 0004: Package layering](adr/0004-package-layering.md) - the hexagonal layering, and the guard that enforces it.
 
-## Maintainer And Historical Docs
+## Maintainer Docs
 
 - [Development](DEVELOPMENT.md) - Local development, testing, and branch verification for this repository.
 - [Testing](testing.md) - Go test helpers and testing conventions.
 - [Scripts](scripts.md) - Remaining bootstrap scripts and the workflow surface moved to the Go binary.
 - [Workflow Design Policy](workflow-design-policy.md) - Design rules for maintainers extending the workflow graph.
-- [GitLab Support Plan](gitlabsupportplan.md) - The single GitLab planning doc: architecture, capability/orchestration model, and the work still ahead.
+- [Open Questions](open-questions.md) - Active decision register for unresolved behavioral and security findings.

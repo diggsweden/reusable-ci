@@ -78,7 +78,8 @@ organization secrets in their own GitHub setup.
 
 ### RELEASE_TOKEN
 
-Used for pushing commits, moving tags, and creating GitHub releases.
+Used for pushing prepared commits and immutable final tags, and for creating
+GitHub releases.
 
 **Requires a fine-grained PAT** with `contents: write` permission, scoped to specific repositories. Classic PATs are rejected.
 
@@ -86,14 +87,14 @@ Note: GitHub Packages uploads use `GITHUB_TOKEN` (automatic, no configuration ne
 
 ### CODE_SCANNING_TOKEN
 
-Used for uploading security scan results (SARIF) to GitHub Security / Code Scanning. Without this token, scans still run, SARIF is still generated, and SARIF files are still saved as workflow artifacts, but results won't appear in Security / Code Scanning.
+Used for uploading security scan results (SARIF) to GitHub Security / Code Scanning. Without this token, scans still run and SARIF is still generated and saved as a workflow artifact. The results will not appear in Security / Code Scanning.
 
-**Option A — GitHub App (recommended):**
+**Option A, a GitHub App (recommended):**
 - Create a GitHub App with `code_scanning_alerts: write` repository permission
 - Install on target repositories
 - Generate installation token and store as repository or organization secret `CODE_SCANNING_TOKEN`
 
-**Option B — Fine-grained PAT:**
+**Option B, a fine-grained PAT:**
 - Create a fine-grained PAT with "Code scanning alerts" set to **Write**
 - Scope to the target repositories
 - Store as repository or organization secret `CODE_SCANNING_TOKEN`
@@ -127,10 +128,12 @@ binary. Run `reusable-ci validate --help` for the validation commands, or see
 
 **Tags for releases:**
 - Production: `v1.0.0`, `v2.3.4`
-- Alpha: `v1.0.0-alpha`, `v1.0.0-alpha.1`
-- Beta: `v1.0.0-beta`, `v1.0.0-beta.1`
-- Release Candidate: `v1.0.0-rc`, `v1.0.0-rc.1`
-- Snapshot: `v1.0.0-snapshot`, `v1.0.0-SNAPSHOT`
+
+The production orchestrator accepts only a signed
+`release-request/vMAJOR.MINOR.PATCH` ref and creates one immutable stable
+`vMAJOR.MINOR.PATCH` tag. SemVer prerelease/build suffixes and `-SNAPSHOT` tags
+are rejected. Branch snapshots use `release-snapshot-orchestrator.yml`; they do
+not create release tags.
 
 ---
 
@@ -141,7 +144,7 @@ The orchestrator performs core runtime validation and normalization when it pars
 1. **Artifacts config exists and is not empty** - The configured file must exist and contain `artifacts[]`
 2. **Container references valid** - All `containers[].from` entries must exist in `artifacts[]`
 3. **Project type valid** - Each artifact `project-type` must be a supported value
-4. **Draft-release detection** - SemVer prerelease and `-SNAPSHOT` tags can be normalized into draft-release behavior; non-SemVer tags fail tag-format validation
+4. **Stable release request** - The request must be `release-request/vMAJOR.MINOR.PATCH`; prerelease, build, snapshot, and unrelated tags fail before mutation
 5. **SBOM defaults resolved** - SBOM generation is derived per artifact when not set explicitly
 
 Additional release-specific validation happens in helper workflows such as `validate-release-prerequisites.yml`.

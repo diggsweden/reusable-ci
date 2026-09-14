@@ -14,12 +14,12 @@ the black-box suite is its own repository, and the live tier needs a lab.
 
 | Layer | What it tests | Build tag | Speed | Parallel | Network / CLI |
 |---|---|---|---|---|---|
-| **domain** | pure logic — parsers, transforms, decisions | (default) | <50ms | yes | no |
-| **adapter** | I/O — real CLIs (`gpg`, `git`, `trivy`), real HTTP | `!short` for slow ones; `integration` for full-stack | <2s | yes (per package) | yes |
+| **domain** | pure logic: parsers, transforms, decisions | (default) | <50ms | yes | no |
+| **adapter** | I/O: real CLIs (`gpg`, `git`, `trivy`), real HTTP | `!short` for slow ones; `integration` for full-stack | <2s | yes (per package) | yes |
 | **repo guards** | rules about the tree itself, not about behaviour | (default) | <1s | yes | no |
 | **CLI smoke** | the binary as a black box, in this repo | `smoke` | <5s | no | builds binary |
-| **black-box suite** | the binary against real toolchains and fixtures — [`diggsweden/reusable-ci-blackbox-tests`](https://github.com/diggsweden/reusable-ci-blackbox-tests) | `blackbox`, in that repo | minutes | yes | real tools, faked network |
-| **live / conformance** | the same scenario against every real forge | `live` | minutes | no (`-p 1`) | a real lab |
+| **black-box suite** | the binary against real toolchains and fixtures in the companion testsuite | `blackbox`, in that repo | minutes | yes | real tools; forge endpoints faked; package downloads may use network |
+| **live / conformance** | the same scenario against configured real lab forges (currently GitLab and Forgejo, not GitHub) | `live` | minutes | no (`-p 1`) | a real lab |
 
 Run them as:
 
@@ -29,12 +29,61 @@ go test -tags=integration ./...        # + full-stack adapter
 go test -tags=smoke ./cmd/...          # + CLI smoke tier
 ```
 
+The provider-free tiers require `bash` and `jq` because `mockbinary` records
+subprocess calls through a shell fixture. `jq` and the rest of the project
+toolchain are pinned in `.mise.toml`; run `mise install` before the gates.
+
+Architecture guards use bounded source analysis, not proof of executed behavior.
+The environment-read guard uses the matching installed Go compiler's export
+metadata and a populated module cache, with downloads disabled. It follows the
+selected build configuration; it does not scan every platform/tag variant.
+Its compiled working-directory check supplies the effective module cache before
+replacing HOME and uses a fresh owned build cache. Exec-path analysis rejects
+unsupported tracked paths but does not discover arbitrary command values carried
+through fields, interfaces or captured closures.
+
+The environment guard's model is bounded on purpose, and the boundary is not
+where you might guess. It resolves stdlib object identity, string constants
+across files and imports, and function values written once in the package. It
+does not follow a lookup carried through a struct field, a reassigned variable
+or a parameter — and it cannot be made to fail closed on those, which is the
+part worth writing down. A rule that treated any `func(string) string` callee as
+an environment read was built and reverted: it flags the sanctioned seam, where
+a use case accepts an injected lookup from the composition root, and two
+fixtures (`injected lookup`, `shadowed package parameter`) pin that pattern as
+permitted. Nothing local separates a lookup handed in by the composition root
+from one smuggled through a field. Distinguishing them needs interprocedural
+analysis; until something does, "the guard reports the flows it models" is the
+supported claim, not "no unmodelled flow exists".
+
+Which files a guard is eligible to read follows from how it reads them, and the
+two mechanisms disagree. The source-walking guards (layering, credential,
+exec-wrap, provider-switch) parse with `go/parser`, which ignores build
+constraints, so they read a `//go:build !linux` file on Linux. The environment
+guard loads through export metadata, which honours them, so the same file is
+invisible to it. Neither is wrong; neither announces itself. Every
+build-constrained product file is therefore declared in
+`TestGuardEligibility_ConstrainedAndGeneratedProductFilesAreDeclared`, and an
+undeclared or changed one fails until someone says how the scanners treat it. A
+variant the current build excludes must contain no direct environment read: the
+guard that would judge it cannot see it, and the fix for a variant that needs
+one is to run the environment guard under a matching GOOS, not to widen the
+list. No product file in this repository is machine generated; a guard fails if
+one appears, because a violation inside generated code is a report against the
+generator rather than something a contributor can fix in place.
+
+The live-parity source guard distinguishes recognized command-position
+invocations, unresolved argv and explicit coverage debt. It follows internal
+production imports conservatively, not per-verb runtime behavior. Missing
+`version` live coverage and eight other group-specific debts remain visible;
+neither inert JSON text nor a debt disposition is evidence of live parity.
+
 ### The black-box tier lives in another repository
 
 `cmd/reusable-ci/smoke_test.go` is a smoke harness: it builds the binary and
 checks the root contract (help, version, flag parsing, the exit-code ladder).
-The bulk of the black-box scenarios — every ecosystem's real toolchain, the
-signing round-trips, reproducibility, host isolation — are in the companion
+The bulk of the black-box scenarios (every ecosystem's real toolchain, the
+signing round-trips, reproducibility, host isolation) are in the companion
 repository, which drives the built binary against committed fixtures.
 
 `docs/cli-black-box.md` is the catalogue for both. When adding a scenario,
@@ -43,15 +92,15 @@ in the testsuite repo; if it is about the CLI's own surface and needs nothing
 installed, it can stay here.
 
 Note the vocabulary: "e2e" is reserved for a real runner talking to a real
-forge, which is neither of these. The in-repo tier is named for what it does
-— `smoke` — so the word is free for the thing that earns it.
+forge, which is neither of these. The in-repo tier is named for what it does,
+`smoke`, so the word is free for the thing that earns it.
 
 ### The live tier
 
 `internal/livetest/` holds a kit and `internal/livetest/conformance/` the
-scenarios (`PAR-*`). One scenario body runs against every forge that *claims*
-the capability it needs, so parity is enforced by shape rather than by
-discipline — the alternative, a suite per forge, is how parity rots.
+scenarios (`PAR-*`). One scenario body runs against every configured lab forge
+that *claims* the capability it needs, so parity is enforced by shape rather
+than by discipline. The alternative, a suite per forge, is how parity rots.
 
 It exists because every other layer verifies an adapter against a fake written
 from the same assumptions as the adapter, so an assumption that is wrong is
@@ -63,8 +112,36 @@ untagged manifests while GitLab keeps them.
 Run it against a disposable lab only:
 
 ```text
-just test-live      # preflights the contract, builds once, revokes tokens on exit
+just test-live-full compose  # complete profile; repeat with k3s
 ```
+
+#### Neutral-v2 live run
+
+Run the full profile against each supported lab road from one fixed source tree:
+
+1. Prove GitLab, Forgejo, their registries and runners, and the selected Fulcio
+   trust endpoint are ready.
+2. Mint a fresh absolute `LAB_TARGETS_FILE` with cleanup armed before the suite
+   can contact a provider.
+3. Set both owners, endpoint selectors, and
+   `LAB_RUNNER_FORGES=gitlab,forgejo`.
+4. Run `just test-live-full compose` or `just test-live-full k3s` once without
+   `RC_LIVE_CONFIRM_DESTROY`; copy the exact confirmation from the refusal.
+5. Export that confirmation and rerun. Require all selected provider scenarios
+   to pass without skips, the source tree to remain unchanged, and credentials,
+   target data, and cleanup runtime to be removed automatically.
+6. On interruption, finish the advertised cleanup before minting another
+   generation.
+
+```text
+^(TestRegistry_SyntheticArtifacts_RoundTripByDigest|TestInRunner_ForgeInjectedRegistryCredentialAuthenticates|TestLedger_RecordVerifyPromote_PreservesTheDigest|TestLedger_Cleanup_RemovesTheCandidateAndKeepsTheRelease|TestRollback_FromLedger_RemovesTheStagePointerOnly|TestRollback_FromJournal_(RemovesAReleaseTagThePromotionCreated|RestoresAMovingTagToItsPreviousImage)|TestSign_LedgerImages_ProducesAVerifiableSignature|TestInRunner_KeylessSigningAgainstTheLabCA)$
+```
+
+Run that explicitly partial diagnostic selection with
+`just test-live-focused '<expression-above>'`. The `full` profile rejects a
+filter, requires both GitLab and Forgejo owners and runners, verifies their
+required capabilities and Fulcio mappings, and checks that both endpoints are
+on the requested `compose` or `k3s` road.
 
 Scenarios are repeatable by construction, and the suite is verified that way
 rather than assumed to be: `NewScratchRepo` deletes **before** it creates, so a
@@ -78,15 +155,15 @@ cannot be mistaken for "it was already published".
 of the job log itself, on both forges, because a bare conclusion is the same
 defect as a missing tool discovered mid-run: right answer, useless vocabulary.
 
-When the log is not enough — the job passed but produced the wrong artifact, or
-the failure is in state teardown is about to delete — `RC_LIVE_KEEP_SCRATCH=1`
+When the log is not enough, because the job passed but produced the wrong artifact,
+or the failure is in state teardown is about to delete, `RC_LIVE_KEEP_SCRATCH=1`
 keeps the scratch repository so it can be inspected on the forge:
 
 ```text
 RC_LIVE_KEEP_SCRATCH=1 go test -tags=live -run TestInRunner_... ./internal/livetest/...
 ```
 
-It is an environment variable rather than a flag on purpose — awkward enough
+It is an environment variable rather than a flag on purpose, awkward enough
 that nobody leaves it on. Nothing accumulates either way: the next run deletes
 the repository before recreating it, so what is kept is one generation.
 
@@ -142,6 +219,20 @@ is refused and reported with the original pair for manual recovery. Malformed
 JSON never supplies a command to the shell, and credential values are omitted
 from generated diagnostics.
 
+Every invocation also writes a durable evidence bundle outside cleanup-owned
+temporary state. The default path is
+`${XDG_STATE_HOME:-$HOME/.local/state}/reusable-ci/live-runs/<UTC-run-id>`;
+set `RC_LIVE_EVIDENCE_ROOT` to use another dedicated private state location. The
+entrypoint prints the exact path after cleanup. Each owner-only bundle contains
+`live-run.log` after credential-pattern redaction, `source-files.sha256` for the
+tracked and untracked working tree used by the build, `built-binaries.sha256`,
+`metadata.txt`, and a verified `SHA256SUMS`. The log is limited to 10 MiB, the
+source manifest to 2 MiB, and the other files to small fixed limits. Bundles
+older than 30 days are removed when the next live run starts; copy a bundle to
+longer-lived storage before then if it must be retained. The live tier is
+human-invoked and has no owning workflow, so there is no CI artifact upload to
+retrieve instead.
+
 Authority classes are independent. Forge/API credentials may reach only the
 selected endpoint roots. OCI credentials may reach only the declared registry
 origin and the endpoint API origin explicitly needed for Forgejo/GitLab token
@@ -153,12 +244,11 @@ enabling that proxy, and then permits token-bearing traffic only to the exact
 Fulcio authority. Approving Fulcio never makes it an OCI challenge or redirect
 destination.
 
-Forge Lab produces such a contract; nothing here requires it to be the producer.
-`internal/livetest/testdata/neutral-targets-v2-compose.json` and
-`neutral-targets-v2-github.json` are byte-for-byte copies of the canonical Forge
-Lab fixtures at commit `17c95fee179d4deab99f44ef116eacffa56bd4177d43e4007dd64265461b5ed0`.
-Ordinary untagged tests parse both, exercise malformed variants, and test the
-shell preflight/cleanup lifecycle without reaching a provider.
+Any lab implementation may produce the contract. The canonical local fixture
+corpus lives in `internal/livetest/testdata/`; its manifest records each local
+path and SHA-256. Ordinary untagged tests verify those hashes, parse both
+accepted contracts, exercise malformed variants, and test the shell
+preflight/cleanup lifecycle without reaching a provider.
 
 In this repository's own CI, the self-validation workflow runs:
 
@@ -169,27 +259,43 @@ In this repository's own CI, the self-validation workflow runs:
 #### What the live tier actually covers
 
 `providers.md` says what each forge *supports*. This says what has been
-*observed* against a real one — a different axis, and the one that decides how
+*observed* against a real one, a different axis, and the one that decides how
 much a green suite is worth.
 
-Proven live on GitLab **and** Forgejo, on both roads (33 scenarios, 2026-07-29):
+The full matrix covers GitLab and Forgejo on both supported roads:
 
 | Group | What it settles |
 |---|---|
 | `TOK-1..4` | the run's own credential validates; a refusal is classified as a refusal and not as an outage; bot permissions match real access |
 | `REL-1..5` | create with assets, verified through the raw forge API; asset upload as its own role; re-release of an existing tag; `release publish`; a 40 MiB asset served back with a matching digest |
 | `REG-1..5` | registry fixture; image ledger against a real registry; cleanup deletes staging without disturbing the release; promotion rollback; `ResolveRegistryAuth` |
-| `SIGN-1..2` | `container ledger sign` against a real registry; GitLab keyless OIDC against the lab's own Fulcio |
+| `SIGN-1..2` | `container ledger sign` against a real registry; GitLab and Forgejo keyless OIDC against the lab's own Fulcio |
 | `ART-1..3` | a forge without an artifact store refuses and says what is missing; one with a store does not refuse as though it lacked one; run-artifact round trip |
-| `PKG-1..2` | `publish forge-packages` for npm and Maven — the auth schemes diverge (Job-Token on GitLab, `Authorization: token` on Forgejo) and both are proven |
+| `PKG-1..2` | `publish forge-packages` for npm and Maven, where the auth schemes diverge (Job-Token on GitLab, `Authorization: token` on Forgejo) and both are proven |
 | `CAP-1..3` | the published matrix is rendered from the adapters and fails on drift; SARIF and provenance refusals |
 | `RUN-1..5` | Forgejo resolves as Forgejo and not GitHub on a real runner; runtime self-report; annotation dialect; step summaries; output-file writes |
 | `CHK-1` | `platform checkout` |
 | `UX-1..4` | printed links resolve; `--dry-run` mutates nothing while the same verb does mutate when real; identical `--json` shape; identical exit code per failure class |
 
+Current neutral-v2 migration acceptance passed on 2026-08-25 against Forge
+Lab's Go-backed target generation. Compose and k3s both passed `REG-1..5` and
+`SIGN-1..2` on GitLab and Forgejo, including declared OCI origins,
+runner-injected registry authentication, exact Fulcio issuer mappings, and the
+Fulcio-only CONNECT proxy. Both roads used the same sealed source-file manifest
+digest, `2c939ede7b3b80023f1cfb15346bc265d789fc11101627841e8f7932c10bb00b`.
+The Compose and k3s logs have SHA-256 digests
+`144f6e9d991e68df67eee8f048afb7dee5358170be2320220f4032586f3ef5b1` and
+`4e6abf9e737f5009d8651f04c0bc24221555891215d0a33ea73b035a70cca671`.
+Scenario teardown passed and both generations removed their credentials,
+recovery evidence, target files, and cleanup runtimes.
+
+The detailed cross-repository rollout and defect record was archived outside
+the active repository. Current acceptance evidence and contract and coverage
+requirements remain fully documented here.
+
 **The standing gap: GitHub is not in the lab.** There is no GitHub target, so
-every scenario above is two-forge. GitHub's *exclusive* positive paths — SARIF
-upload and the attestation API — are verified only against fakes written from
+every scenario above is two-forge. GitHub's *exclusive* positive paths, SARIF
+upload and the attestation API, are verified only against fakes written from
 the same assumptions as the adapter, which is precisely the tie this tier exists
 to break. It is the largest asymmetry in the suite and it does not close without
 a real GitHub organisation.
@@ -251,7 +357,7 @@ shell-native bootstrap surface is tested under `scripts/...` with Go tests.
 
 ## Black-box by default, `_internal_test.go` for the rest
 
-New test files use `package foo_test` — a black-box test from outside
+New test files use `package foo_test`, a black-box test from outside
 the package. This catches accidental coupling to private API, makes the
 test file act as runnable documentation of the public contract, and is
 what the rest of the codebase expects.
@@ -294,7 +400,7 @@ t.Run("raw_value_emits_literal", func(t *testing.T) { ... })
 ## Table-driven everything
 
 Each test is a slice of cases. Use `tests` for the slice and `testCase`
-for the loop variable — they're consistent enough across the codebase
+for the loop variable. They are consistent enough across the codebase
 that any IDE rename refactors them in one pass. The struct fields are
 `name` / `given` / `want` / `wantErr` / `errContains`:
 
@@ -326,15 +432,15 @@ func TestApply_TagRules(t *testing.T) {
 }
 ```
 
-Use `testify/require` (not `assert`) — fail-fast on the first mismatch
+Use `testify/require` (not `assert`): fail-fast on the first mismatch
 gives a clear root-cause line instead of cascading errors. `t.Helper()`
 on every test helper.
 
 Failure output reads like spec lines: `--- FAIL: TestApply_TagRules/raw_value_emits_literal`.
 
-This convention is partially adopted across the codebase (~5 packages
-as of writing); older tests use ad-hoc shapes that are migrated
-opportunistically. New tests should follow the convention from the start.
+This convention is partially adopted across the codebase; older tests use
+ad-hoc shapes that are migrated opportunistically. New tests should follow the
+convention from the start.
 
 ## Property + fuzz tests on parsers
 
@@ -379,7 +485,7 @@ on diff; reviewer must approve every golden change.
 ## testutil packages
 
 All test helpers live under `internal/testutil/`. Each package is small,
-returns concrete types, and registers `t.Cleanup` itself — tests never
+returns concrete types, and registers `t.Cleanup` itself, so tests never
 call `defer cleanup()`.
 
 | Package | Purpose | Replaces |
@@ -395,11 +501,11 @@ call `defer cleanup()`.
 | `fakeprovider` | In-memory `provider.Provider` with call recorder | in-process provider fake |
 | `fakeoutputsink` | In-memory `ci.OutputSink` capturing scalar + multiline | in-process output fake |
 | `fakemanifestsink` | In-memory `ci.ManifestSink` capturing stage JSON bodies | in-process manifest fake |
-| `fakegitserver` | `httptest.NewServer` with route registration for GitHub API | HTTP fake server |
+| `fakegitserver` | In-memory transport (`Client()`) with route registration for GitHub API; no listener | HTTP fake server |
 | `fakegitlabserver` | Same for GitLab API (preserves `%2F` in project paths) | HTTP fake server |
 | `fixtures` | `//go:embed`'d sample data + named getters | embedded test fixture files |
 
-When a use case needs a new helper concern, add a package — don't grow
+When a use case needs a new helper concern, add a package. Don't grow
 existing ones across responsibilities.
 
 For env-sensitive tests, prefer `internal/testutil/testenv` directly or a
@@ -413,7 +519,7 @@ that scope.
 
 ## Patterns by layer
 
-### Domain — pure, parallel
+### Domain: pure, parallel
 
 ```go
 package tagrule_test
@@ -431,7 +537,7 @@ func TestApply_SemverMajorMinor(t *testing.T) {
 
 No `t.Setenv`, no `os.MkdirAll`, no `exec.Command`.
 
-### Adapter — real binaries / HTTP
+### Adapter: real binaries and HTTP
 
 ```go
 package github_test
@@ -453,7 +559,7 @@ JSON`)
 Slower tests (~50ms+) get `//go:build !short`. Full-stack ones that
 talk to `httptest.NewServer` plus a real CLI get `//go:build integration`.
 
-### Application — stubbed deps
+### Application: stubbed deps
 
 ```go
 package container_test
@@ -479,7 +585,7 @@ func TestMetadata(t *testing.T) {
 No subprocess, no network, no filesystem (except what `t.TempDir`
 creates inside the helpers).
 
-### CLI smoke — binary as black box
+### CLI smoke: binary as black box
 
 ```go
 //go:build smoke
@@ -498,7 +604,7 @@ func TestCLI_ContainerMetadata_Smoke(t *testing.T) {
 }
 ```
 
-These are the fewest tests — only what package-level tests can't reach (signal handling,
+These are the fewest tests: only what package-level tests can't reach (signal handling,
 CLI flag parsing edge cases, exit-code mapping).
 
 ## Coverage targets
@@ -530,8 +636,8 @@ A passing test is not evidence until you know what would make it fail. These
 shapes recur, and each was found in this repository holding a real defect open.
 When reviewing a test, check for them.
 
-**A one-element fixture hides a loop.** All four image-ledger operations —
-`Verify`, `Promote`, `Cleanup` and the promotion journal — were tested only with
+**A one-element fixture hides a loop.** All four image-ledger operations
+(`Verify`, `Promote`, `Cleanup` and the promotion journal) were tested only with
 `[]Entry{e}`. Truncating each loop to its first entry broke nothing, while a
 release with several images would have gone half-verified, half-promoted and
 half-cleaned. If the function takes a slice, one of its tests must pass at least
@@ -556,18 +662,13 @@ cannot see an extra entry, a reordering, or two argv entries that should have
 been one. Compare those whole.
 
 **Message text is not the contract; the sentinel is.** Error strings may be
-reworded freely — the wrapped `errs.*` value is what maps to an exit code, so
+reworded freely. The wrapped `errs.*` value is what maps to an exit code, so
 that is what a refusal test should assert. Where the refusal must also leave
 nothing behind, assert that too: no output emitted, no file written, no tool
 invoked.
 
-**A double must not be more permissive than what it doubles.** `fakeoutputsink`
-accepted scalar values containing newlines while both real sinks reject them,
-which hid a command that fails on any project with two build secrets. When a
-guard exists in the adapter, the fake needs it too, or no test can reach it.
-
 **Poison the product to check the test.** Make the change the test claims to
-catch and confirm it fails — and confirm the poison actually compiled and
+catch and confirm it fails, then confirm the poison actually compiled and
 applied first. A green run under a poison that never took is not evidence.
 
 ## Three rules

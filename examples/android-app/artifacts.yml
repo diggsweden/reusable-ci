@@ -6,6 +6,8 @@ artifacts:
   - name: my-android-app-demo
     project-type: gradle-android
     working-directory: .
+    # APK/AAB analyzed-artifact scanning is not implemented.
+    sboms: build
     publish-to:
       - google-play
     config:

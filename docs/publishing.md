@@ -1,10 +1,15 @@
 # Publishing Guide
 
-Configure and verify the supported publishing targets — Maven Central,
+Configure and verify the supported publishing targets: Maven Central,
 GitHub Packages, container registries, App Store Connect, and Google
 Play. Per-target sections cover prerequisites, the `artifacts.yml`
 fields and secrets each one needs, and the consumer-side fetch
 commands.
+
+> **Unpublished v3:** `@v3.0.0` references below are prospective. Until the tag
+> and matching runtime images exist, use the reviewed-branch procedure in
+> [Runtime Images](runtime-images.md); do not substitute an unreviewed moving
+> ref in production.
 
 ## Targets at a glance
 
@@ -40,11 +45,11 @@ podman pull ghcr.io/<owner>/<repo>:v1.0.0
 
 ### Prerequisites
 
-1. **GPG Key Setup** — configure `RELEASE_GPG_PRIVATE_KEY`,
+1. **GPG Key Setup**: configure `RELEASE_GPG_PRIVATE_KEY`,
    `RELEASE_GPG_PASSPHRASE`, and `RELEASE_GPG_PUBLIC_KEY` as repository
    or organization secrets.
 
-2. **Maven Central Credentials** — configure `MAVEN_CENTRAL_USERNAME`
+2. **Maven Central Credentials**: configure `MAVEN_CENTRAL_USERNAME`
    and `MAVEN_CENTRAL_PASSWORD` the same way.
 
 ### Configuration
@@ -67,7 +72,12 @@ artifacts:
 
 ### Project Requirements
 
-Your `pom.xml` must include:
+Your `pom.xml` must include the required metadata and project-owned attachments
+shown below.
+
+The source and Javadoc plugins below are project-owned and version-pinned. The
+`library` build type selects the library lifecycle and `central-release`
+profile; reusable-ci does not inject those plugin goals.
 
 ```xml
 <project>
@@ -206,7 +216,7 @@ config:
 
 ### Release Process
 
-1. **Request a release** — push a SIGNED request tag:
+1. **Request a release**: push a SIGNED request tag:
 
    ```bash
    git tag -s release-request/v1.0.0 -m "Release v1.0.0"
@@ -215,17 +225,17 @@ config:
 
    reusable-ci verifies your signature (against the committed allowlist, when
    enabled), bumps the version + changelog, then **creates the immutable
-   `v1.0.0` release tag once** at the bump commit — no tag is force-pushed or
+   `v1.0.0` release tag once** at the bump commit. No tag is force-pushed or
    mutated. Your signed `release-request/v1.0.0` tag remains as the
    authorisation anchor, and the bot's release commit records you as the
    original tagger (`Release-Authorized-By` / `Co-authored-by` trailers).
 
    The reusable-ci example release workflows trigger on `release-request/v*`.
-   (SNAPSHOT/dev builds are a separate `workflow_dispatch` flow — see the
-   snapshot orchestrator — and do not use release-request tags.)
+   (SNAPSHOT/dev builds are a separate `workflow_dispatch` flow, described by
+   the snapshot orchestrator, and do not use release-request tags.)
 
 2. **Workflow automatically:**
-   - Builds library with sources and javadoc
+   - Runs the library lifecycle/profile; the project POM attaches sources and javadoc
    - GPG signs all artifacts
    - Publishes to Maven Central staging
    - Auto-releases after validation
@@ -250,49 +260,12 @@ Users add to their `pom.xml`:
 
 No additional configuration needed - Maven Central is included by default.
 
-#### Snapshot Versions
+#### Snapshot channel
 
-To consume `-SNAPSHOT` versions, add snapshot repository to `~/.m2/settings.xml` or project `pom.xml`:
-
-```xml
-<!-- ~/.m2/settings.xml -->
-<settings>
-  <profiles>
-    <profile>
-      <id>snapshots</id>
-      <repositories>
-        <repository>
-          <id>maven-snapshots</id>
-          <url>https://central.sonatype.com/repository/maven-snapshots/</url>
-          <releases>
-            <enabled>false</enabled>
-          </releases>
-          <snapshots>
-            <enabled>true</enabled>
-            <updatePolicy>always</updatePolicy>
-          </snapshots>
-        </repository>
-      </repositories>
-    </profile>
-  </profiles>
-
-  <activeProfiles>
-    <activeProfile>snapshots</activeProfile>
-  </activeProfiles>
-</settings>
-```
-
-Then use snapshot version in your project:
-
-```xml
-<dependency>
-  <groupId>com.example</groupId>
-  <artifactId>my-library</artifactId>
-  <version>1.0.0-SNAPSHOT</version>
-</dependency>
-```
-
-**Note:** Snapshots are development versions and may change frequently. Use `updatePolicy>always</updatePolicy>` to always check for latest snapshot.
+The production release flow publishes stable versions only. Branch snapshots
+use `release-snapshot-orchestrator.yml`, do not create release tags or GitHub
+Releases, and currently publish only content-addressed npm snapshot versions.
+Maven snapshot publication is not implemented by reusable-ci.
 
 ---
 
@@ -378,14 +351,14 @@ npm install @your-github-org/my-package
 
 ## Container Registries
 
-`ghcr.io` is the default — `GITHUB_TOKEN` covers auth, no setup
+`ghcr.io` is the default: `GITHUB_TOKEN` covers auth, no setup
 beyond declaring the container in `artifacts.yml`. Other registries
 work via the `registry-password` secret on
 `publish-container.yml`'s call site.
 
 ### GitHub Container Registry (ghcr.io)
 
-No setup required — declare the container and push:
+No setup required. Declare the container and push:
 
 ```yaml
 containers:
@@ -422,6 +395,7 @@ jobs:
       actions: read
     secrets: inherit
     with:
+      branch: main
       reusable-ci-binary-ref: v3.0.0
       container-file: Containerfile
       artifact-types: maven
@@ -458,6 +432,7 @@ jobs:
       attestations: write
       actions: read
     with:
+      branch: main
       reusable-ci-binary-ref: v3.0.0
       container-file: Containerfile
       artifact-types: maven
@@ -490,6 +465,7 @@ jobs:
       attestations: write
       actions: read
     with:
+      branch: main
       reusable-ci-binary-ref: v3.0.0
       container-file: Containerfile
       artifact-types: maven

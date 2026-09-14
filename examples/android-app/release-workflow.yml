@@ -19,10 +19,10 @@ jobs:
       contents: write
       packages: write
       id-token: write
-      attestations: write
       actions: read
     secrets: inherit
     with:
+      branch: main
       reusable-ci-binary-ref: v3.0.0
       artifacts-config: .reusable-ci/artifacts.yml
       release-publisher: github-cli

@@ -12,9 +12,10 @@ quality, backed by the `reusable-ci` Go CLI. Targets adopters who want
 SBOMs, signing, SLSA provenance, and pinned third-party actions
 without rebuilding each piece per project.
 
-The examples below target the v3.0.0 workflow contract. Before that
-release tag and its matching runtime images exist, use the
-branch-testing flow in [Runtime Images](docs/runtime-images.md).
+**v3 status:** the examples below target the not-yet-published v3.0.0 workflow
+contract. Until that immutable release tag and its matching runtime images
+exist, use the branch-testing flow in [Runtime Images](docs/runtime-images.md);
+do not treat the example v3.0.0 pins as available release artifacts.
 
 ## Documentation
 
@@ -51,7 +52,9 @@ single `workflow_call:` entry:
    findings uploaded to Code Scanning as SARIF. The adopter's own tests are
    wired separately.
 
-2. **Release** (`release-orchestrator.yml`) runs on signed tag push:
+2. **Release** (`release-orchestrator.yml`) runs on a signed
+   `release-request/vX.Y.Z` tag push. It validates the request, creates the final
+   `vX.Y.Z` tag after version preparation, then builds and publishes:
    parse `.reusable-ci/artifacts.yml`, validate release prerequisites,
    build the declared artifacts, publish them to their declared
    targets (Maven Central / GitHub Packages / npm / Google Play / App
@@ -69,6 +72,17 @@ single `workflow_call:` entry:
 
 ### Getting Started
 
+To install the CLI from a local checkout for validation and development:
+
+```bash
+go install ./cmd/reusable-ci
+reusable-ci --version
+```
+
+To install another reviewed source revision, run
+`go install github.com/diggsweden/reusable-ci/v3/cmd/reusable-ci@<tag-or-sha>`.
+Ensure your Go bin directory (normally `$(go env GOPATH)/bin`) is on `PATH`.
+
 Most projects need only the workflow files:
 
 1. `.github/workflows/pullrequest-workflow.yml` - For PR checks
@@ -85,7 +99,8 @@ containers, publish targets). Verify a setup any time with
 ### How it works
 
 - Push code → PR workflow runs checks.
-- Sign and push a `release-request/vX.Y.Z` tag → release workflow validates, builds, publishes.
+- Sign and push a `release-request/vX.Y.Z` tag → release automation validates
+  it, creates the final `vX.Y.Z` tag, builds, and publishes.
 - A failed step prints an actionable message; the orchestrator's
   step-summary block names which leaf failed.
 
@@ -95,6 +110,7 @@ containers, publish targets). Verify a setup any time with
 ```yaml
 uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v3.0.0
 with:
+  branch: main
   reusable-ci-binary-ref: v3.0.0
   artifacts-config: .reusable-ci/artifacts.yml
   release-publisher: github-cli
@@ -115,6 +131,7 @@ jobs:
       contents: read
       packages: write
     with:
+      branch: main
       package-type: npm
       artifact-source: npm-build-artifacts
 
@@ -129,6 +146,7 @@ jobs:
       actions: read
     secrets: inherit
     with:
+      branch: main
       reusable-ci-binary-ref: v3.0.0
       container-file: Containerfile
       artifact-types: npm
@@ -197,6 +215,7 @@ jobs:
          attestations: write
        secrets: inherit
        with:
+         branch: main
          reusable-ci-binary-ref: v3.0.0
          artifacts-config: .reusable-ci/artifacts.yml
          release-publisher: github-cli
@@ -219,6 +238,7 @@ jobs:
          packages: write
        secrets: inherit
        with:
+         branch: ${{ github.ref_name }}
          reusable-ci-binary-ref: v3.0.0
          artifacts-config: .reusable-ci/artifacts.yml
    ```
@@ -233,9 +253,12 @@ jobs:
 
 6. **Create your first release**:
    ```bash
-   git tag -s v1.0.0 -m "Release v1.0.0"
-   git push origin v1.0.0
+   git tag -s release-request/v1.0.0 -m "Release v1.0.0"
+   git push origin release-request/v1.0.0
    ```
+
+   Do not create or push `v1.0.0` yourself. After all version bumps succeed,
+   release automation creates that final tag once at the prepared branch HEAD.
 
 ---
 
@@ -370,7 +393,7 @@ branch/dispatch-triggered, never a tag.
 
 ## License
 
-The `reusable-ci` program — the Go source — is dual-licensed
+The `reusable-ci` program, meaning the Go source, is dual-licensed
 [EUPL-1.2](LICENSES/EUPL-1.2.txt) **OR**
 [GPL-3.0-or-later](LICENSES/GPL-3.0-or-later.txt), at your option.
 

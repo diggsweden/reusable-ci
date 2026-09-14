@@ -1,6 +1,6 @@
 # Gradle JVM Build Example
 
-Gradle JVM build example. For Android applications, see [examples/android-app](../android-app/) — that path uses `project-type: gradle-android` and routes to `build-gradle-android.yml`, which understands product flavors, AABs, and Google Play publishing.
+Gradle JVM build example. For Android applications, see [examples/android-app](../android-app/). That path uses `project-type: gradle-android` and routes to `build-gradle-android.yml`, which understands product flavors, AABs, and Google Play publishing.
 
 ## Project Structure
 
@@ -47,13 +47,16 @@ See [release-workflow.yml](release-workflow.yml) in this directory. Uses the rel
    - Update `name` in `artifacts.yml`.
    - Adjust `gradle-tasks` if your build task differs.
    - Set `version=` in `gradle.properties` (the workflow reads this for the build summary).
-   - **Set `preserveFileTimestamps = false` AND `reproducibleFileOrder = true` on every `AbstractArchiveTask`** — required for reproducible archives; `validate jvm-reproducibility` fails the release if either is missing. See [Reproducible Builds](../../docs/verification.md#reproducible-builds) for the exact snippet.
+   - **Set `preserveFileTimestamps = false` AND `reproducibleFileOrder = true` on every `AbstractArchiveTask`**: required for reproducible archives; `validate jvm-reproducibility` fails the release if either is missing. See [Reproducible Builds](../../docs/verification.md#reproducible-builds) for the exact snippet.
 
 3. **Create first release:**
    ```bash
-   git tag -s v1.0.0 -m "Release v1.0.0"
-   git push origin v1.0.0
+   git tag -s release-request/v1.0.0 -m "Release v1.0.0"
+   git push origin release-request/v1.0.0
    ```
+
+   Release automation creates the final `v1.0.0` tag after preparation; do not
+   create or push that final tag directly.
 
 ## What Gets Built
 

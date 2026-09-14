@@ -29,7 +29,7 @@ Four concrete symptoms:
 
 2. **`publish` mixes altitudes.** The `publish` group holds both actual
    uploads (`forge-packages`, `google-play`, `appstore`) and pre-flight
-   credential/artifact checks — while the `validate` group *already* owns
+   credential/artifact checks, while the `validate` group *already* owns
    credential checks (`validate maven-central`, `validate has-maven-central`).
    The pre-flight turf is split across two groups under two verbs.
 
@@ -46,7 +46,7 @@ Four concrete symptoms:
    altitude.
 
 None of these break usability, but they make the surface harder to predict
-than the clean root suggests, and — critically — every new command re-opens
+than the clean root suggests and, critically, every new command re-opens
 the same coin-flip. A naive round of renames would not fix that on its own:
 without a written rule, the vocabulary re-diverges on the next command.
 
@@ -64,7 +64,7 @@ match.
 
 These nine concepts have **one canonical spelling each**. A command performing
 one of them MUST use the sanctioned word rather than a synonym. Commands
-performing an action *outside* this set choose their own verb freely — the set
+performing an action *outside* this set choose their own verb freely. The set
 is a reserved lexicon, not an exhaustive vocabulary:
 
 | Verb | Meaning | Side effects |
@@ -87,7 +87,7 @@ An earlier draft of this section read "Every command's leading verb MUST be one
 of", which was an over-reach: measured against the live tree, a literal
 nine-verb allowlist rejects **166 of 201** leaf commands, among them
 `container login`, `artifact upload`, `version bump`, `build go run` and
-`container ledger add` — all good names. It also contradicted this ADR's own
+`container ledger add` are all good names. It also contradicted this ADR's own
 Consequences, which predict only the `verify-*` churn. The reserved-lexicon
 reading above is what was actually decided and what was actually implemented.
 
@@ -102,7 +102,7 @@ reading above is what was actually decided and what was actually implemented.
   plumbing subcommands that are only ever invoked by the workflows (not by an
   operator) are grouped under an explicit low-level category/subtree, so the
   tree itself signals altitude. `container ledger *` is the primitive layer;
-  `container release-images *` / `base-images *` is the orchestration layer —
+  `container release-images *` / `base-images *` is the orchestration layer;
   the docs and categories must say so.
 
 ### 3. Enforcement: code review, not a guard test
@@ -139,7 +139,7 @@ Removed: `internal/cli/verblexicon_guard_test.go` (`TestNoRetiredCommandVerbs`).
 
 Command renames are outward-facing: consumers pin them in workflow YAML
 (nanolinter → forgejo-ci → this engine, via the vendored binary). We do **not**
-carry deprecation aliases — the old spellings are removed outright, and the
+carry deprecation aliases. The old spellings are removed outright, and the
 lockstep vendoring flow updates every consumer in order:
 
 - Rename to the sanctioned verb in the engine; the old name ceases to exist.
@@ -167,3 +167,9 @@ lockstep vendoring flow updates every consumer in order:
 
 This ADR records the **decision and the rule**; the renames are follow-up work
 tracked separately and gated on this being accepted.
+
+## Status update (2026-08-29)
+
+This decision remains **Accepted**. The generated
+[`docs/cli-reference.md`](../cli-reference.md) is the current command inventory;
+the historical decision above remains unchanged.

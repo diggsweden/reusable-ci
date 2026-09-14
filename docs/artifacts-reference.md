@@ -2,11 +2,18 @@
 
 Complete reference for the artifacts config format.
 
+> **Unpublished v3:** `@v3.0.0` references below are prospective. Until the tag
+> and matching runtime images exist, use the reviewed-branch procedure in
+> [Runtime Images](runtime-images.md); do not substitute an unreviewed moving
+> ref in production.
+
+---
+
 > For per-ecosystem capability matrices and the artifact-first vs container-first framing, see **[docs/ecosystems.md](ecosystems.md)**.
 
 ## Location
 
-The canonical path is **`.reusable-ci/artifacts.yml`**. The release-orchestrator reads it by default — operators no longer need to pass `artifacts-config:` explicitly. To use a different path, set `artifacts-config: <path>` on the workflow_call.
+The canonical path is **`.reusable-ci/artifacts.yml`**. The release-orchestrator reads it by default, so operators no longer need to pass `artifacts-config:` explicitly. To use a different path, set `artifacts-config: <path>` on the workflow_call.
 
 Co-located with the other reusable-ci files:
 
@@ -43,7 +50,7 @@ When `.reusable-ci/artifacts.yml` is absent AND the repo has **exactly one** eco
 | `go.mod` | one Go artifact, name = basename of `module` path |
 | `build.gradle` or `build.gradle.kts` | one Gradle artifact, name = `rootProject.name` (or repo dir name as fallback) |
 
-This collapses the common "single-library repo" case to zero configuration. **Polyglot repos** (more than one root manifest) refuse to auto-derive and demand an explicit `artifacts.yml` — the error names every manifest it found.
+This collapses the common "single-library repo" case to zero configuration. **Polyglot repos** (more than one root manifest) refuse to auto-derive and demand an explicit `artifacts.yml`. The error names every manifest it found.
 
 ## Overview
 
@@ -60,6 +67,36 @@ containers:
     # ... container configuration
 ```
 
+## Signing Vocabulary
+
+Artifact signing and Git signing are separate top-level policies. The following
+blocks track closed runtime/schema vocabularies, not support for every combination
+or provider.
+
+### `sign.method`
+<!-- schema-values:sign.method -->
+`gpg`, `sigstore`, `kms`
+<!-- /schema-values:sign.method -->
+
+### `sign.transparency`
+<!-- schema-values:sign.transparency -->
+`public`, `none`
+<!-- /schema-values:sign.transparency -->
+
+### `git-signing.method`
+<!-- schema-values:git-signing.method -->
+`gpg`, `ssh`
+<!-- /schema-values:git-signing.method -->
+
+### `sign.key` URI Schemes
+<!-- schema-values:sign.key schemes -->
+`awskms`, `gcpkms`, `azurekms`, `hashivault`, `pkcs11`, `file`
+<!-- /schema-values:sign.key schemes -->
+
+The `file` scheme is an explicit local-development/integration option, not a
+claim that a local key is a KMS. Runtime validation also checks method-specific
+requirements and incompatible fields.
+
 ## Artifacts Section
 
 ### Artifact Required Fields
@@ -75,8 +112,10 @@ containers:
 
 - **Type:** `string`
 - **Description:** Build system type
-- **Valid values:** `maven`, `npm`, `gradle`, `gradle-android`, `xcode-ios`, `cargo`, `meta`, `python`, `go`
-- **Note:** for `go` and `cargo`, `config.build-mode` selects the pipeline shape; omitted defaults to `artifact-first`. `python` is reserved in the schema but has no workflows yet.
+<!-- schema-values:project-type -->
+- **Valid values:** `maven`, `npm`, `gradle`, `gradle-android`, `xcode-ios`, `go`, `cargo`, `meta`
+<!-- /schema-values:project-type -->
+- **Note:** for `go` and `cargo`, `config.build-mode` selects the pipeline shape; omitted defaults to `artifact-first`.
 - **Example:** `project-type: maven`
 
 #### `working-directory`
@@ -94,13 +133,20 @@ containers:
 
 - **Type:** `string`
 - **Description:** Maven build type used by the orchestrator when calling `build-maven.yml`
+<!-- schema-values:build-type -->
 - **Valid values:** `application` (default), `library`
-- **Default:** `application`
+<!-- /schema-values:build-type -->
+- **Default:** Omit the key to use the application build lifecycle. Explicit empty
+  strings (`""`, `''`) and YAML nulls (`null`, `~`, or a bare `build-type:`) are
+  invalid. Omission remains unset in the plan and preserves Maven
+  `forge-packages` eligibility when requested; explicit `application` excludes
+  the artifact from that publish set. Maven Central still requires explicit
+  `library`.
 - **Applies to:** Maven only. Gradle workflows ignore this field today.
 - **Example:** `build-type: library`
 - **Behavior:**
   - `application`: Builds with `mvn package`
-  - `library`: Builds with `mvn package` via the library path, generating sources/javadoc according to the configured Maven profile/project setup
+  - `library`: Selects the compile/test/package lifecycle and optional Maven profile. The project POM/profile owns attached sources and javadoc artifacts; reusable-ci does not invoke source or javadoc plugin goals. Maven Central validation later requires both JARs.
 
 #### `require-authorization`
 
@@ -116,7 +162,9 @@ containers:
 - **Type:** `array of strings`
 - **Description:** Publishing targets for built artifacts
 - **Default:** `[]` (no package-registry publisher; container publishing is configured separately under `containers[]`)
-- **Supported values:** `forge-packages`, `maven-central`, `google-play`
+<!-- schema-values:publish-to -->
+- **Schema values:** `maven-central`, `forge-packages`, `google-play`, `npmjs`
+<!-- /schema-values:publish-to -->
 - **Reserved value:** `npmjs` is schema-recognized for future use, but current
   config validation rejects it because production npmjs.org publishing is not
   implemented yet. Use `forge-packages` for current NPM package publishing.
@@ -142,19 +190,22 @@ containers:
 
 - **Type:** `string` (enum / comma-list)
 - **Description:** Which CISA SBOM types to generate for this artifact. See [docs/sbom.md](sbom.md) for the full taxonomy.
+<!-- schema-values:sboms layer -->
+- **Grammar tokens:** `all`, `none`, `build`, `analyzed-artifact`, `analyzed-container`
+<!-- /schema-values:sboms layer -->
 - **Accepted values:**
-  - `all` — Build + Analyzed-artifact + Analyzed-container (default)
-  - `none` — skip SBOM generation entirely
-  - `build` — CISA Build SBOM only (cyclonedx plugin during build)
-  - `analyzed-artifact` — Syft scan of the built binary only
-  - `analyzed-container` — Syft scan of the published container only
+  - `all`: request Build + Analyzed-artifact + Analyzed-container (default for supported project types; ecosystem limitations still apply)
+  - `none`: skip SBOM generation entirely
+  - `build`: CISA Build SBOM only (cyclonedx plugin during build)
+  - `analyzed-artifact`: Syft scan of the built artifact
+  - `analyzed-container`: Syft scan of the published container only
   - Any comma-list of the three layer names, e.g. `build,analyzed-artifact`
 - **Default:** Automatic based on project type:
-  - `all` for: `maven`, `npm`, `gradle`, `gradle-android`, `cargo`, `go`, `python` (`python` is reserved but has no workflow yet)
+  - `all` for: `maven`, `npm`, `gradle`, `gradle-android`, `cargo`, `go`
   - `none` for: `xcode-ios`, `meta`
 - **Examples:**
   ```yaml
-  # (default — same as omitting the field for a supported project type)
+  # (default: same as omitting the field for a supported project type)
   sboms: all
 
   # Compliance minimum
@@ -164,9 +215,9 @@ containers:
   sboms: none
   ```
 - **Formats produced:** Build layer: CycloneDX 1.6. Analyzed-artifact and analyzed-container layers: SPDX 2.3 and CycloneDX 1.6.
-- **Pipeline cap:** The release orchestrator `release.sboms` input (default `all`) and release-snapshot orchestrator `sboms` input (default `none`) cap aggregate release/snapshot SBOM generation against the pipeline-wide SBOM union. They do not rewrite each artifact's parsed `effective-sboms`.
-- **What it controls:** Effective SBOM layers for this artifact. On the orchestrator path it controls build-time Build SBOM execution and container SBOM generation. Direct build workflow calls still default their Build SBOM input to `true` unless explicitly disabled. See [docs/sbom.md](sbom.md) for the full semantics.
-- **Note:** `analyzed-*` scans use [Syft](https://github.com/anchore/syft); ecosystem coverage varies. Gradle Android currently produces Build SBOMs and analyzed-container SBOMs, but not APK/AAB analyzed-artifact SBOMs. The `build` layer uses the language-native cyclonedx plugin and is the highest-fidelity type.
+- **Release policy:** The production `release.sboms` input (default `all`) is intersected with the pipeline-wide union. It selects release-bundle layers and gates container-first Go/Cargo Build SBOM jobs. It does not rewrite per-artifact `effective-sboms`, disable artifact-first Build SBOM jobs, or disable container SBOM attestations. The snapshot `sboms` input (default `none`) has separate workflow-wide generation gates.
+- **What it controls:** Build-time artifact-first Build SBOM execution, container SBOM generation, and per-artifact release inclusion. Direct build workflow calls still default their Build SBOM input to `true` unless explicitly disabled. See [docs/sbom.md](sbom.md) for the full semantics.
+- **Note:** `analyzed-*` scans use [Syft](https://github.com/anchore/syft); ecosystem coverage varies. Gradle Android does not support APK/AAB analyzed-artifact SBOMs, and requesting that layer fails release assembly. Configure Android with `sboms: build`, or `build,analyzed-container` when it feeds a container. The `build` layer uses the language-native cyclonedx plugin and is the highest-fidelity type.
 
 ---
 
@@ -207,8 +258,10 @@ containers:
 #### `config.build-mode`
 
 - **Type:** `string`
-- **Required:** No — omitted defaults to `artifact-first`
+- **Required:** No; omitted defaults to `artifact-first`
+<!-- schema-values:go build-mode -->
 - **Valid values:** `artifact-first` (default), `container-first`
+<!-- /schema-values:go build-mode -->
 - **Description:** Selects whether reusable-ci compiles Go binaries in `build-go.yml` (artifact-first) or lets the project's Containerfile compile them (container-first).
 
 Use `artifact-first` for CLI/tools released as standalone binaries:
@@ -245,8 +298,8 @@ reference one artifact-first Go artifact. Multiple Go binaries should either be
 built in the Containerfile (`container-first`) or split across containers.
 The downloaded layout inside the container build context is
 `dist/<goos>-<goarch>/<binary>-<goos>-<goarch>`, so multi-arch Containerfiles
-can copy `dist/${TARGETOS}-${TARGETARCH}/...` using BuildKit's target
-arguments.
+can copy `dist/${TARGETOS}-${TARGETARCH}/...` using the target arguments Buildah
+exposes for each `--platform` build.
 
 #### `config.main-package`
 
@@ -280,8 +333,10 @@ arguments.
 #### `config.build-mode`
 
 - **Type:** `string`
-- **Required:** No — omitted defaults to `artifact-first`
+- **Required:** No; omitted defaults to `artifact-first`
+<!-- schema-values:cargo build-mode -->
 - **Valid values:** `artifact-first` (default), `container-first`
+<!-- /schema-values:cargo build-mode -->
 - **Description:** Selects whether reusable-ci cross-compiles Rust binaries in `build-cargo.yml` (artifact-first) or lets the project's Containerfile compile them (container-first). Symmetric with Go's `build-mode`.
 
 Use `artifact-first` for CLI/tools released as standalone binaries:
@@ -389,7 +444,7 @@ way Go containers do.
 #### `config.artifact-name-prefix`
 
 - **Type:** `string`
-- **Description:** Prefix for derived artifact names when calling `build-gradle-android.yml` directly. Ignored on the orchestrator path — the orchestrator forwards the artifact's `name:` as the upload identifier so it lines up with what `release-publish-stage.yml` hands to `publish-google-play.yml`.
+- **Description:** Prefix for derived artifact names when calling `build-gradle-android.yml` directly. Ignored on the orchestrator path. There the orchestrator forwards the artifact's `name:` as the upload identifier, so it lines up with what `release-publish-stage.yml` hands to `publish-google-play.yml`.
 - **Default:** `""`
 - **Example:** `artifact-name-prefix: dev`
 
@@ -459,7 +514,7 @@ way Go containers do.
   - `IOS_SIGNING_CERTIFICATE_BASE64` - Base64-encoded .p12 certificate
   - `IOS_SIGNING_CERTIFICATE_PASSPHRASE` - Certificate password
   - `PROVISIONING_PROFILE_BASE64` - Base64-encoded provisioning profile
-  - `KEYCHAIN_PASSWORD` - Temporary keychain password
+  - `KEYCHAIN_PASSWORD` - no longer used; the build mints its own transient keychain password
 
 #### `config.export-options-var`
 
@@ -518,6 +573,19 @@ way Go containers do.
   - `ANDROID_KEY_PASSWORD` - Key password
 - **Note:** The workflow maps `ANDROID_KEYSTORE` to the internal
   `ANDROID_KEYSTORE_BASE64` environment variable used by the `reusable-ci` CLI.
+- **Behavior when false:** Skips reusable-ci's keystore injection only. Requested
+  release APK/AAB tasks and run-artifact uploads still execute and may produce
+  unsigned outputs; reusable-ci does not reject them at config-parse time.
+
+#### Android upload selection
+
+`build-gradle-android.yml` uploads each requested debug APK, release APK, and
+release AAB as a GitHub Actions run artifact. The production release transfer
+selects only the AAB, and only when `build-types` includes `release` and
+`include-aab` is true. APK run artifacts are not automatically attached to the
+GitHub Release. `publish-to: [google-play]` also selects the AAB; configuration
+validation does not currently require `enable-android-signing: true`, although
+Google Play normally requires a signed bundle.
 
 #### `config.package-name`
 
@@ -656,12 +724,12 @@ Containers reference artifacts via the `from:` field and are built after all art
 
 #### Container `enable-sbom` (removed in v3)
 
-The v2.x `enable-sbom: bool` field on the container block is removed in v3 and strict parsing rejects it. Container scanning is now derived from each source artifact's `sboms` field — the container is scanned if any source artifact has `analyzed-container` in its effective sboms (the default for buildable types). To skip the scan, exclude `analyzed-container` from the source artifact's `sboms` (e.g. `sboms: build,analyzed-artifact`).
+The v2.x `enable-sbom: bool` field on the container block is removed in v3 and strict parsing rejects it. Container scanning is now derived from each source artifact's `sboms` field. The container is scanned if any source artifact has `analyzed-container` in its effective sboms, the default for buildable types. To skip the scan, exclude `analyzed-container` from the source artifact's `sboms` (e.g. `sboms: build,analyzed-artifact`).
 
 #### `enable-scan`
 
 - **Type:** `boolean`
-- **Description:** Run Trivy vulnerability scan AND gate the publish on its findings. When `true` (default), any finding at the configured `scan-severity` or above fails the publish — the SARIF + GitLab reports are still produced so the rejection is visible in Code Scanning. Set to `false` to skip both the scan and the gate.
+- **Description:** Run Trivy vulnerability scan AND gate the publish on its findings. When `true` (default), any finding at the configured `scan-severity` or above fails the publish. The SARIF and GitLab reports are still produced, so the rejection is visible in Code Scanning. Set to `false` to skip both the scan and the gate.
 - **Default:** `true`
 - **Requires:** `CODE_SCANNING_TOKEN` org secret for results to appear in Code Scanning
 - **Example:** `enable-scan: true`
@@ -679,7 +747,7 @@ The v2.x `enable-sbom: bool` field on the container block is removed in v3 and s
 - **Description:** Containerfile stage to build for the runtime image. Useful for multi-stage Containerfiles where the deployable image is not the last stage.
 - **Default:** empty (builds the last stage; current `docker build` behavior)
 - **Example:** `target: runtime`
-- **Used by:** container-first ecosystems primarily, but the field is generic — any multi-stage Containerfile may set it.
+- **Used by:** container-first ecosystems primarily, but the field is generic: any multi-stage Containerfile may set it.
 - **See also:** [artifact-first vs container-first framing](ecosystems.md)
 
 #### `extract.binary`
@@ -698,7 +766,7 @@ The extraction shares cache with the runtime image build (same buildah layer cac
 ##### `extract.binary.names`
 
 - **Type:** list of `string`
-- **Description:** Expected binary file basenames in the extracted output. Informational — surfaced in the GitHub Actions step summary and used downstream for naming. Not enforced; if the names don't match the export-binary stage's COPYs, no error is raised.
+- **Description:** Expected binary file basenames in the extracted output. Informational: surfaced in the GitHub Actions step summary and used downstream for naming. Not enforced; if the names don't match the export-binary stage's COPYs, no error is raised.
 - **Example:** `names: [my-service, my-service-cli]`
 
 ##### Full example
@@ -744,6 +812,7 @@ containers:
   ```yaml
   uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@v3.0.0
   with:
+    branch: main
     reusable-ci-binary-ref: v3.0.0
     artifact-types: cargo
     build-args: |
@@ -754,17 +823,22 @@ containers:
 #### `build-secrets`
 
 - **Type:** array of strings (each matches `^[A-Z_][A-Z0-9_]*$`)
-- **Description:** Names of GitHub Actions secrets to forward into the Containerfile build as `RUN --mount=type=secret` mounts. Use this for any secret needed at build time (private registry tokens, build-time API keys). Unlike `build-args` — whose values surface verbatim in the published image's config / build records (`docker history`, any registry inspect) — build-secret values are mounted on tmpfs into the consuming `RUN` step and **never recorded in the image, workflow logs, or step inputs**.
+- **Description:** Names of GitHub Actions secrets to forward into the Containerfile build as `RUN --mount=type=secret` mounts. Use this for any secret needed at build time (private registry tokens, build-time API keys). `build-args` values surface verbatim in the published image's config and build records (`docker history`, any registry inspect). Build-secret values instead are mounted on tmpfs into the consuming `RUN` step, and are **never recorded in the image, workflow logs, or step inputs**.
 - **How it works:** Each name listed here must appear as a key in
   the `REUSABLE_CI_BUILD_SECRETS_JSON` envelope secret (see the
   recipe below). At build time, `reusable-ci container
   materialize-build-secrets` unpacks the envelope into mode-0600
   tmpfiles under `$RUNNER_TEMP/build-secrets/` and emits the
-  `id=NAME,src=PATH` lines `reusable-ci container build` passes to
-  buildah's `--secret`.
-  Reserved names — those reusable-ci already uses for its own
+  `id=NAME,src=PATH` mount specs as a compact JSON array. The scalar-safe
+  encoding crosses GitHub/Forgejo output files and GitLab dotenv reports
+  without multiline ambiguity; `reusable-ci container build` decodes it and
+  passes each entry to buildah's `--secret`. An `if: always()` step removes
+  the private files after their final build consumer, including on
+  self-hosted runners; a failed materialization removes its partial files
+  immediately.
+  Reserved names, those reusable-ci already uses for its own
   publish flows (`RELEASE_GPG_PRIVATE_KEY`, `MAVEN_CENTRAL_PASSWORD`,
-  etc.) — are rejected at config-parse time to prevent accidental
+  etc.), are rejected at config-parse time to prevent accidental
   shadowing.
 - **artifacts.yml:**
 
@@ -788,9 +862,9 @@ containers:
            https://internal.example/private/dep.tar.gz -o /tmp/dep.tar.gz
   ```
 
-- **Caller workflow:** the adopter's top-level caller forwards the envelope as the `REUSABLE_CI_BUILD_SECRETS_JSON` secret. The value must stay inside the `secrets:` context end-to-end — step outputs, job outputs, and `with:` inputs are **not** secret-scoped (their values are queryable through the workflow-run API even when GHA masks them in log text). Two correct shapes, picked by how much scoping you want:
+- **Caller workflow:** the adopter's top-level caller forwards the envelope as the `REUSABLE_CI_BUILD_SECRETS_JSON` secret. The value must stay inside the `secrets:` context end-to-end. Step outputs, job outputs, and `with:` inputs are **not** secret-scoped (their values are queryable through the workflow-run API even when GHA masks them in log text). Two correct shapes, picked by how much scoping you want:
 
-  **Option A — single pre-packed org secret (recommended).** Create one GitHub secret named `REUSABLE_CI_BUILD_SECRETS_JSON` at the repo or org level whose value is the compact JSON object you'd otherwise build at runtime, e.g.:
+  **Option A, a single pre-packed org secret (recommended).** Create one GitHub secret named `REUSABLE_CI_BUILD_SECRETS_JSON` at the repo or org level. Its value is the compact JSON object you'd otherwise build at runtime:
 
   ```json
   {"PRIVATE_REGISTRY_TOKEN":"<value>","BUILD_TIME_API_KEY":"<value>"}
@@ -802,6 +876,8 @@ containers:
   jobs:
     release:
       uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v3.0.0
+      with:
+        branch: main
       secrets:
         # ... your usual secret forwards ...
         REUSABLE_CI_BUILD_SECRETS_JSON: ${{ secrets.REUSABLE_CI_BUILD_SECRETS_JSON }}
@@ -809,7 +885,7 @@ containers:
 
   Pros: the value never enters a non-secret channel; rotation is one secret update; the envelope ships exactly the keys you declared.
 
-  **Option B — `toJSON(secrets)` shortcut.** If every name in `containers[].build-secrets` matches a top-level secret name exactly, forward the whole context:
+  **Option B, the `toJSON(secrets)` shortcut.** If every name in `containers[].build-secrets` matches a top-level secret name exactly, forward the whole context:
 
   ```yaml
   secrets:
@@ -855,7 +931,7 @@ containers:
 - **Requirements:**
   - `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` secret (service account JSON key)
   - `ANDROID_KEYSTORE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` secrets (for signing)
-  - Signed release AAB setup. `config.enable-android-signing: true` is normally required by Google Play, but reusable-ci does not currently validate this coupling.
+  - Signed release AAB setup. `config.enable-android-signing: true` is normally required by Google Play, but reusable-ci does not currently validate this coupling and may hand the upload workflow an unsigned AAB.
   - `config.package-name` specified
 - **Applies to:** Gradle Android only
 - **Note:** App must already exist in Google Play Console (upload first AAB manually)
@@ -883,6 +959,7 @@ jobs:
   release:
     uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v3.0.0
     with:
+      branch: main
       reusable-ci-binary-ref: v3.0.0
       artifacts-config: .reusable-ci/artifacts.yml
       release-publisher: github-cli
@@ -1181,6 +1258,7 @@ jobs:
       attestations: write
     secrets: inherit
     with:
+      branch: main
       reusable-ci-binary-ref: v3.0.0
       artifacts-config: .reusable-ci/artifacts.yml
       changelog-creator: git-cliff

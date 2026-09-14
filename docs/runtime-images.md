@@ -6,10 +6,15 @@ reusable-ci ships a family of OCI images that GitHub Actions workflows pull via
 narrow bootstrap installer surface at `/opt/reusable-ci/scripts/bootstrap/`, and
 the toolchain a given workflow needs.
 
-The goal is reproducible GitHub workflow execution today and reusable OCI image
-building blocks for future GitLab CI components. A workflow that runs against a
-pinned image digest gets the same binary, the same tools, and the same versions
-on every runner that can pull that image.
+The goal is reproducible execution across the shipped GitHub workflows and
+GitLab CI components. A workflow that runs against a pinned image digest gets
+the same binary, the same tools, and the same versions on every runner that can
+pull that image.
+
+> **Unpublished v3:** `@v3.0.0` and `:v3.0.0` examples below are prospective.
+> For current branch testing, pin the workflow and binary to one reviewed commit
+> SHA and use that commit's `:sha-<short-sha>` runtime images as described in
+> [Branch Testing](#branch-testing).
 
 ## Image roster
 
@@ -19,15 +24,15 @@ sibling image is added (`runtime-java-28`) and the old image keeps
 building patch updates for its line until the upstream LTS goes EOL.
 This makes consumer pinning unambiguous and avoids silent version moves.
 
-| Image | Inherits from | Adds | Approx size |
-|---|---|---|---|
-| `reusable-ci-runtime-base` | `debian:13-slim` (Trixie) | `reusable-ci`, `bash`, `ca-certificates`, `curl`, `git`, `gnupg`, `gzip`, `jq`, `tar`, `unzip`, `xz`, `zip`, `yq`, `git-cliff`, `gh`, `glab`, `mise`, `publiccode-parser`, `templates/`, bootstrap installers | ~125 MB |
-| `reusable-ci-runtime` (full) | `runtime-base` | `opengrep`, `syft`, `trivy` | ~575 MB |
-| `reusable-ci-runtime-rust-stable` | `runtime-base` | Rust stable channel + `cargo-cyclonedx` | ~700 MB |
-| `reusable-ci-runtime-go-1.26` | `runtime-base` | Go 1.26 toolchain + `cyclonedx-gomod` | ~500 MB |
-| `reusable-ci-runtime-java-25` | `runtime-base` | Eclipse Temurin JDK 25 LTS + Maven 3.9.x + Gradle 8.x | ~500 MB |
-| `reusable-ci-runtime-android-35` | `runtime-java-25` | Android cmdline-tools + platform-tools + build-tools 35 + android-35, no NDK | ~+900 MB |
-| `reusable-ci-runtime-node-24` | `runtime-base` | Node 24 LTS + npm + corepack | ~150 MB |
+| Image | Inherits from | Adds |
+|---|---|---|
+| `reusable-ci-runtime-base` | `debian:13-slim` (Trixie) | `reusable-ci`, `bash`, `ca-certificates`, `curl`, `git`, `gnupg`, `gzip`, `jq`, `tar`, `unzip`, `xz`, `zip`, `yq`, `git-cliff`, `gh`, `glab`, `mise`, `publiccode-parser`, `templates/`, bootstrap installers |
+| `reusable-ci-runtime` (full) | `runtime-base` | `opengrep`, `syft`, `trivy` |
+| `reusable-ci-runtime-rust-stable` | `runtime-base` | Rust stable channel + `cargo-cyclonedx` |
+| `reusable-ci-runtime-go-1.26` | `runtime-base` | Go 1.26 toolchain + `cyclonedx-gomod` |
+| `reusable-ci-runtime-java-25` | `runtime-base` | Eclipse Temurin JDK 25 LTS + Maven 3.9.x + Gradle 8.x |
+| `reusable-ci-runtime-android-35` | `runtime-java-25` | Android cmdline-tools + platform-tools + build-tools 35 + android-35, no NDK |
+| `reusable-ci-runtime-node-24` | `runtime-base` | Node 24 LTS + npm + corepack |
 
 ## Layering
 
@@ -63,15 +68,15 @@ across both images on the runner.
 | `build-npm`, `publish-snapshot-npm` | `runtime-node-24` | Node + npm + corepack baked |
 | `publish-container` | host + Docker actions | DinD blocks `container:` use |
 | `security-openssf-scorecard` | host + third-party Docker action | Same |
-| `build-xcode-ios`, `publish-apple-appstore` | macOS host + `go install` from `reusable-ci-binary-ref` | macOS can't run Linux containers |
+| `build-xcode-ios`, `publish-apple-appstore` | macOS host + bootstrap installer from `reusable-ci-binary-ref` | Tagged releases use verified archives; branch/SHA refs use `go install` |
 
 ## Why some images aren't built
 
-- **`reusable-ci-runtime-android-35-ndk`**: Not built today. NDK is ~3 GB and only needed for projects with native (JNI) code — the minority. The current `reusable-ci-runtime-android-35` image covers typical Android library and app builds without NDK.
+- **`reusable-ci-runtime-android-35-ndk`**: Not built today. NDK is ~3 GB and only needed for projects with native (JNI) code, the minority. The current `reusable-ci-runtime-android-35` image covers typical Android library and app builds without NDK.
 - **Multiple LTS lines simultaneously** (`runtime-java-21` *and* `runtime-java-25`, etc.): not built today.
   The current LTS gets a versioned image (e.g. `runtime-java-25`); the next LTS gets a sibling
   (`runtime-java-29`) when it lands. Old LTS images keep building patch updates until upstream EOL,
-  then are dropped. Maintaining many LTS variants in parallel is the explicit non-goal — the version
+  then are dropped. Maintaining many LTS variants in parallel is the explicit non-goal. The version
   in the name is documentation of "the major line this image targets", not a promise of multi-version
   support.
 
@@ -95,15 +100,15 @@ All runtime images follow the same tag scheme:
 
 | Tag | When | Stable to pin? |
 |---|---|---|
-| `:vX.Y.Z` | On release tag push | Yes — pin in production |
+| `:vX.Y.Z` | On release tag push | Yes, pin in production |
 | `:vX.Y` | On release tag push (LTS-style major.minor) | Yes |
-| `:vX` | On release tag push | Yes — moves on minor |
-| `:<branch>` | Every published branch build (e.g. `:main`, `:feat-refactor-go`) | No — moves with the branch |
-| `:v3-pre` | Pre-v3.0.0 branch/dispatch builds | No — moves to the latest pre-release |
-| `:v3-pre-<YYYYMMDD-HHMMSS>` | Pre-v3.0.0 builds, from the commit timestamp | Yes — immutable build stamp |
+| `:vX` | On release tag push | Yes, moves on minor |
+| `:<branch>` | Every published branch build (e.g. `:main`, `:feat-refactor-go`) | No, moves with the branch |
+| `:v3-pre` | Pre-v3.0.0 branch/dispatch builds | No, moves to the latest pre-release |
+| `:v3-pre-<YYYYMMDD-HHMMSS>` | Pre-v3.0.0 builds, from the commit timestamp | Yes, an immutable build stamp |
 | `:weekly` | Weekly cron rebuild (refreshes pinned tools + base) | Yes for opt-in users |
-| `:sha-<short-commit>` | main / branch / dispatch builds | Yes — exact commit |
-| `@sha256:<digest>` | Per build | Yes — strictest pin |
+| `:sha-<short-commit>` | main / branch / dispatch builds | Yes, the exact commit |
+| `@sha256:<digest>` | Per build | Yes, the strictest pin |
 
 Normal consumers do not need to set `runtime-image*` inputs. Released workflows
 default to the matching reusable-ci runtime image line.
@@ -116,7 +121,7 @@ External consumers who need stricter reproducibility can pin by **digest**
 Every image carries `org.opencontainers.image.{title, source, url, revision,
 version, created}` (set at build time). They identify an image via `docker
 inspect` or the GHCR UI even when tags have been pruned, and `source` links the
-GHCR package back to this repository. `licenses` is intentionally left unset —
+GHCR package back to this repository. `licenses` is intentionally left unset, because
 a runtime image bundles many differently-licensed tools.
 
 ## CLI binary channels
@@ -129,11 +134,11 @@ tarball, selected by `reusable-ci-binary-ref`:
 
 | `reusable-ci-binary-ref` | Channel | Stable to pin? |
 |---|---|---|
-| `vX.Y.Z` | Release tarball, cosign-pinned to `release-binary.yml@vX.Y.Z` | Yes — production |
-| `v3.0.0-pre` | Rolling pre-release from the latest dev-branch build, cosign-pinned to `build-cli.yml@refs/heads/…` | No — moves; not for production |
+| `vX.Y.Z` | Release tarball, cosign-pinned to `release-binary.yml@vX.Y.Z` | Yes, for production |
+| `v3.0.0-pre` | Rolling pre-release from the latest dev-branch build, cosign-pinned to `build-cli.yml@refs/heads/…` | No; it moves, and is not for production |
 
 Both verify by SHA-256 + Sigstore. The pre-release channel is a separate, opt-in trust
-domain — it never relaxes the release pin — and mirrors the image `:v3-pre` tag.
+domain, never relaxes the release pin, and mirrors the image `:v3-pre` tag.
 For a release-semver ref, any asset download, checksum, or Sigstore failure terminates
 the install. Source installation is used only for non-release refs or when
 `REUSABLE_CI_USE_GO_INSTALL=1` is explicitly set.
@@ -150,6 +155,7 @@ jobs:
   release:
     uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@v3.0.0
     with:
+      branch: main
       artifacts-config: .reusable-ci/artifacts.yml
       # Optional: override every runtime image family used by the orchestrator.
       # Normal consumers can omit these because workflow defaults already use
@@ -231,6 +237,7 @@ jobs:
   release:
     uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@abcdef0123456789abcdef0123456789abcdef01
     with:
+      branch: main
       artifacts-config: .reusable-ci/artifacts.yml
       reusable-ci-binary-ref: abcdef0123456789abcdef0123456789abcdef01
       runtime-image: ghcr.io/diggsweden/reusable-ci-runtime-base:sha-abcdef0
@@ -243,10 +250,11 @@ jobs:
 ```
 
 The plain-runner jobs (container publish and macOS workflows) do not use the
-runtime image. They install the Go binary from `reusable-ci-binary-ref`, so
+runtime image. They install the binary selected by `reusable-ci-binary-ref`, so
 that value must point at the same reusable-ci commit as the workflow and runtime
-images being tested. Branch names work for quick iteration, but commit SHAs
-avoid drift after publishing `:sha-<short-sha>` images.
+images being tested. Branch/SHA refs use `go install`; branch names work for
+quick iteration, but commit SHAs avoid drift after publishing
+`:sha-<short-sha>` images.
 
 ## Releasing new image versions
 
@@ -260,7 +268,7 @@ tag push:
    `:vX.Y`, and `:vX` tags.
 4. Multi-arch (`linux/amd64`, `linux/arm64`) is built natively per leg.
 
-No separate "release the images" step exists — the image release is a
+No separate "release the images" step exists. The image release is a
 side effect of the reusable-ci release. Drift between workflow file
 version and image version is structurally impossible because both come
 from the same commit.
@@ -283,14 +291,14 @@ matching image.
 
 ## GitLab compatibility building blocks
 
-Every image lives on GHCR, which is reachable from GitLab CI runners. These are
-building blocks for future GitLab CI components; this repository does not ship a
-GitLab Catalog end-user contract yet. For sovereign GitLab installations that
-must not pull from `ghcr.io`, mirror the images to the consumer's own GitLab
-Container Registry and point the future GitLab component's image setting at the
-mirror.
+Every image lives on GHCR, which is reachable from GitLab CI runners. The GitLab
+components under `templates/` use these images as their defaults. For sovereign
+GitLab installations that must not pull from `ghcr.io`, mirror the images to the
+consumer's own GitLab Container Registry and override the component's image
+input with the mirror.
 
 For macOS workflows, the equivalent ref input is `reusable-ci-binary-ref`.
-Those workflows run on a macOS VM and install the Go binary with
-`go install github.com/diggsweden/reusable-ci/v3/cmd/reusable-ci@<ref>` instead
-of using the Linux runtime image.
+Those workflows run on a macOS VM instead of using the Linux runtime image.
+Published semver tags install the cosign- and SHA-256-verified release archive;
+branch/SHA refs, or an explicit `REUSABLE_CI_USE_GO_INSTALL=1` override, install
+from source with `go install`.

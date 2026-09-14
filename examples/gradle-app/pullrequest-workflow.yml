@@ -30,11 +30,4 @@ jobs:
       # Default lint engine: nanolinter (runs `nanolinter verify` from your nanolinter.toml)
       lint-engine: nanolinter
 
-  # Optional: Add project-specific tests
-  # test:
-  #   needs: [pr-checks]
-  #   if: always()
-  #   permissions:
-  #     contents: read
-  #     packages: read
-  #   uses: ./.github/workflows/test.yml
+  # Project-specific test jobs remain caller-owned.

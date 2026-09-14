@@ -12,21 +12,21 @@ reusable-ci handles them in two complementary patterns. The pattern is
 determined by **where platform commitment naturally happens** in the
 language's build model.
 
-### artifact-first: platform-agnostic deliverable
+### artifact-first: standalone deliverable built before publish
 
 ```text
-source ─▶ build-<lang>.yml ─▶ artifact (JAR, tarball) ─┐
-                                                       │
-                                                       ▼
-                                          publish-container.yml ─▶ image
-                                          (downloads artifact, COPYs in)
+source ─▶ build-<lang>.yml ─▶ artifact (JAR, tarball, binary, APK/AAB, IPA)
+                                      │
+                                      └─▶ optional supported container COPY
 ```
 
-`build-<lang>.yml` produces a deployable artifact (JAR, NPM tarball,
-APK, IPA). The container build downloads it via `from: [<artifact>]`
-and `COPY`s it into a thin runtime image.
+`build-<lang>.yml` produces the standalone deliverable before the publish stage.
+Maven, npm, Gradle JVM, and artifact-first Go/Cargo outputs can also feed a
+container via `from: [<artifact>]`; Android and Xcode outputs do not use that
+container handoff.
 
-**Implemented for:** maven, gradle, gradle-android, npm, xcode-ios, go (when `config.build-mode: artifact-first`).
+**Implemented for:** maven, gradle, gradle-android, npm, xcode-ios, and go/cargo
+(when `config.build-mode: artifact-first`).
 
 ### container-first: compiled-native, container is the build environment
 
@@ -53,7 +53,7 @@ belongs for compiled-native code.
 
 Forcing compiled-native ecosystems into artifact-first would require
 cross-compile machinery in CI (cargo-zigbuild, cross-rs, native-apt
-sysroots) — significant complexity for a problem that split-runner
+sysroots), which is significant complexity for a problem that split-runner
 multi-arch (`ubuntu-24.04` for amd64 + `ubuntu-24.04-arm` for arm64)
 already solves inside the Containerfile. container-first accepts that the
 container IS the build environment and orchestrates accordingly. The
@@ -68,14 +68,14 @@ practice.
 
 ### SBOM placement reflects the pattern
 
-artifact-first ecosystems produce the artifact and its build SBOM together
-in `release-build-stage` (the cyclonedx plugin runs inside `mvn package`,
-`npm pack`, `go build`, etc.). Container-first ecosystems have nothing to build in the
-build stage — the actual compile happens inside the Containerfile in the
-publish stage. So their manifest/lockfile-derived "build" SBOM (`sbom-cargo.yml`, `sbom-go.yml`)
-runs in `release-publish-stage` as a sibling of `build-containers`,
-shipping with the container it documents. For pure cargo/container-first Go projects
-`release-build-stage` runs zero jobs, by design.
+Artifact-first ecosystems produce the artifact and its Build SBOM together in
+`release-build-stage`; each artifact's `sboms` field controls that builder.
+Container-first ecosystems have nothing to compile in the build stage, so their
+manifest/lockfile-derived Build SBOM (`sbom-cargo.yml`, `sbom-go.yml`) runs in
+`release-publish-stage` beside the container build. Those container-first SBOM
+jobs run only when both the artifact policy and the effective `release.sboms`
+policy include `build`. For pure Cargo/container-first Go projects,
+`release-build-stage` runs zero jobs by design.
 
 > ⚠️ Cargo's SBOM is lockfile-derived rather than observed during `cargo build`.
 > For default cargo projects `Cargo.lock` is the resolved graph, so the SBOM
@@ -97,38 +97,15 @@ stable across rebuilds of the same tag.
 What the env does NOT do: it doesn't auto-propagate as a Docker build-arg
 into the build sandbox. The compile step inside the Containerfile (cargo
 build, go build, …) won't see `SOURCE_DATE_EPOCH` unless the Containerfile
-explicitly declares it. This is deliberate — it keeps reusable-ci out of
+explicitly declares it. This is deliberate: it keeps reusable-ci out of
 caller policy decisions about what gets embedded in the binary.
 
-**Container-first Go: pick one of two options**
-
-- **Preferred:** omit any date-injecting ldflag. The container is the
-  deliverable; the registry already records when the image was built.
-  Our reference `examples/go-service/Containerfile.example` follows this
-  pattern (`-trimpath -buildvcs=false -ldflags="-s -w -X main.version=..."`
-  — no `-X main.date=...`). The compiled binary is reproducible without
-  needing `SOURCE_DATE_EPOCH` to flow into the build sandbox.
-- **Explicit:** if you want a date stamp in the binary (e.g., `myapp
-  --version` should print a build date), declare `ARG SOURCE_DATE_EPOCH`
-  in the Containerfile and pass it through via `containers[].build-args`
-  in `artifacts.yml`:
-
-  ```yaml
-  containers:
-    - name: my-service
-      build-args:
-        SOURCE_DATE_EPOCH: ${{ env.SOURCE_DATE_EPOCH }}  # caller-evaluated
-  ```
-
-  Then in the Containerfile:
-
-  ```dockerfile
-  ARG SOURCE_DATE_EPOCH
-  RUN go build -ldflags="-X main.date=$(date -u -d @${SOURCE_DATE_EPOCH} +%FT%TZ)" ...
-  ```
-
-  reusable-ci does not auto-inject this — opt in explicitly so the
-  embedded date is part of your release contract, not CI magic.
+**Container-first Go:** omit date-injecting ldflags unless the caller owns a
+separate injection mechanism. `artifacts.yml` is parsed literally, so a
+`containers[].build-args` value cannot reference the workflow-computed
+`SOURCE_DATE_EPOCH`; writing a GitHub expression there passes the expression as
+plain text. The reference `examples/go-service/Containerfile.example` therefore
+uses reproducible flags without an embedded build date.
 
 **Container-first Cargo:** stock `cargo build --release --locked` produces
 byte-identical binaries for a fixed toolchain + lockfile; no
@@ -158,13 +135,13 @@ opt-in.
 
 #### When to pick which
 
-**`build-mode: artifact-first`** — pick this when:
+**`build-mode: artifact-first`**, pick this when:
 - The deliverable is a standalone CLI / tool binary released on GitHub Releases.
 - The same binary is consumed by a container build (the binary lands in `dist/`
   and the Containerfile `COPY`s it in with no `cargo build` of its own).
 - You want reproducible cross-compile binaries with attached SBOMs and signatures.
 
-**`build-mode: container-first`** — pick this when:
+**`build-mode: container-first`**, pick this when:
 - The Containerfile already runs `cargo build` itself (e.g. multi-stage build
   with a `builder` stage and a `runtime` stage).
 - The container image is the primary deliverable; binaries leaving the container
@@ -179,10 +156,10 @@ opt-in.
 | Build (container-first) | n/a | n/a | Compile happens inside Containerfile |
 | Lint | external | caller's `test.yml` | Workspace-specific clippy, rustfmt, cargo-audit, or cargo-deny checks belong in the consumer repo |
 | Test | external + opt-in `cargo test` (artifact-first) | caller's `test.yml` + `build-cargo.yml` (`cargo test --locked --all-targets`) | Release-build invocation is opt-out via `skip-tests`. Workspace features / testcontainers are still caller-owned. |
-| SBOM — build layer (artifact-first) | ✅ | inline `cargo cyclonedx` in `build-cargo.yml` | Same generator as `sbom-cargo.yml`; emitted as a per-artifact upload alongside the binaries. |
-| SBOM — build layer (container-first) | ✅ | `sbom-cargo.yml` | Lockfile-derived (reads `Cargo.lock`); runs in publish stage as a sibling of the container build. |
-| SBOM — analyzed-artifact | ✅ (artifact-first) / conditional (container-first) | syft scan of binaries | Artifact-first: scans `dist/<goos>-<goarch>/...`. Container-first: scans extracted binaries when the container declares `extract.binary`. |
-| SBOM — analyzed-container | ✅ | `publish-container.yml` (syft) | Standard for all containers; derived from `sboms` |
+| SBOM: build layer (artifact-first) | ✅ | inline `cargo cyclonedx` in `build-cargo.yml` | Same generator as `sbom-cargo.yml`; emitted as a per-artifact upload alongside the binaries. |
+| SBOM: build layer (container-first) | ✅ | `sbom-cargo.yml` | Lockfile-derived (reads `Cargo.lock`); runs in publish stage as a sibling of the container build. |
+| SBOM: analyzed-artifact | ✅ (artifact-first) / conditional (container-first) | syft scan of binaries | Artifact-first: scans `dist/<goos>-<goarch>/...`. Container-first: scans extracted binaries when the container declares `extract.binary`. |
+| SBOM: analyzed-container | ✅ | `publish-container.yml` (syft) | Standard for all containers; derived from `sboms` |
 | Container build | ✅ | `publish-container.yml` | Native split-runner multi-arch (no QEMU) |
 | Multi-arch (linux variants) | ✅ | split-runner matrix | linux/amd64 → `ubuntu-24.04`, linux/arm64 → `ubuntu-24.04-arm`, merged into one manifest list |
 | Multi-arch artifact-first (linux x86 + arm) | ✅ | `build-cargo.yml` with `platforms: linux/amd64,linux/arm64` | The `runtime-rust-stable` image installs `aarch64-unknown-linux-gnu` target + `gcc-aarch64-linux-gnu` cross-linker. |
@@ -191,11 +168,11 @@ opt-in.
 | Multi-binary in one container | ✅ | `extract.binary.names: [a, b]` | E.g., `hsm-worker` + `digg-hsm-keytool`; basenames suffixed with `-linux-${arch}` to avoid release-asset collision |
 | Workspace (multi-crate) | ✅ | sbom-cargo `--all`; bump-version `[workspace.package]` | One bump per release |
 | Single-crate | ✅ | Same workflows; bump-version `[package].version` | |
-| Version-bump (Cargo.toml + Cargo.lock) | ✅ | `reusable-ci version bump cargo` | `cargo update --workspace` syncs lockfile |
+| Version-bump (Cargo.toml + Cargo.lock) | ✅ | `reusable-ci version bump --project-type cargo --version 1.2.3` | `cargo update --workspace` syncs lockfile |
 | Release prerequisite checks | ✅ | `validate-release-prerequisites.yml` | Cargo.lock + toolchain pin; validation runs in the Rust runtime when Cargo artifacts are present |
-| Publish — container to ghcr | ✅ | `publish-container.yml` | SLSA provenance + scan + analyzed-container SBOM |
-| Publish — container to other OCI registries | ✅ | `publish-container.yml` | docker.io, quay.io, etc. (no SLSA outside ghcr) |
-| Publish — crates.io (libraries) | ❌ | — | Future workflow work |
+| Publish: container to ghcr | ✅ | `publish-container.yml` | SLSA provenance + scan + analyzed-container SBOM |
+| Publish: container to other OCI registries | ✅ | `publish-container.yml` | docker.io, quay.io, etc. (no SLSA outside ghcr) |
+| Publish: crates.io (libraries) | ❌ | — | No crates.io publisher is provided |
 | Standalone binary release (no container, GitHub Release attach) | ✅ (artifact-first) | `build-cargo.yml` + `release-create-github.yml` | Binaries land in `dist/`, get checksummed, SBOM'd, signed, and attached to the GitHub Release. |
 | macOS binary distribution | partial | requires darwin runtime image | Mapping table covers `darwin/amd64`, `darwin/arm64`. Default runtime image is Linux; adopters needing darwin extend it or run a separate workflow on a macOS runner. |
 | Windows binary distribution | partial | requires mingw-w64 in runtime image | Same model as macOS. |
@@ -203,8 +180,8 @@ opt-in.
 #### Caller responsibilities
 
 **Artifact-first only:**
-- **`[[bin]]` or `[package].name` matches the binary you want** — the default. Override with `config.binary-name` only when the package builds multiple bins and you want one specific bin to be the deliverable.
-- **`config.platforms` matches the runtime image's installed Rust targets + cross-linkers** — the default `runtime-rust-stable` image carries `linux/amd64` + `linux/arm64`. Adding `darwin/*` or `windows/*` needs an extended image or a non-default host runner.
+- **`[[bin]]` or `[package].name` matches the binary you want**: the default. Override with `config.binary-name` only when the package builds multiple bins and you want one specific bin to be the deliverable.
+- **`config.platforms` matches the runtime image's installed Rust targets + cross-linkers**: the default `runtime-rust-stable` image carries `linux/amd64` + `linux/arm64`. Adding `darwin/*` or `windows/*` needs an extended image or a non-default host runner.
 
 **Container-first only:**
 - **Per-service multi-stage `Containerfile`** with named stages: `builder`, optional `export-binary`, and a runtime stage referenced by `target:` in `artifacts.yml`.
@@ -212,9 +189,9 @@ opt-in.
 
 **Both modes:**
 - **Workspace tests** in a caller-owned workflow. `cargo test --workspace` can't be expressed per-artifact, and reusable-ci does not invoke project tests automatically (artifact-first's opt-out test invocation is a release-build sanity gate, not a substitute for a PR test workflow).
-- **Native lint deps** in the caller's Rust test/lint job — clippy compiles, so the same packages must be available there.
-- **`Cargo.lock` checked in** — required for reproducible SBOM and release.
-- **`rust-toolchain.toml` recommended** — used by SBOM and build workflows for toolchain selection. Not strictly required.
+- **Native lint deps** in the caller's Rust test/lint job: clippy compiles, so the same packages must be available there.
+- **`Cargo.lock` checked in**: required for reproducible SBOM and release.
+- **`rust-toolchain.toml` or `rust-toolchain` checked in**: required by release prerequisite validation.
 
 #### See also
 
@@ -240,38 +217,39 @@ Maven 3.9 is the floor, matching the JDK runtime image
 (`reusable-ci-runtime-java-25` ships Maven 3.9.x). Older Maven is not tested
 and not supported. The floor is not cosmetic: 3.9 is where the deploy plugin
 moved to the Maven Resolver native transport, so behaviour a pipeline depends
-on — transport selection, and therefore how TLS and proxy settings are
-honoured — differs from 3.8 and earlier.
+on. Transport selection, and therefore how TLS and proxy settings are
+honoured, differs from 3.8 and earlier.
 
 #### Capabilities
 
 | Concern | Status | Workflow / Mechanism | Notes |
 |---|---|---|---|
-| Build (standalone deliverable) | ✅ | `build-maven.yml` (`mvn package`) | Produces `.jar` (and optionally `-sources.jar`, `-javadoc.jar` for libraries) under `target/`. The artifact is uploaded as a workflow artifact named per `artifact-name`. |
+| Build (standalone deliverable) | ✅ | `build-maven.yml` | Applications run `mvn clean package`; libraries run clean/compile, an explicit test phase, then package. Produces `.jar` (and optionally `-sources.jar`, `-javadoc.jar` for libraries) under `target/`. |
 | Lint | external | caller's `test.yml` | Checkstyle, SpotBugs, PMD belong in the consumer repo's PR workflow. |
-| Test | external | caller's `test.yml` | `mvn test` isn't invoked by reusable-ci. |
-| SBOM — build layer | ✅ | `build-maven.yml` via cyclonedx-maven-plugin | Runs inside `mvn package`; observes the resolved dependency graph including provided/runtime scopes. |
-| SBOM — analyzed-artifact | ✅ | syft scan of the produced `.jar` | Detects bundled dependencies (fat jars) the build-layer SBOM may miss. |
-| SBOM — analyzed-container | ✅ | `publish-container.yml` (syft) | Standard for containers wrapping Maven artifacts. |
+| Test | release build + external PR gate | `build-maven.yml` + caller's `test.yml` | Library builds explicitly run `mvn test`; application `mvn package` runs the normal test lifecycle. Both skip tests only when `skip-tests` is enabled. |
+| SBOM: build layer | ✅ | `build-maven.yml` via cyclonedx-maven-plugin | Runs inside `mvn package`; observes the resolved dependency graph including provided/runtime scopes. |
+| SBOM: analyzed-artifact | ✅ | syft scan of the produced `.jar` | Detects bundled dependencies (fat jars) the build-layer SBOM may miss. |
+| SBOM: analyzed-container | ✅ | `publish-container.yml` (syft) | Standard for containers wrapping Maven artifacts. |
 | Container build (wrapping the jar) | ✅ | `publish-container.yml` (artifact-first → container) | The build artifact is downloaded into the build context; the Containerfile `COPY`s it in. |
 | Multi-arch container (same jar) | ✅ | split-runner matrix | The JAR is platform-agnostic; the runtime base image is what differs per arch. |
 | Build reproducibility | ✅ | `validate jvm-reproducibility` checks `<project.build.outputTimestamp>` in pom.xml | Warns when missing; reproducible builds require the property to be set. |
 | Multi-module Maven (parent + children) | ✅ | one Maven artifact entry pointing at parent POM | Inheritance handles children; `mvn package` at the parent builds everything. |
-| Library artifact (sources + javadoc) | ✅ | `build-type: library` | Sources jar + Javadoc jar attached automatically. |
+| Library artifact (sources + javadoc) | ✅ | `build-type: library` selects the library lifecycle/profile | The project POM/profile must attach the sources and Javadoc JARs; reusable-ci does not inject plugin goals. Maven Central validation checks that both exist. |
 | Application artifact (executable jar) | ✅ | `build-type: application` (default) | The main jar only. |
-| Version-bump (pom.xml + multi-module child POMs) | ✅ | `reusable-ci version bump maven` | Uses `versions:set` semantics; multi-module aware. |
+| Version-bump (pom.xml + multi-module child POMs) | ✅ | `reusable-ci version bump --project-type maven --version 1.2.3` | Uses `versions:set` semantics; multi-module aware. |
 | Release prerequisite checks | ✅ | `validate-release-prerequisites.yml` | Confirms `MAVEN_CENTRAL_USERNAME`/`PASSWORD` set when publishing there; validates GPG availability when sign.method=gpg. |
-| Publish — Maven Central | ✅ | `publish-maven-central.yml` | Sonatype Central Portal (the `central-publishing-maven-plugin`); requires `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `RELEASE_GPG_PRIVATE_KEY`, `RELEASE_GPG_PASSPHRASE`. |
-| Publish — GitHub Packages | ✅ | `publish-maven-github.yml` | Uses auto-provided `GITHUB_TOKEN`; respects `<distributionManagement>` in pom.xml. |
-| Publish — other OCI / private repo | partial | extend `publish-maven-github.yml` pattern | Not wired today; would need a per-repo `<settings.xml>` injection. |
+| Publish: Maven Central | ✅ | `publish-maven-central.yml` | Sonatype Central Portal (the `central-publishing-maven-plugin`); requires `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `RELEASE_GPG_PRIVATE_KEY`, `RELEASE_GPG_PASSPHRASE`. |
+| Publish: GitHub Packages | ✅ | `publish-maven-github.yml` | Uses auto-provided `GITHUB_TOKEN`; respects `<distributionManagement>` in pom.xml. |
+| Publish: other OCI / private repo | partial | extend `publish-maven-github.yml` pattern | Not wired today; would need a per-repo `<settings.xml>` injection. |
 
 #### Caller responsibilities
 
 - **`pom.xml`** with declared `<groupId>`/`<artifactId>`/`<version>` and (for Maven Central) `<licenses>`, `<scm>`, `<developers>` per Maven Central requirements.
+- **Library attachments in the project POM/profile**: configure pinned source and Javadoc plugins when those artifacts are required. `build-type: library` selects the lifecycle/profile but does not synthesize attachments.
 - **`<project.build.outputTimestamp>`** in `pom.xml`'s `<properties>` for reproducible jars (`reusable-ci validate jvm-reproducibility` warns when missing).
-- **GPG key material** committed neither to repo nor exported — set as repo/org secret per the workflow's declared inputs (`RELEASE_GPG_PRIVATE_KEY` etc.).
+- **GPG key material** committed neither to repo nor exported: set as repo/org secret per the workflow's declared inputs (`RELEASE_GPG_PRIVATE_KEY` etc.).
 - **For multi-module**: register only the parent POM as an artifact (Maven inheritance handles children) or register children individually if each ships a separately-released variant.
-- **Tests in a caller-owned PR workflow** — reusable-ci runs `mvn package` (which compiles + runs unit tests by default unless `-DskipTests`) but doesn't independently invoke `mvn verify` / integration tests.
+- **Tests in a caller-owned PR workflow**: the release build runs Maven unit tests unless `skip-tests` is enabled. It does not replace a PR gate, and does not independently invoke `mvn verify` or integration tests.
 
 #### See also
 
@@ -297,28 +275,28 @@ honoured — differs from 3.8 and earlier.
 |---|---|---|---|
 | Build (standalone deliverable) | ✅ | `build-npm.yml` (`npm pack`) | Produces a tarball under `<name>-<version>.tgz`; uploaded as the build artifact. Library shape (no build script) and app shape (with build script writing `dist/`) are both supported. |
 | Lint | external | caller's `test.yml` | ESLint / Prettier belong in the consumer repo. |
-| Test | external | caller's `test.yml` | `npm test` isn't invoked by reusable-ci. |
-| SBOM — build layer | ✅ | syft on the `npm pack` tarball | npm has no canonical cyclonedx plugin; syft observes the packed tree. |
-| SBOM — analyzed-artifact | ✅ | syft scan of `dist/` (when present) | Catches transitive bundling via webpack/rollup/esbuild. |
-| SBOM — analyzed-container | ✅ | `publish-container.yml` (syft) | Standard for containers wrapping NPM artifacts. |
+| Test | soft release check + external PR gate | `build-npm.yml` + caller's `test.yml` | The release build runs `npm test` unless `skip-tests` is enabled. A missing or failing test script warns and continues; the caller's PR workflow remains the hard gate. |
+| SBOM: build layer | ✅ | syft on the `npm pack` tarball | npm has no canonical cyclonedx plugin; syft observes the packed tree. |
+| SBOM: analyzed-artifact | ✅ | syft scan of `dist/` (when present) | Catches transitive bundling via webpack/rollup/esbuild. |
+| SBOM: analyzed-container | ✅ | `publish-container.yml` (syft) | Standard for containers wrapping NPM artifacts. |
 | Container build (wrapping the tarball) | ✅ | `publish-container.yml` (artifact-first → container) | Containerfile `COPY`s the tarball or `dist/` into the runtime image. |
 | Multi-arch container (same tarball) | ✅ | split-runner matrix | Node tarballs are platform-agnostic; native add-ons require their own multi-arch wheels (not handled here). |
 | Build reproducibility | ✅ | npm ≥ 10 (npm/cli#3536 fix) | Runtime image pins Node 24 LTS; uses npm 10+. `package-lock.json` checked in is required. |
 | Library shape (no build script) | ✅ | `npm pack` produces the publishable tarball directly | Matches scoped npm-package conventions. |
 | App shape (build script writes dist/) | ✅ | `npm run build` runs as part of `npm pack` lifecycle | Output under `dist/` is included in the packed tarball. |
-| Version-bump (package.json + package-lock.json) | ✅ | `reusable-ci version bump npm` | Updates both files; preserves lockfile coherence. |
+| Version-bump (package.json + package-lock.json) | ✅ | `reusable-ci version bump --project-type npm --version 1.2.3` | Updates both files; preserves lockfile coherence. |
 | Release prerequisite checks | ✅ | `validate-release-prerequisites.yml` | Confirms `NPM_TOKEN` set when publishing to npmjs; lockfile presence; node-version pin. |
-| Publish — npmjs.com | partial (snapshot only) | `publish-snapshot-npm.yml` | The snapshot flow can target npmjs with `NPM_TOKEN` / registry-password. A production-release npmjs.com publisher is not wired yet — production npm publishes to GitHub Packages. |
-| Publish — GitHub Packages | ✅ | `publish-maven-github.yml` (also handles npm scoped to `npm.pkg.github.com`) | Uses auto-provided `GITHUB_TOKEN`. |
-| Publish — other private registries | partial | per-registry `.npmrc` setup | Wired via the caller's `.npmrc` ; reusable-ci doesn't manage non-default registries. |
+| Publish: npmjs.com | partial (snapshot only) | `publish-snapshot-npm.yml` | The snapshot flow can target npmjs with `NPM_TOKEN` / registry-password. A production-release npmjs.com publisher is not wired yet, so production npm publishes to GitHub Packages. |
+| Publish: GitHub Packages | ✅ | `publish-maven-github.yml` (also handles npm scoped to `npm.pkg.github.com`) | Uses auto-provided `GITHUB_TOKEN`. |
+| Publish: other private registries | partial | per-registry `.npmrc` setup | Wired via the caller's `.npmrc` ; reusable-ci doesn't manage non-default registries. |
 
 #### Caller responsibilities
 
 - **`package.json`** with declared `name` (scoped or unscoped), `version`, `main`/`exports`, and (for npmjs) `repository`, `license`, `description`.
-- **`package-lock.json`** committed — required for reproducible builds and the build-layer SBOM.
-- **`files:` allowlist in `package.json`** (recommended) — keeps `npm pack` from including dev files like tests / source maps in the published tarball.
-- **`.npmrc` if publishing to a private registry** — reusable-ci respects the file but doesn't generate it.
-- **Tests in a caller-owned PR workflow** — `npm test` is consumer-owned; reusable-ci runs `npm pack` only.
+- **`package-lock.json`** committed: required for reproducible builds and the build-layer SBOM.
+- **`files:` allowlist in `package.json`** (recommended): keeps `npm pack` from including dev files like tests / source maps in the published tarball.
+- **`.npmrc` if publishing to a private registry**: reusable-ci respects the file but doesn't generate it.
+- **Tests in a caller-owned PR workflow**: reusable-ci runs `npm test` as a soft release check unless `skip-tests` is enabled, but failures only warn. The consumer-owned PR workflow remains the test gate.
 
 #### See also
 
@@ -327,7 +305,7 @@ honoured — differs from 3.8 and earlier.
 
 ---
 
-### Gradle (artifact-first — JVM)
+### Gradle (artifact-first, JVM)
 
 | Property | Value |
 |---|---|
@@ -344,24 +322,24 @@ honoured — differs from 3.8 and earlier.
 | Build (standalone deliverable) | ✅ | `build-gradle-app.yml` (`gradle build` via wrapper) | Produces `.jar` / `.war` / `distZip` per the project's Gradle tasks. The `gradle-tasks` config field selects which tasks run. |
 | Lint | external | caller's `test.yml` | detekt / ktlint / checkstyle belong in the consumer repo. |
 | Test | external | caller's `test.yml` | `gradle test` runs as part of `gradle build` by default. |
-| SBOM — build layer | ✅ | cyclonedx-gradle-plugin (both v1.x and v2.x supported) | The plugin runs inside `gradle build`; observes the resolved dependency graph. |
-| SBOM — analyzed-artifact | ✅ | syft scan of produced jars | |
-| SBOM — analyzed-container | ✅ | `publish-container.yml` (syft) | |
+| SBOM: build layer | ✅ | cyclonedx-gradle-plugin (both v1.x and v2.x supported) | The plugin runs inside `gradle build`; observes the resolved dependency graph. |
+| SBOM: analyzed-artifact | ✅ | syft scan of produced jars | |
+| SBOM: analyzed-container | ✅ | `publish-container.yml` (syft) | |
 | Container build (wrapping the jar) | ✅ | `publish-container.yml` | |
 | Multi-arch container | ✅ | split-runner matrix | The JAR is platform-agnostic. |
 | Build reproducibility | ✅ | `validate jvm-reproducibility` checks `preserveFileTimestamps = false` AND `reproducibleFileOrder = true` on `AbstractArchiveTask` | Warns when missing; supports both Kotlin and Groovy DSL forms. |
 | Gradle wrapper required | ✅ | `gradlew` checked in | Pinned-version wrapper guarantees the same Gradle across CI and developer machines. |
-| Version-bump (build.gradle / gradle.properties) | ✅ | `reusable-ci version bump gradle` | Updates `version =` in build.gradle{,.kts} or `version=` in gradle.properties. |
+| Version-bump (build.gradle / gradle.properties) | ✅ | `reusable-ci version bump --project-type gradle --version 1.2.3` | Updates `version =` in build.gradle{,.kts} or `version=` in gradle.properties. |
 | Release prerequisite checks | ✅ | `validate-release-prerequisites.yml` | Confirms JDK toolchain pin + wrapper presence. |
-| Publish — Maven Central | ✅ | `publish-maven-central.yml` | Same path as Maven; gradle jars work identically. |
-| Publish — GitHub Packages | ✅ | `publish-maven-github.yml` | |
+| Publish: Maven Central | ✅ | `publish-maven-central.yml` | Same path as Maven; gradle jars work identically. |
+| Publish: GitHub Packages | ✅ | `publish-maven-github.yml` | |
 
 #### Caller responsibilities
 
-- **Gradle wrapper (`gradlew`)** committed — pinned to a specific Gradle version.
-- **`gradle-tasks` in `artifacts.yml`** — explicitly name which tasks run (e.g. `build`, `publish`, `distZip`); avoids ambiguity for multi-module projects.
-- **Reproducibility settings on archive tasks** — see `validate jvm-reproducibility` for the exact form.
-- **Tests in a caller-owned PR workflow** — Gradle's default `build` includes tests, but `gradle check` runs additional verifications that may be desirable separately.
+- **Gradle wrapper (`gradlew`)** committed: pinned to a specific Gradle version.
+- **`gradle-tasks` in `artifacts.yml`**: explicitly name which tasks run (e.g. `build`, `publish`, `distZip`); avoids ambiguity for multi-module projects.
+- **Reproducibility settings on archive tasks**: see `validate jvm-reproducibility` for the exact form.
+- **Tests in a caller-owned PR workflow**: Gradle's default `build` includes tests, but `gradle check` runs additional verifications that may be desirable separately.
 
 #### See also
 
@@ -387,16 +365,17 @@ honoured — differs from 3.8 and earlier.
 | Build (standalone deliverable) | ✅ | `build-gradle-android.yml` (`gradle assemble`) | Produces release APK (signed if `enable-signing: true`) and AAB (if `include-aab: true`, default). |
 | Lint | external | caller's `test.yml` | Android Lint + detekt belong in the consumer repo. |
 | Test | external | caller's `test.yml` | Unit tests run via `gradle test`; instrumented tests need emulator (out-of-scope). |
-| SBOM — build layer | ✅ | cyclonedx-gradle-plugin | Same v1+v2 dual support as Gradle JVM. |
-| SBOM — analyzed-artifact | ✅ | syft scan of APK | Detects bundled dependencies in the DEX. |
+| SBOM: build layer | ✅ | cyclonedx-gradle-plugin | Same v1+v2 dual support as Gradle JVM. |
+| SBOM: analyzed-artifact | ❌ | `sbom assemble` rejects `gradle-android` | APK/AAB Syft scanning is not implemented; set `sboms: build` or `build,analyzed-container`. |
 | Build reproducibility | ✅ | same archive settings as Gradle JVM | |
-| Signing (APK + AAB) | ✅ | `config.enable-android-signing: true` reads ANDROID_KEYSTORE et al. from caller secrets | Without signing, only `debug` variants build. |
+| Signing (APK + AAB) | ✅ | `config.enable-android-signing: true` reads ANDROID_KEYSTORE et al. from caller secrets | `false` only skips keystore injection; requested release tasks and uploads still run and may produce unsigned outputs. |
 | `secrets.properties` injection | ✅ | Base64-encoded via `SECRETS_PROPERTIES_BASE64` secret | Decoded into `secrets.properties` at build time for Google Maps API keys etc. |
 | Product flavor selection | ✅ | `product-flavor` config field | E.g., `staging`, `production`. |
 | Build-type subset | ✅ | `build-types: debug,release` (default) | Pick which variants to build. |
-| Version-bump (Android `versionName` / `versionCode`) | ✅ | `reusable-ci version bump gradle-android` | Bumps `versionName` and increments `versionCode` together. |
+| Version-bump (Android `versionName` / `versionCode`) | ✅ | `reusable-ci version bump --project-type gradle-android --version 1.2.3` | Bumps `versionName` and increments `versionCode` together. |
+| GitHub Release selection | AAB only | release artifact-transfer plan | Selected only when `build-types` includes `release` and `include-aab` is true; APK uploads remain run artifacts. |
 | Release prerequisite checks | ✅ | `validate-release-prerequisites.yml` | Confirms keystore secrets present when `enable-signing: true`. |
-| Publish — Google Play | ✅ | `publish-google-play.yml` | Track-aware (`internal` / `alpha` / `beta` / `production`); supports staged rollouts. |
+| Publish: Google Play | ✅ | `publish-google-play.yml` | Track-aware (`internal` / `alpha` / `beta` / `production`); supports staged rollouts. |
 | Whats-new notes | ✅ | `whats-new-directory` config field | Localised release notes. |
 | Mapping file (Proguard / R8) | ✅ | `mapping-file` config field | Symbolicated stack traces in Play Console. |
 | Native debug symbols | ✅ | `debug-symbols` config field | Required for native (NDK) crashes. |
@@ -404,11 +383,13 @@ honoured — differs from 3.8 and earlier.
 
 #### Caller responsibilities
 
-- **Signing keystore committed neither to repo nor exported** — set as repo/org secret per the declared inputs (`ANDROID_KEYSTORE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`).
-- **Service-account JSON** for Google Play (`GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`) — required when publishing.
-- **`build-module`** config field — multi-module Android projects need this to point at the app module (Gradle's task tree isn't auto-discovered).
-- **NDK setup** — not baked into the runtime image; if your build needs the NDK, install it via the caller's Containerfile or use the `enable-ndk` config field (if implemented in your runtime variant).
-- **Gradle wrapper + reproducibility settings** — same as Gradle JVM.
+- **Signing keystore committed neither to repo nor exported**: set as repo/org secret per the declared inputs (`ANDROID_KEYSTORE`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`).
+- **Explicit Android SBOM policy**: exclude `analyzed-artifact` until APK/AAB scanning is implemented.
+- **Signing policy**: enable Android signing for distributable release outputs. reusable-ci does not reject an unsigned release APK/AAB or the `google-play` combination at config-parse time.
+- **Service-account JSON** for Google Play (`GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`): required when publishing.
+- **`build-module`** config field: multi-module Android projects need this to point at the app module (Gradle's task tree isn't auto-discovered).
+- **NDK setup**: not baked into the runtime image. If your build needs the NDK, install it via the caller's Containerfile, or use the `enable-ndk` config field where your runtime variant implements it.
+- **Gradle wrapper + reproducibility settings**: same as Gradle JVM.
 
 #### See also
 
@@ -436,25 +417,25 @@ honoured — differs from 3.8 and earlier.
 | Build (standalone deliverable) | ✅ | `build-xcode-ios.yml` (`xcodebuild archive` + `xcodebuild -exportArchive`) | Produces an IPA. |
 | Lint | external | caller's `test.yml` | SwiftLint via `lint-swift.yml` is available as a sibling workflow. |
 | Test | external | caller's `test.yml` | `xcodebuild test` belongs in the consumer repo. |
-| SBOM — build layer | partial | Swift Package Manager `Package.resolved` parsing | Cocoapods / Carthage support depends on caller setup. |
-| Code signing (DER cert + provisioning profile) | ✅ | base64-encoded secrets imported into ephemeral keychain | Keychain destroyed at job end. |
-| Ephemeral keychain isolation | ✅ | `KEYCHAIN_PASSWORD` ephemeral; never persisted | Avoids polluting the runner's default keychain. |
+| SBOM: build layer | partial | Swift Package Manager `Package.resolved` parsing | Cocoapods / Carthage support depends on caller setup. |
+| Code signing (DER cert + provisioning profile) | ✅ | base64-encoded secrets imported into ephemeral keychain | `build xcode-ios run` deletes the keychain and removes the staged certificate, profile and xcconfig on every exit, including failures. `setup-code-signing` deliberately keeps them for a later step. |
+| Ephemeral keychain isolation | ✅ | keychain password minted per run; nothing to provision | The run's keychain is appended to the user search list, not substituted for it, and the prior list is restored afterwards. `security(1)` takes passwords only as argv, so the run mints its own rather than exposing an operator secret there; `KEYCHAIN_PASSWORD` is accepted and ignored. |
 | xcconfig overrides | ✅ | base64-encoded `XCCONFIG_BASE64` secret | For team ID, bundle ID, app group, etc. |
 | Workspace vs project | ✅ | `workspace` and `project` config fields | One must be set; reusable-ci doesn't auto-detect. |
 | Scheme selection | ✅ | `scheme` config field | Required; `.xcscheme` must be shared in the project. |
 | Version-bump | partial | manual in Xcode project file | No `version bump xcode-ios` yet; caller updates `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in the xcconfig. |
 | Release prerequisite checks | ✅ | `validate-release-prerequisites.yml` | Confirms App Store Connect secrets present when publishing. |
-| Publish — App Store Connect | ✅ | `publish-apple-appstore.yml` | Submits to TestFlight / App Store. Supports `submit-for-review` and `skip-validation` flags. |
-| TestFlight only | ✅ | `submit-for-review: false` | Default; uploads to TestFlight without auto-submission. |
+| Publish: App Store Connect | ✅ | `publish-apple-appstore.yml` | Validates unless skipped, then uploads the IPA with `xcrun altool`. The `submit-for-review` value records intent in the summary only. |
+| App Store review submission | manual | App Store Connect | The workflow does not submit a build for review; `submit-for-review: true` only changes the post-upload guidance. |
 
 #### Caller responsibilities
 
-- **Signing certificate (.p12)** — base64-encoded as `IOS_SIGNING_CERTIFICATE_BASE64`; passphrase as `IOS_SIGNING_CERTIFICATE_PASSPHRASE`.
-- **Provisioning profile (.mobileprovision)** — base64-encoded as `PROVISIONING_PROFILE_BASE64`.
-- **App Store Connect API key (.p8)** — base64-encoded as `APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64`; key ID + issuer ID as plaintext secrets.
-- **Workspace or project + scheme** — declared in artifacts.yml `config:`.
-- **Tests in a caller-owned PR workflow** — `xcodebuild test` is consumer-owned.
-- **macOS runner availability** — iOS builds require macOS runners which are billed differently than Linux runners on GitHub.
+- **Signing certificate (.p12)**: base64-encoded as `IOS_SIGNING_CERTIFICATE_BASE64`; passphrase as `IOS_SIGNING_CERTIFICATE_PASSPHRASE`.
+- **Provisioning profile (.mobileprovision)**: base64-encoded as `PROVISIONING_PROFILE_BASE64`.
+- **App Store Connect API key (.p8)**: base64-encoded as `APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64`; key ID + issuer ID as plaintext secrets.
+- **Workspace or project + scheme**: declared in artifacts.yml `config:`.
+- **Tests in a caller-owned PR workflow**: `xcodebuild test` is consumer-owned.
+- **macOS runner availability**: iOS builds require macOS runners which are billed differently than Linux runners on GitHub.
 
 #### See also
 
@@ -476,7 +457,7 @@ scaffolding for future support (file-pattern detection, SBOM dispatch,
 release-name resolution) but is intentionally **omitted from
 `ValidProjectTypes`** in `internal/domain/config/schema.go` until a
 build/publish workflow ships. The previous "Reserved but recognised"
-state silently produced nothing at release time — replaced with
+state silently produced nothing at release time, replaced with
 loud failure now that the alternative is worse than fixing the typo
 or removing the artifact.
 
@@ -502,29 +483,29 @@ shape. Re-enabling Python is a one-line change to `ValidProjectTypes`
 Go's `config.build-mode` tells the orchestrator whether to run
 `build-go.yml` in the build stage or `sbom-go.yml` in the publish stage.
 Omitted defaults to `artifact-first`; `container-first` is an explicit
-opt-in. Go and Cargo are the ecosystems where the caller picks the flow —
+opt-in. Go and Cargo are the ecosystems where the caller picks the flow,
 for every other ecosystem, the pattern is fixed by the deliverable shape.
 
 #### Capabilities
 
 | Concern | artifact-first | container-first |
 |---|---|---|
-| Build (binary) | ✅ `build-go.yml` cross-compiles `dist/<goos>-<goarch>/<binary>-<goos>-<goarch>` | ✅ Containerfile builder stage compiles with BuildKit `TARGETOS`/`TARGETARCH`. |
+| Build (binary) | ✅ `build-go.yml` cross-compiles `dist/<goos>-<goarch>/<binary>-<goos>-<goarch>` | ✅ Buildah runs the Containerfile per native platform with `TARGETOS`/`TARGETARCH`. |
 | Cross-platform binaries | ✅ Configurable via `platforms` (default `linux/amd64,linux/arm64,darwin/amd64,darwin/arm64`) | n/a (Linux container only) |
 | Build flags / ldflags | ✅ `config.build-tags`, `config.ldflags`, `-trimpath` default | Set in Containerfile's `RUN go build`. |
 | Build SBOM | ✅ `build-go.yml` runs `reusable-ci sbom build --project-type go` (cyclonedx-gomod) | ✅ `sbom-go.yml` runs the same, in the publish stage |
-| SBOM — analyzed-artifact | ✅ syft on each per-arch binary | partial — only when `extract.binary` is set |
-| SBOM — analyzed-container | n/a | ✅ `publish-container.yml` (syft on pushed image) |
-| Container image | optional — `publish-container.yml` downloads `<name>-go-build-artifacts` into the build context's `dist/` and the Containerfile COPYs the binary in | ✅ primary deliverable |
+| SBOM: analyzed-artifact | ✅ syft on each per-arch binary | partial, only when `extract.binary` is set |
+| SBOM: analyzed-container | n/a | ✅ `publish-container.yml` (syft on pushed image) |
+| Container image | optional; `publish-container.yml` downloads `<name>-go-build-artifacts` into the build context's `dist/` and the Containerfile COPYs the binary in | ✅ primary deliverable |
 | Binary extraction (CI artifact) | n/a (binaries already are the artifact) | ✅ `containers[].extract.binary` re-extracts the compiled binary as a separate CI artifact alongside the image |
 | Multi-binary per container | n/a (one artifact = one binary) | ✅ `extract.binary.names: [a, b]` |
-| Reproducibility | ✅ `-trimpath` + `SOURCE_DATE_EPOCH`-derived ldflags (`-X main.date={{.CommitDate}}`); BuildKit cache mounts | ✅ same; `SOURCE_DATE_EPOCH` flows from the publish-container `prep` job |
+| Reproducibility | ✅ `-trimpath` + `SOURCE_DATE_EPOCH`-derived ldflags (`-X main.date={{.CommitDate}}`); Go module/build cache | Container image timestamps are pinned by Buildah; binary flags and timestamps are Containerfile-owned |
 | Skip-tests opt-in | ✅ `config.skip-tests: true` | n/a (tests run during Containerfile build if the Containerfile invokes them) |
-| Version-bump (go.mod doesn't store version) | partial — no version-bump-go workflow; uses tag-only | partial — same |
+| Version-bump (go.mod doesn't store version) | partial, no version-bump-go workflow, uses tag-only | partial, same |
 | Release prerequisite checks | ✅ `validate-release-prerequisites.yml` | ✅ same |
-| Publish — release tarball | ✅ via `release-create-github` (binaries attached to GitHub Release) | n/a |
-| Publish — container to ghcr | optional — wrap the artifact-first binary in a container | ✅ primary path |
-| Publish — module proxy / `go install`-able | ✅ implicit (tag = module version per Go's contract) | ✅ implicit |
+| Publish: release tarball | ✅ via `release-create-github` (binaries attached to GitHub Release) | n/a |
+| Publish: container to ghcr | optional, wrap the artifact-first binary in a container | ✅ primary path |
+| Publish: module proxy / `go install`-able | ✅ implicit (tag = module version per Go's contract) | ✅ implicit |
 | govulncheck / golangci-lint / staticcheck | external | external (in caller's PR workflow) |
 
 #### When to pick which
@@ -535,13 +516,13 @@ for every other ecosystem, the pattern is fixed by the deliverable shape.
 | Primary deliverable is a service consumers run as a container? | ❌ binary becomes a byproduct | ✅ pick this |
 | Need macOS/Windows binaries? | ✅ artifact-first builds them | ❌ container-first is Linux-only |
 | Need CI to build a multi-arch container with the compiled binary? | ✅ artifact-first cross-compiles in CI, container layer just COPYs | ✅ container-first compiles per-arch in the runtime; uses split-runner matrix |
-| Want a single `go build` step you can also run locally without Docker? | ✅ matches `go build` directly | ❌ requires `docker build` to compile |
+| Want a single `go build` step you can also run locally without a container builder? | ✅ matches `go build` directly | ❌ requires a container build to compile |
 | Sigstore-keyless OIDC signing on the binary? | ✅ release-create-github + `sign.method: sigstore` | ✅ `publish-container.yml` signs the image, not the binary |
 
 #### Caller responsibilities
 
 - **`go.mod`** with module path matching the repo (Go's contract for tag-based versioning).
-- **`go.sum`** committed — required for reproducible SBOM.
+- **`go.sum`** committed: required for reproducible SBOM.
 - **For artifact-first**: `config.main-package` (default `./cmd/<binary-name>` or `.`), `config.binary-name`, `config.platforms`.
 - **For container-first**: a Containerfile with a multi-stage builder stage that respects `TARGETOS`/`TARGETARCH`; optional `target:` selecting the runtime stage.
 - **Tests / lints / vulnerability checks** in a caller-owned PR workflow (`go test`, `go vet`, `govulncheck`, `staticcheck`, golangci-lint).
@@ -558,7 +539,7 @@ for every other ecosystem, the pattern is fixed by the deliverable shape.
 
 | Property | Value |
 |---|---|
-| Pattern | n/a — no artifact to build |
+| Pattern | n/a, no artifact to build |
 | project-type identifier | `meta` |
 | Status | Production |
 | Tracked since | v3.0.0 |
@@ -566,7 +547,7 @@ for every other ecosystem, the pattern is fixed by the deliverable shape.
 The `meta` project-type exists for repositories that have a release
 cadence (changelog generation, tagged GitHub Releases, signed release
 commits) but **no buildable artifact**. Used internally by
-`reusable-ci`'s own `self-release.yml` — the actual binaries come
+`reusable-ci`'s own `self-release.yml`. The actual binaries come
 from a separate `release-binary.yml` (goreleaser); the orchestrator
 handles changelog + GitHub Release creation.
 
@@ -593,7 +574,7 @@ External use cases:
 
 - **`artifacts.yml`** with at least one artifact of `project-type: meta`. No `config:` block (none would apply).
 - **Changelog tooling** if used (git-cliff or another `changelog-creator`).
-- **A meaningful release notes flow** — the value of a meta release is the human-readable changelog + the signed tag.
+- **A meaningful release notes flow**: the value of a meta release is the human-readable changelog + the signed tag.
 
 ---
 

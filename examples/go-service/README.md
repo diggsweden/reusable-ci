@@ -14,7 +14,8 @@ container publish stage.
 
 ## Containerfile Pattern
 
-The build uses BuildKit's `TARGETOS` / `TARGETARCH` values, so `linux/amd64`
-and `linux/arm64` compile natively on split GitHub-hosted runners. The optional
-`extract.binary` block reuses the same builder stage to upload `${name}-binaries-${arch}`
+Buildah runs one native build per requested platform and exposes `TARGETOS` /
+`TARGETARCH` to the Containerfile, so `linux/amd64` and `linux/arm64` compile on
+split GitHub-hosted runners without emulation. The optional `extract.binary`
+block reuses the same builder stage to upload `${name}-binaries-${arch}`
 artifacts that can be attached to a GitHub Release.
