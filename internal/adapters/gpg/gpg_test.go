@@ -80,22 +80,53 @@ func TestConfigureAgent_WritesConfFile(t *testing.T) {
 	}
 }
 
-func TestDelete_IsIdempotent(t *testing.T) {
+// TestDelete_RemovesTheKeyAndRepeatsHarmlessly covers both halves. The
+// deletes return nothing and only report gpg's errors, so "it did not blow
+// up" is not evidence of anything: what has to hold is that the key is
+// actually gone afterwards, and that a second pass over an already-empty
+// keyring still leaves it that way.
+func TestDelete_RemovesTheKeyAndRepeatsHarmlessly(t *testing.T) {
 	k := gpgkey.New(t)
 	a := adaptergpg.New()
 	ctx := context.Background()
+
+	// The key is there to begin with, or nothing below is a deletion.
+	before, err := a.ListKeygrips(ctx, k.Fingerprint)
+	if err != nil || len(domaingpg.ParseKeygrips(before)) == 0 {
+		t.Fatalf("fixture key is not in the keyring: grips=%q err=%v", before, err)
+	}
 
 	// First round removes the throwaway key.
 	a.DeleteSecretKey(ctx, k.Fingerprint)
 	a.DeleteKey(ctx, k.Fingerprint)
 
-	// Second round: keys are gone — must not panic / error-propagate.
+	assertNoKeygrips(t, a, k.Fingerprint, "after the first delete")
+
+	// Second round: keys are gone — the repeat must not resurrect or
+	// error out, which for a void, best-effort call means the
+	// keyring has to still be empty.
 	a.DeleteSecretKey(ctx, k.Fingerprint)
 	a.DeleteKey(ctx, k.Fingerprint)
+
+	assertNoKeygrips(t, a, k.Fingerprint, "after the repeated delete")
 
 	// Never-existed fingerprint.
 	a.DeleteSecretKey(ctx, "0000000000000000000000000000000000000000")
 	a.DeleteKey(ctx, "0000000000000000000000000000000000000000")
+
+	assertNoKeygrips(t, a, k.Fingerprint, "after deleting an unrelated fingerprint")
+}
+
+// assertNoKeygrips fails unless the fingerprint resolves to no keygrips.
+// gpg reports an unknown key as an error rather than an empty listing, so
+// either outcome counts as absent.
+func assertNoKeygrips(t *testing.T, a *adaptergpg.Adapter, fingerprint, when string) {
+	t.Helper()
+
+	out, err := a.ListKeygrips(context.Background(), fingerprint)
+	if err == nil && len(domaingpg.ParseKeygrips(out)) != 0 {
+		t.Errorf("%s the key is still in the keyring: %q", when, out)
+	}
 }
 
 func isHex(s string) bool {
@@ -108,24 +139,4 @@ func isHex(s string) bool {
 		}
 	}
 	return true
-}
-
-// TestImportKey_ErrorNeverEchoesInput: import stdin is key material by
-// definition, and gpg echoes input fragments in diagnostics ("invalid
-// armor header: <line>") that carry no private-key marker — so the
-// import error must suppress gpg's output wholesale, not rely on
-// marker-based redaction. Black-box twin lives in the companion
-// testsuite (TestSecurity_GPGStderrDoesNotEchoInputKey).
-func TestImportKey_ErrorNeverEchoesInput(t *testing.T) {
-	t.Parallel()
-
-	payload := "this-is-not-base64-armor-payload"
-	err := adaptergpg.New().ImportKey(context.Background(), []byte("-----BEGIN PGP PRIVATE KEY BLOCK-----\n"+payload+"\n-----END PGP PRIVATE KEY BLOCK-----\n"))
-	if err == nil {
-		t.Fatal("import of garbage armor must fail")
-	}
-
-	if strings.Contains(err.Error(), payload) {
-		t.Fatalf("import error echoed input key material:\n%s", err)
-	}
 }

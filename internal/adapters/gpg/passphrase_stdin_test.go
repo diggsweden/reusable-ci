@@ -5,15 +5,18 @@ package gpg_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	adaptergpg "github.com/diggsweden/reusable-ci/v3/internal/adapters/gpg"
-	domaingpg "github.com/diggsweden/reusable-ci/v3/internal/domain/gpg"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
+	"github.com/stretchr/testify/require"
 )
 
 // ImportKey's "stdin, never argv" claim has a test. DetachedSign and
@@ -123,46 +126,115 @@ func TestDetachedSign_PassphraseIsNotInTheEnvironment(t *testing.T) {
 	}
 }
 
-// TestPresetPassphrase_SendsHexOnStdin covers the agent-preseeding path.
-// The passphrase is hex-encoded before it travels, so the literal never
-// appears even in the pipe -- and the command line carries only the
-// keygrip.
-func TestPresetPassphrase_SendsHexOnStdin(t *testing.T) {
-	bins := mockbinary.New(t)
-	bins.Add("gpg-connect-agent", `cat > /dev/null`)
-
-	adapter := &adaptergpg.Adapter{AgentBin: bins.Path("gpg-connect-agent")}
-
-	const keygrip = "1111222233334444555566667777888899990000"
-
-	if err := adapter.PresetPassphrase(context.Background(), keygrip, testPassphrase); err != nil {
-		t.Fatalf("PresetPassphrase: %v", err)
+// Hex is reversible secret material, not redaction. Both it and the keygrip
+// belong on stdin, with exactly one command terminator and only /bye in argv.
+func TestPresetPassphrase_StdinAndEnvironmentBoundary(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("the owned test-executable symlink recorder is scoped to Linux and Darwin")
 	}
 
-	invs := bins.Invocations("gpg-connect-agent")
-	if len(invs) != 1 {
-		t.Fatalf("agent invocations = %d, want 1", len(invs))
-	}
+	executable, err := os.Executable()
+	require.NoError(t, err)
 
-	inv := invs[0]
+	const (
+		keygrip   = "1111222233334444555566667777888899990000"
+		secretHex = "636F727265637420686F727365206261747465727920737461706C65"
+		wantStdin = "PRESET_PASSPHRASE 1111222233334444555566667777888899990000 -1 636F727265637420686F727365206261747465727920737461706C65\n"
+	)
 
-	for _, arg := range inv.Args {
-		if strings.Contains(arg, testPassphrase) {
-			t.Fatalf("the passphrase is in argv: %v", inv.Args)
-		}
-	}
+	for _, tc := range []struct {
+		name     string
+		new      func() *adaptergpg.Adapter
+		isolated bool
+	}{
+		{name: "New", new: adaptergpg.New},
+		{name: "NewIsolated", new: adaptergpg.NewIsolated, isolated: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for _, name := range []string{"empty-path", "home", "tmp", "gnupg"} {
+				require.NoError(t, os.Mkdir(filepath.Join(dir, name), 0o700))
+			}
 
-	if strings.Contains(inv.Stdin, testPassphrase) {
-		t.Error("the passphrase reached the agent in the clear, not hex-encoded")
-	}
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "tty"), nil, 0o600))
 
-	wantHex := domaingpg.HexEncodePassphrase(testPassphrase)
-	if !strings.Contains(inv.Stdin, wantHex) {
-		t.Errorf("stdin = %q, want it to carry the hex-encoded passphrase", inv.Stdin)
-	}
+			// No ambient credentials may reach the recorder, even through New.
+			// Setenv registers restoration, including originally unset values.
+			for _, entry := range os.Environ() {
+				key, _, _ := strings.Cut(entry, "=")
+				t.Setenv(key, "")
+				require.NoError(t, os.Unsetenv(key))
+			}
 
-	if !strings.Contains(inv.Stdin, "PRESET_PASSPHRASE "+keygrip+" ") {
-		t.Errorf("stdin = %q, want a PRESET_PASSPHRASE for the keygrip", inv.Stdin)
+			runtimeEnv := []string{
+				"PATH=" + filepath.Join(dir, "empty-path"),
+				"HOME=" + filepath.Join(dir, "home"),
+				"TMPDIR=" + filepath.Join(dir, "tmp"),
+				"GNUPGHOME=" + filepath.Join(dir, "gnupg"),
+				"GPG_TTY=" + filepath.Join(dir, "tty"),
+				"LANG=C.UTF-8", "LC_ALL=C", "LC_CTYPE=C.UTF-8", "LC_MESSAGES=C",
+			}
+			// New intentionally inherits preexisting secrets. Its promise here is
+			// not to newly export the supplied argument, not to scrub the parent.
+			parentEnv := slices.Concat(runtimeEnv, []string{
+				"GPG_PRIVATE_KEY=owned-canonical-key",
+				"GPG_SIGNING_KEY=owned-legacy-key",
+				"GPG_PASSPHRASE=owned-preexisting-passphrase",
+				"GPG_SIGNING_PASSWORD=owned-preexisting-password",
+				"P018_UNRELATED=owned-unrelated-value",
+			})
+			if tc.isolated {
+				parentEnv = append(parentEnv, "P018_ARBITRARY_HEX="+secretHex)
+			}
+
+			for _, entry := range parentEnv {
+				key, value, _ := strings.Cut(entry, "=")
+				t.Setenv(key, value)
+			}
+
+			wantEnv := slices.Clone(parentEnv)
+
+			if tc.isolated {
+				t.Setenv("GPG_PASSPHRASE", testPassphrase)
+				t.Setenv("GPG_SIGNING_PASSWORD", testPassphrase)
+
+				wantEnv = slices.Clone(runtimeEnv)
+			}
+
+			adapter := tc.new()
+			if tc.isolated {
+				// NewIsolated captures runtime values at construction, not at Run.
+				t.Setenv("LANG", "after-construction")
+			}
+
+			adapter.AgentBin = filepath.Join(dir, presetRecorderName)
+			require.NoError(t, os.Symlink(executable, adapter.AgentBin))
+
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+
+			require.NoError(t, adapter.PresetPassphrase(ctx, keygrip, testPassphrase), "PresetPassphrase")
+
+			body, err := os.ReadFile(filepath.Join(dir, presetRecordName))
+			require.NoError(t, err, "agent did not record one invocation")
+
+			var inv presetInvocation
+			require.NoError(t, json.Unmarshal(body, &inv), "decode agent invocation")
+			require.Equal(t, wantStdin, string(inv.Stdin), "agent stdin")
+
+			for _, secret := range []string{testPassphrase, secretHex} {
+				require.NotContains(t, strings.Join(inv.Args, "\x00"), secret,
+					"supplied passphrase (plain or hex) reached argv")
+				require.NotContains(t, strings.Join(inv.Env, "\x00"), secret,
+					"supplied passphrase (plain or hex) reached environment")
+			}
+
+			require.Equal(t, []string{"/bye"}, inv.Args, "agent argv")
+
+			slices.Sort(inv.Env)
+			slices.Sort(wantEnv)
+			require.Equal(t, wantEnv, inv.Env, "agent environment")
+		})
 	}
 }
 

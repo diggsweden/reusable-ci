@@ -5,6 +5,7 @@ package gpg_test
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -17,9 +18,22 @@ import (
 // it would be visible to `ps`) and never via a tmpfile (where it
 // would briefly land on disk). A stub gpg captures both surfaces; the
 // test asserts the key is on one and absent from the other.
+//
+// The no-tmpfile half of that claim is checked rather than asserted in prose.
+// It holds today by construction — os/exec pipes a non-*os.File Stdin, so a
+// strings.Reader never reaches the filesystem — but the regression it warns
+// about is a refactor to os.CreateTemp, and that writes into TMPDIR. Pointing
+// TMPDIR at an owned directory and requiring it to stay empty is the seam
+// that would catch it. Nothing here polls for a file that exists only during
+// the call: a staged key would have to be created and removed, and an empty
+// directory afterwards is not proof it was never used, so what is asserted is
+// the durable part — a leftover — plus the argv and stdin surfaces above.
 func TestImportKey_KeyArrivesOnStdinNotArgv(t *testing.T) {
 	bins := mockbinary.New(t)
 	bins.Add("gpg", `cat > /dev/null`)
+
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
 
 	a := &adaptergpg.Adapter{GPGBin: bins.Path("gpg")}
 
@@ -35,10 +49,8 @@ func TestImportKey_KeyArrivesOnStdinNotArgv(t *testing.T) {
 
 	inv := invs[0]
 
-	// Argv must NOT carry the key path. Pre-hardening it was
-	// `gpg --import --batch --yes /tmp/xyz/key.pgp` — post-hardening
-	// no path argument exists. mockbinary's Args excludes argv[0],
-	// so the recorded args are exactly the three flags.
+	// Argv must not carry a key path. mockbinary's Args excludes argv[0], so
+	// the recorded args are exactly the three flags.
 	expectedArgs := []string{"--import", "--batch", "--yes"}
 	if len(inv.Args) != len(expectedArgs) {
 		t.Errorf("unexpected argv length %d: %v (key path leaked into argv?)", len(inv.Args), inv.Args)
@@ -57,10 +69,28 @@ func TestImportKey_KeyArrivesOnStdinNotArgv(t *testing.T) {
 		}
 	}
 
-	// Stdin must carry the full armored key. mockbinary's recorder
-	// strips trailing newlines from the captured stdin, so we
-	// compare with the same normalisation.
-	if strings.TrimRight(inv.Stdin, "\n") != strings.TrimRight(armor, "\n") {
-		t.Errorf("stdin (trimmed) = %q\nwant: %q", inv.Stdin, armor)
+	// Stdin must carry the full armored key, byte for byte. This used to
+	// compare both sides with trailing newlines trimmed, because the
+	// recorder's "$(cat)" dropped them; it no longer does, and comparing
+	// trimmed hid the one thing an armor is sensitive to. gpg refuses a
+	// private-key block whose END line has no terminating newline, so a
+	// caller that dropped it would fail in CI while the test that exists to
+	// pin what gpg receives stayed green.
+	if inv.Stdin != armor {
+		t.Errorf("stdin = %q\nwant: %q", inv.Stdin, armor)
+	}
+
+	left, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatalf("read TMPDIR: %v", err)
+	}
+
+	if len(left) != 0 {
+		names := make([]string, 0, len(left))
+		for _, e := range left {
+			names = append(names, e.Name())
+		}
+
+		t.Errorf("the import left %v in TMPDIR; key material must not be staged on disk", names)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/cliio"
 	domaingpg "github.com/diggsweden/reusable-ci/v3/internal/domain/gpg"
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
 )
@@ -38,9 +39,9 @@ func New() *Adapter { return &Adapter{} }
 func NewIsolated() *Adapter { return &Adapter{Env: IsolatedEnv()} }
 
 // ImportKey runs `gpg --import --batch --yes` with the key piped on
-// stdin. The key bytes never touch disk — they go process-to-process
-// via the inherited pipe, then live only in gpg's own keyring (which
-// gpg manages under GNUPGHOME with its own mode-0600 guarantee).
+// stdin. The armored input is never staged in argv or a temporary file;
+// gpg persists the imported private-key material in its own on-disk keyring
+// under GNUPGHOME, which gpg manages with mode-0600 files.
 //
 // The on-disk import target is gpg's keyring rather than ours: the
 // downstream `git tag -s` / `git commit -S` calls shell to gpg
@@ -122,8 +123,11 @@ func (a *Adapter) ConfigureAgent(ctx context.Context) error {
 		return fmt.Errorf("chmod GNUPGHOME: %w", err)
 	}
 
+	// Atomic replacement, so an existing file keeps neither its old mode (a
+	// plain write applies 0600 only when it creates the file) nor a symlink
+	// that would redirect the write elsewhere.
 	confPath := filepath.Join(home, "gpg-agent.conf")
-	if err := os.WriteFile(confPath, []byte(domaingpg.AgentConfig), 0o600); err != nil { //nolint:gosec // GNUPGHOME path is env-controlled.
+	if err := cliio.WriteFile(confPath, []byte(domaingpg.AgentConfig), 0o600); err != nil {
 		return fmt.Errorf("write gpg-agent.conf: %w", err)
 	}
 
@@ -148,20 +152,26 @@ func (a *Adapter) PresetPassphrase(ctx context.Context, keygrip, passphrase stri
 	return nil
 }
 
-// DeleteSecretKey removes the secret half of the key. Idempotent:
-// errors are swallowed so it can run unconditionally in cleanup paths.
+// DeleteSecretKey removes the secret half of the key. Cleanup remains
+// best-effort, but a failed deletion is logged rather than silently discarded.
 func (a *Adapter) DeleteSecretKey(ctx context.Context, fingerprint string) {
-	_, _ = a.run(ctx, a.gpg(), "--batch", "--yes", "--delete-secret-keys", fingerprint)
+	if _, err := a.run(ctx, a.gpg(), "--batch", "--yes", "--delete-secret-keys", fingerprint); err != nil {
+		slog.WarnContext(ctx, "failed to delete GPG secret key", "fingerprint", fingerprint, "error", err)
+	}
 }
 
-// DeleteKey removes the public half. Idempotent: errors swallowed.
+// DeleteKey removes the public half. Cleanup continues after a reported failure.
 func (a *Adapter) DeleteKey(ctx context.Context, fingerprint string) {
-	_, _ = a.run(ctx, a.gpg(), "--batch", "--yes", "--delete-keys", fingerprint)
+	if _, err := a.run(ctx, a.gpg(), "--batch", "--yes", "--delete-keys", fingerprint); err != nil {
+		slog.WarnContext(ctx, "failed to delete GPG public key", "fingerprint", fingerprint, "error", err)
+	}
 }
 
-// KillAgent stops gpg-agent. Idempotent: errors swallowed.
+// KillAgent stops gpg-agent. Cleanup continues after a reported failure.
 func (a *Adapter) KillAgent(ctx context.Context) {
-	_, _ = a.run(ctx, a.agent(), "KILLAGENT", "/bye")
+	if _, err := a.run(ctx, a.agent(), "KILLAGENT", "/bye"); err != nil {
+		slog.WarnContext(ctx, "failed to stop gpg-agent", "error", err)
+	}
 }
 
 func (a *Adapter) gpg() string {
@@ -219,7 +229,7 @@ func (a *Adapter) runStdin(ctx context.Context, stdin, bin string, args ...strin
 // echoing input key material on stderr.
 func finishRun(bin string, args []string, out []byte, err error) (string, error) {
 	if err == nil {
-		return strings.TrimRight(string(out), "\n"), nil
+		return strings.TrimSuffix(string(out), "\n"), nil
 	}
 
 	wrapped := safeexec.WrapError(err, bin, safeexec.FirstArg(args))
