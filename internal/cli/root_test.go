@@ -4,8 +4,12 @@
 package cli_test
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -38,12 +42,29 @@ func TestNew_DocsLinkTracksInstalledVersion(t *testing.T) {
 	}
 }
 
+// TestRoot_RunHelp asserts what help produces and where, not only that it
+// returns. It used to require NoError and nothing else, with the text going to
+// the process's real stdout -- so help could print nothing, print to stderr,
+// or lose every command and still pass. Explicit help is a successful request:
+// the text belongs on stdout, stderr stays empty, and the operator has to be
+// able to find the commands they came for.
 func TestRoot_RunHelp(t *testing.T) {
 	t.Parallel()
 
 	cmd := cli.New(cli.BuildInfo{Version: "x", Commit: "y", Date: "z"})
+
+	var stdout, stderr bytes.Buffer
+
+	cmd.Writer = &stdout
+	cmd.ErrWriter = &stderr
+
 	err := cmd.Run(context.Background(), []string{"reusable-ci", "--help"}) //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 	require.NoError(t, err)
+	require.Empty(t, stderr.String(), "help wrote to stderr")
+
+	for _, want := range []string{"artifact", "build", "container", "release", "validate", "--log-level"} {
+		require.Containsf(t, stdout.String(), want, "help does not mention %q", want)
+	}
 }
 
 func TestRoot_RejectsBogusLogLevel(t *testing.T) {
@@ -55,28 +76,59 @@ func TestRoot_RejectsBogusLogLevel(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid log-level")
 }
 
+// TestRoot_AcceptsValidLogLevels drives the Before hook and reads the
+// threshold it installs.
+//
+// Both tests this replaces passed --help, and --help short-circuits before
+// Before runs: measured, `--log-level=bogus --help` returns nil and leaves the
+// logger untouched, and `--quiet --help` never lowers anything. So they could
+// not fail for any level string, and the one named for quiet never looked at
+// quiet. Without --help the root still prints help after Before has run, which
+// is the safe invocation that actually exercises the hook.
+//
+// Not parallel: configureLogger replaces the process-wide slog default, and a
+// concurrent test would read another test's threshold. The default is restored
+// afterwards so the rest of the package logs as it did.
 func TestRoot_AcceptsValidLogLevels(t *testing.T) {
-	t.Parallel()
+	previous := slog.Default()
 
-	for _, level := range []string{"debug", "info", "warn", "warning", "error", "DEBUG", "INFO"} {
-		t.Run(level, func(t *testing.T) {
-			t.Parallel()
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	for _, tc := range []struct {
+		args          []string
+		enabled       slog.Level
+		belowDisabled slog.Level
+	}{
+		{args: []string{"--log-level=debug"}, enabled: slog.LevelDebug},
+		{args: []string{"--log-level=DEBUG"}, enabled: slog.LevelDebug},
+		{args: []string{"--log-level=info"}, enabled: slog.LevelInfo, belowDisabled: slog.LevelDebug},
+		{args: []string{"--log-level=INFO"}, enabled: slog.LevelInfo, belowDisabled: slog.LevelDebug},
+		{args: []string{"--log-level=warn"}, enabled: slog.LevelWarn, belowDisabled: slog.LevelInfo},
+		{args: []string{"--log-level=warning"}, enabled: slog.LevelWarn, belowDisabled: slog.LevelInfo},
+		{args: []string{"--log-level=error"}, enabled: slog.LevelError, belowDisabled: slog.LevelWarn},
+		// --quiet raises the threshold to error, even past an explicit level.
+		{args: []string{"--quiet"}, enabled: slog.LevelError, belowDisabled: slog.LevelWarn},
+		{args: []string{"--log-level=debug", "--quiet"}, enabled: slog.LevelError, belowDisabled: slog.LevelWarn},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			// A known starting point, so a hook that silently did nothing
+			// cannot pass by inheriting the previous case's threshold.
+			slog.SetDefault(slog.New(slog.DiscardHandler))
 
 			cmd := cli.New(cli.BuildInfo{Version: "x", Commit: "y", Date: "z"})
-			// --help short-circuits before any subcommand action; gives us a clean
-			// run that exercises the Before hook with the chosen log level.
-			err := cmd.Run(context.Background(), []string{"reusable-ci", "--log-level=" + level, "--help"})
-			require.NoError(t, err)
+			cmd.Writer = io.Discard
+			cmd.ErrWriter = io.Discard
+
+			require.NoError(t, cmd.Run(context.Background(), append([]string{"reusable-ci"}, tc.args...)))
+
+			ctx := context.Background()
+			require.Truef(t, slog.Default().Enabled(ctx, tc.enabled), "level %v is not enabled", tc.enabled)
+
+			if tc.enabled != slog.LevelDebug {
+				require.Falsef(t, slog.Default().Enabled(ctx, tc.belowDisabled), "level %v is still enabled", tc.belowDisabled)
+			}
 		})
 	}
-}
-
-func TestRoot_QuietImpliesError(t *testing.T) {
-	t.Parallel()
-
-	cmd := cli.New(cli.BuildInfo{Version: "x", Commit: "y", Date: "z"})
-	err := cmd.Run(context.Background(), []string{"reusable-ci", "--quiet", "--help"})
-	require.NoError(t, err)
 }
 
 func TestRoot_RejectsBogusProvider(t *testing.T) {

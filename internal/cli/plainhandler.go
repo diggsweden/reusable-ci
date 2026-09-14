@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 )
 
@@ -20,6 +21,8 @@ import (
 //	Info  → "<msg>"
 //	Warn  → "warning: <msg>"
 //	Error → "error: <msg>"
+//
+// CR and LF are escaped, keeping each record on one physical line.
 //
 // Use this at log-level info/warn/error. For --log-level=debug the
 // root installs [slog.TextHandler] instead, so operators piping stderr
@@ -51,7 +54,8 @@ func (h *plainHandler) Handle(_ context.Context, r slog.Record) error { //nolint
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	_, err := fmt.Fprintln(h.w, prefix+r.Message)
+	message := strings.ReplaceAll(strings.ReplaceAll(r.Message, "\r", `\r`), "\n", `\n`)
+	_, err := fmt.Fprintln(h.w, prefix+message)
 
 	return err
 }

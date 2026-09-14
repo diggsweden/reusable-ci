@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/urfave/cli/v3"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/summary"
 )
 
 // Render returns the full docs/cli-reference.md body for root.
@@ -29,13 +31,16 @@ func Render(root *cli.Command) string {
 	_, _ = fmt.Fprintln(&b)
 	_, _ = fmt.Fprintln(&b, "This document is the canonical surface of the `reusable-ci` binary.")
 	_, _ = fmt.Fprintln(&b)
-	_, _ = fmt.Fprintln(&b, "Every command supports `--help`. Global flags (`--quiet`, `--log-level`, `--format`, `--json`,")
-	_, _ = fmt.Fprintln(&b, "`--provider`, `--runner`) are accepted on every subcommand.")
+	_, _ = fmt.Fprintln(&b, "Every command supports `--help`. Global options below are accepted on every subcommand.")
 	_, _ = fmt.Fprintln(&b)
 	_, _ = fmt.Fprintln(&b, "Value resolution is one fixed precedence everywhere: explicit flag, then (where a")
 	_, _ = fmt.Fprintln(&b, "command supports it) the `$REUSABLE_CI_PLAN` plan-file field for the command's scope,")
 	_, _ = fmt.Fprintln(&b, "then the environment variables listed per flag, then the flag default.")
 	_, _ = fmt.Fprintln(&b)
+
+	_, _ = fmt.Fprintln(&b, "## Global options")
+	_, _ = fmt.Fprintln(&b)
+	renderFlags(&b, root.Flags)
 
 	// Top-level table of contents.
 	_, _ = fmt.Fprintln(&b, "## Command groups")
@@ -67,11 +72,13 @@ func renderSubtree(b *strings.Builder, cmd *cli.Command, breadcrumb []string, le
 	// want?") and EXAMPLE blocks. It is preformatted terminal text, so render it
 	// verbatim in a fenced block rather than as markdown; this is the one place a
 	// reader browses the whole surface, so the examples belong here, not only in
-	// `--help`. No Description contains a code fence (guarded), so ``` is safe.
+	// `--help`. The fence outlasts any backtick run in the text, so an example
+	// that itself shows a fenced block cannot close this one early.
 	if desc := strings.TrimRight(cmd.Description, "\n"); desc != "" {
-		_, _ = fmt.Fprintln(b, "```")
+		fence := summary.CodeFence(desc)
+		_, _ = fmt.Fprintln(b, fence)
 		_, _ = fmt.Fprintln(b, desc)
-		_, _ = fmt.Fprintln(b, "```")
+		_, _ = fmt.Fprintln(b, fence)
 		_, _ = fmt.Fprintln(b)
 	}
 
@@ -79,26 +86,62 @@ func renderSubtree(b *strings.Builder, cmd *cli.Command, breadcrumb []string, le
 		_, _ = fmt.Fprintf(b, "**Usage:** `%s %s`\n\n", strings.Join(breadcrumb, " "), cmd.ArgsUsage)
 	}
 
-	if len(cmd.Flags) > 0 {
-		_, _ = fmt.Fprintln(b, "| Flag | Description | Env vars |")
-		_, _ = fmt.Fprintln(b, "|------|-------------|----------|")
-
-		for _, declared := range cmd.Flags {
-			primary, usage, sources := flagFields(declared)
-			if primary == "" {
-				continue
-			}
-
-			_, _ = fmt.Fprintf(b, "| %s | %s | %s |\n",
-				flagNameCell(declared, primary), escapeCell(usage), escapeCell(sources))
-		}
-
-		_, _ = fmt.Fprintln(b)
-	}
+	renderFlags(b, cmd.Flags)
 
 	for _, sub := range visibleCommands(cmd.Commands) {
 		renderSubtree(b, sub, append(append([]string{}, breadcrumb...), sub.Name), level+1)
 	}
+}
+
+const docNotApplicable = "n/a"
+
+func renderFlags(b *strings.Builder, flags []cli.Flag) { //nolint:varnamelen // same output builder convention as renderSubtree.
+	if len(flags) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintln(b, "| Flag | Description | Type | Default | Env vars |")
+	_, _ = fmt.Fprintln(b, "|------|-------------|------|---------|----------|")
+
+	for _, declared := range flags {
+		if visible, ok := declared.(cli.VisibleFlag); ok && !visible.IsVisible() {
+			continue
+		}
+
+		primary, usage, sources := flagFields(declared)
+		if primary == "" {
+			continue
+		}
+
+		typeName, defaultValue := flagDefaultFields(declared)
+		_, _ = fmt.Fprintf(b, "| %s | %s | %s | %s | %s |\n",
+			flagNameCell(declared, primary), escapeCell(usage), escapeCell(typeName), escapeCell(defaultValue), escapeCell(sources))
+	}
+
+	_, _ = fmt.Fprintln(b)
+}
+
+func flagDefaultFields(flag cli.Flag) (string, string) {
+	doc, ok := flag.(cli.DocGenerationFlag)
+	if !ok {
+		return docNotApplicable, docNotApplicable
+	}
+
+	typeName := doc.TypeName()
+	if !doc.IsDefaultVisible() {
+		return typeName, docNotApplicable
+	}
+
+	value := doc.GetDefaultText()
+	if value == "" {
+		value = doc.GetValue()
+	}
+
+	if value == "" && typeName == "string" {
+		value = `""`
+	}
+
+	return typeName, "`" + value + "`"
 }
 
 // flagNameCell renders a flag's primary name followed by any aliases, e.g.
@@ -168,7 +211,7 @@ func flagSources(f cli.Flag) string {
 		GetEnvVars() []string
 	})
 	if !ok || len(envFlag.GetEnvVars()) == 0 {
-		return "n/a"
+		return docNotApplicable
 	}
 
 	parts := make([]string, 0, len(envFlag.GetEnvVars()))
@@ -210,8 +253,8 @@ func slug(name string) string {
 	return b.String()
 }
 
-// escapeCell renders a string for a markdown table cell. Pipe and
-// newline characters break the row, so they get escaped / collapsed.
+// escapeCell keeps a string on one table row: a newline becomes a space and a
+// pipe is backslash-escaped. Nothing else in the cell is escaped.
 func escapeCell(s string) string {
 	s = strings.ReplaceAll(s, "\n", " ")
 	s = strings.ReplaceAll(s, "|", `\|`)
@@ -219,6 +262,10 @@ func escapeCell(s string) string {
 	return s
 }
 
+// escapeText escapes the Markdown this tree's usage text is known to contain:
+// angle-bracket placeholders such as <build-dir>, which would parse as HTML,
+// and glob asterisks such as *.tgz, which would open emphasis. It is not a
+// general Markdown escaper; underscores, brackets and backticks pass through.
 func escapeText(s string) string {
 	s = strings.ReplaceAll(s, "<", "&lt;")
 	s = strings.ReplaceAll(s, ">", "&gt;")

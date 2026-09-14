@@ -4,8 +4,8 @@
 package cli_test
 
 import (
+	"bytes"
 	"context"
-	"io"
 	"strings"
 	"testing"
 
@@ -21,19 +21,56 @@ import (
 // this is a pure "the command tree is well-formed and every verb
 // self-documents" guarantee — it catches a malformed flag, a nil action
 // node, or a broken subgroup the moment it is introduced.
+//
+// Each path writes to its own buffers and must print its own page. Output used
+// to go to io.Discard with only the error checked, so a command whose --help
+// fell back to its parent's page, or a walk that found no commands at all,
+// passed.
 func TestAllCommands_HelpRenders(t *testing.T) {
 	t.Parallel()
 
-	for _, path := range allCommandPaths() {
-		t.Run(strings.Join(path, " "), func(t *testing.T) {
+	paths := allCommandPaths()
+
+	names := make([]string, 0, len(paths))
+	for _, path := range paths {
+		names = append(names, strings.Join(path, " "))
+	}
+
+	for _, known := range []string{"build maven run", "container ledger merge", "sbom assemble", "version"} {
+		require.Containsf(t, names, known, "the command walk did not reach %q", known)
+	}
+
+	for _, path := range paths {
+		name := strings.Join(path, " ")
+
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
+			var stdout, stderr bytes.Buffer
+
 			root := cli.New(cli.BuildInfo{Version: "dev"})
-			root.Writer = io.Discard
-			root.ErrWriter = io.Discard
+			root.Writer = &stdout
+			root.ErrWriter = &stderr
 
 			args := append(append([]string{"reusable-ci"}, path...), "--help")
-			require.NoErrorf(t, root.Run(context.Background(), args), "help failed for %q", strings.Join(path, " "))
+			require.NoErrorf(t, root.Run(context.Background(), args), "help failed for %q", name)
+
+			// The NAME line is the command's full path followed by its usage
+			// or the end of the line; a parent's page names the parent.
+			page := stdout.String()
+
+			heading := "NAME:\n   reusable-ci " + name
+			if !strings.HasPrefix(page, heading+" - ") && !strings.HasPrefix(page, heading+"\n") {
+				t.Errorf("help page does not start with %q:\n%s", heading, page)
+			}
+
+			if !strings.Contains(page, "USAGE:\n   reusable-ci "+name+" ") {
+				t.Errorf("help page has no usage line for %q:\n%s", name, page)
+			}
+
+			if stderr.Len() != 0 {
+				t.Errorf("help wrote to stderr: %q", stderr.String())
+			}
 		})
 	}
 }

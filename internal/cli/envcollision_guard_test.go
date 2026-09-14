@@ -9,6 +9,7 @@ import (
 	ucli "github.com/urfave/cli/v3"
 
 	rci "github.com/diggsweden/reusable-ci/v3/internal/cli"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/cliflags"
 )
 
 // reservedExternalEnvVars are owned by external tools (git, gpg, docker,
@@ -52,20 +53,35 @@ func TestNoFlagSourcesCollideWithReservedEnvVars(t *testing.T) {
 
 	root := rci.New(rci.BuildInfo{Version: "test"})
 
+	inspected := 0
+	seen := map[string]bool{}
+
 	var walk func(cmd *ucli.Command, path string)
 
 	walk = func(cmd *ucli.Command, path string) {
-		for _, f := range cmd.Flags {
-			envFlag, ok := f.(interface{ GetEnvVars() []string })
-			if !ok {
-				continue
-			}
+		for _, f := range cmd.Flags { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+			// cliflags.Sources rather than a GetEnvVars type assertion. The
+			// assertion skipped any flag whose type did not satisfy it, so a
+			// flag the guard could not read was indistinguishable from one
+			// sourcing no environment at all, and the skip was silent -- which
+			// is how a denylist reports compliance for a flag it never looked
+			// at. Sources fails the test instead, and it is what the other
+			// four CLI surface guards already use. Every flag type in the tree
+			// satisfies GetEnvVars today, so this closes a latent hole rather
+			// than a live one: both traversals read the same 1452 values.
+			for _, src := range cliflags.Sources(t, f).Chain {
+				env, ok := src.(interface{ Key() string })
+				if !ok {
+					continue
+				}
 
-			for _, env := range envFlag.GetEnvVars() {
-				if why, reserved := reservedExternalEnvVars[env]; reserved {
+				inspected++
+				seen[env.Key()] = true
+
+				if why, reserved := reservedExternalEnvVars[env.Key()]; reserved {
 					t.Errorf("`%s` flag %v sources reserved env $%s (%s) — "+
 						"reusable-ci must not repurpose an external tool's variable; "+
-						"use a $REUSABLE_CI_-prefixed name", path, f.Names(), env, why)
+						"use a $REUSABLE_CI_-prefixed name", path, f.Names(), env.Key(), why)
 				}
 			}
 		}
@@ -76,4 +92,20 @@ func TestNoFlagSourcesCollideWithReservedEnvVars(t *testing.T) {
 	}
 
 	walk(root, root.Name)
+
+	// A denylist that inspects nothing is not a rule, and a bare nonzero count
+	// is a weak way to say so: one readable root flag satisfies it while the
+	// rest of the tree goes unvisited. The anchors are named variables the
+	// traversal must reach, one on the root command and one that exists only
+	// on leaves three levels down, so a walk that stopped descending fails
+	// here instead of passing with a smaller number.
+	for _, anchor := range []string{"REUSABLE_CI_LOG", "REUSABLE_CI_REGISTRY_AUTH_FILE"} {
+		if !seen[anchor] {
+			t.Errorf("the traversal never reached $%s; it is not auditing the surface it claims to", anchor)
+		}
+	}
+
+	if inspected == 0 {
+		t.Fatal("no env-sourced flags were inspected; the guard is checking nothing")
+	}
 }

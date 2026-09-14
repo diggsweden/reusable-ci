@@ -105,9 +105,13 @@ func isUsageMessage(msg string) bool {
 		return true
 	case strings.HasPrefix(msg, "flag provided but not defined"):
 		return true
-	case strings.HasPrefix(msg, "No help topic for"):
-		return true
 	case strings.HasPrefix(msg, "unknown subcommand"):
+		// The framework's own wording is "No help topic for '<arg>'", and it
+		// is not listed here because it cannot arrive: the one caller runs
+		// rewriteHelpTopicMessage first, which turns every such message into
+		// this one. A case for the original spelling looked like a second
+		// safety net and was unreachable — removing a prefix from it changed
+		// nothing, which is how it was found.
 		return true
 	}
 

@@ -5,12 +5,16 @@ package cli_test
 
 import (
 	"fmt"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	urfavecli "github.com/urfave/cli/v3"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/cli"
+	"github.com/diggsweden/reusable-ci/v3/internal/cli/cienv"
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/cliflags"
 )
 
@@ -21,45 +25,52 @@ import (
 // chain. Inline chains are how the same concept drifted into different
 // names, orders, and fallbacks across commands; cienv is the single
 // source of truth for these, so any inline use is a bug.
-//
-// The tag family (RELEASE_TAG, TAG_NAME) is deliberately NOT guarded:
-// several signing/verification verbs take a deliberate per-command
-// RELEASE_TAG as an explicit expected-value contract, which is narrower
-// than cienv.Tag()'s ref-name fallbacks and must stay that way.
 func TestRunContextEnvVarsGoThroughCienv(t *testing.T) {
 	t.Parallel()
 
-	guarded := map[string]bool{
-		// repository
-		"REPOSITORY": true, "CI_REPO": true, "FORGEJO_REPOSITORY": true,
-		"FORGEJO_REPO": true, "GITHUB_REPOSITORY": true,
-		// refs
-		"REF_NAME": true, "CI_REF_NAME": true, "FORGEJO_REF_NAME": true, "GITHUB_REF_NAME": true,
-		"REF": true, "FORGEJO_REF": true, "GITHUB_REF": true,
-		"REF_TYPE": true, "FORGEJO_REF_TYPE": true, "GITHUB_REF_TYPE": true,
-		// trigger event
-		"EVENT_NAME": true, "FORGEJO_EVENT_NAME": true, "GITHUB_EVENT_NAME": true,
-		// commit
-		"CI_COMMIT": true, "CI_COMMIT_SHA": true, "COMMIT_SHA": true,
-		"FORGEJO_SHA": true, "GITHUB_SHA": true,
-		// run identity
-		"CI_RUN_ID": true, "FORGEJO_RUN_ID": true, "GITHUB_RUN_ID": true,
-		"CI_RUN_URL": true, "CI_ACTOR": true,
-		// server
-		"CI_SERVER_URL": true, "FORGEJO_SERVER_URL": true,
-		"FORGEJO_SERVER": true, "GITHUB_SERVER_URL": true,
-		// dirs
-		"CI_TEMP_DIR": true, "RUNNER_TEMP": true,
-		"CI_WORKSPACE": true, "FORGEJO_WORKSPACE": true, "GITHUB_WORKSPACE": true,
-		// tokens
-		"CI_TOKEN": true, "FORGEJO_TOKEN": true, "GITHUB_TOKEN": true, "RELEASE_TOKEN": true,
+	offenders := runContextFlagViolations(t, cli.New(cli.BuildInfo{Version: "dev"}), runContextFlagExemptions())
+	if len(offenders) > 0 {
+		t.Errorf("run-context env vars wired outside cienv (use the matching cienv chain, "+
+			"extending it if a name is missing):\n  %s", strings.Join(offenders, "\n  "))
 	}
+}
 
-	root := cli.New(cli.BuildInfo{Version: "dev"})
+type runContextFlagKey struct{ command, flag, key string }
 
-	var offenders []string
+func runContextFlagExemptions() map[runContextFlagKey]string {
+	// These release operations require an explicit final tag, never an ambient
+	// branch/ref fallback. Verification likewise requires an explicit expected
+	// tag. Each key is scoped separately so a new fallback cannot borrow this
+	// exception; unused exceptions fail the same assembled-tree guard.
+	return map[runContextFlagKey]string{
+		{"reusable-ci version tag-release", "tag", "RELEASE_TAG"}:                        "explicit final tag to create",
+		{"reusable-ci version tag-release", "tag", "TAG_NAME"}:                           "explicit final tag to create",
+		{"reusable-ci version render-changelog", "tag", "RELEASE_TAG"}:                   "explicit final stable tag to render",
+		{"reusable-ci version render-changelog", "tag", "TAG_NAME"}:                      "explicit final stable tag to render",
+		{"reusable-ci version commit-changelog-release", "tag", "RELEASE_TAG"}:           "explicit final stable tag to commit and create",
+		{"reusable-ci version commit-changelog-release", "tag", "TAG_NAME"}:              "explicit final stable tag to commit and create",
+		{"reusable-ci container release-images validate", "expected-tag", "RELEASE_TAG"}: "explicit SLSA expected tag, not the current ref",
+	}
+}
 
-	var walk func(path string, cmd *urfavecli.Command)
+func runContextFlagViolations(t *testing.T, root *urfavecli.Command, exemptions map[runContextFlagKey]string) []string {
+	t.Helper()
+
+	guarded := make(map[string]bool)
+
+	for _, concept := range runcontext.All() {
+		for _, key := range concept.Keys() {
+			guarded[key] = true
+		}
+	}
+	// Compare actual type identity, not a printable package-name substring.
+	cienvType := reflect.TypeOf(cienv.Repository().Chain[0])
+	used := make(map[runContextFlagKey]bool)
+
+	var (
+		offenders []string
+		walk      func(path string, cmd *urfavecli.Command)
+	)
 
 	walk = func(path string, cmd *urfavecli.Command) {
 		for _, flag := range cmd.Flags {
@@ -69,10 +80,19 @@ func TestRunContextEnvVarsGoThroughCienv(t *testing.T) {
 					continue
 				}
 
-				if !strings.Contains(fmt.Sprintf("%T", src), "cienv.") {
-					offenders = append(offenders,
-						fmt.Sprintf("%s --%s reads $%s via an inline chain", path, flagName(flag), env.Key()))
+				if reflect.TypeOf(src) == cienvType {
+					continue
 				}
+
+				key := runContextFlagKey{path, flagName(flag), env.Key()}
+				if reason := exemptions[key]; strings.TrimSpace(reason) != "" {
+					used[key] = true
+
+					continue
+				}
+
+				offenders = append(offenders,
+					fmt.Sprintf("%s --%s reads $%s via an inline chain", path, key.flag, key.key))
 			}
 		}
 
@@ -82,10 +102,15 @@ func TestRunContextEnvVarsGoThroughCienv(t *testing.T) {
 	}
 	walk("reusable-ci", root)
 
-	if len(offenders) > 0 {
-		t.Errorf("run-context env vars wired outside cienv (use the matching cienv chain, "+
-			"extending it if a name is missing):\n  %s", strings.Join(offenders, "\n  "))
+	for key := range exemptions {
+		if !used[key] {
+			offenders = append(offenders, fmt.Sprintf("unused run-context exemption: %s --%s $%s", key.command, key.flag, key.key))
+		}
 	}
+
+	slices.Sort(offenders)
+
+	return offenders
 }
 
 func flagName(flag urfavecli.Flag) string {

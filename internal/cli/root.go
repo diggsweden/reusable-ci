@@ -210,16 +210,20 @@ func applyParentGuard(cmd *cli.Command) {
 }
 
 // subcommandNames lists a group's invocable subcommand names for the
-// missing-subcommand usage error, skipping urfave/cli's built-in help entry
-// (which is not a real operation and only adds noise to the list).
+// missing-subcommand usage error.
+//
+// It used to skip a child named "help", on the theory that urfave/cli injects
+// its built-in help entry into Commands and listing it would offer the
+// operator a non-operation. That entry does not exist here: urfave/cli v3
+// serves help through a flag and a root-level handler, and walking the whole
+// built tree finds zero children named "help" at any depth. The branch was
+// unreachable, so it is gone rather than left looking like a live safeguard —
+// and the guard test that asserted "help" was absent from the message was
+// asserting something that could not occur.
 func subcommandNames(group *cli.Command) []string {
 	names := make([]string, 0, len(group.Commands))
 
 	for _, child := range group.Commands {
-		if child.Name == "help" {
-			continue
-		}
-
 		names = append(names, child.Name)
 	}
 

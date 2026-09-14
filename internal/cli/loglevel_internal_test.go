@@ -7,12 +7,12 @@ import (
 	"testing"
 )
 
-// TestResolveLogLevel exercises the precedence matrix from the
+// TestResolveLogLevel_QuietBeatsExplicitFlagWhichBeatsDebug exercises the precedence matrix from the
 // configureLogger doc: quiet > explicit flag/env > $DEBUG > default.
 //
 // Pure-function test — no global slog state, no env reads, no
 // t.Parallel() races against other suites that mutate slog.Default.
-func TestResolveLogLevel(t *testing.T) {
+func TestResolveLogLevel_QuietBeatsExplicitFlagWhichBeatsDebug(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -45,7 +45,7 @@ func TestResolveLogLevel(t *testing.T) {
 	}
 }
 
-func TestIsTruthyEnv(t *testing.T) {
+func TestIsTruthyEnv_RecognisesCommonTruthySpellings(t *testing.T) {
 	for _, tc := range []struct {
 		val  string
 		want bool

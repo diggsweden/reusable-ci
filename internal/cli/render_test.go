@@ -4,6 +4,8 @@
 package cli_test
 
 import (
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -12,21 +14,36 @@ import (
 	internalcli "github.com/diggsweden/reusable-ci/v3/internal/cli"
 )
 
+// publicGroups is the top-level command surface, written out independently of
+// the command tree so that adding, removing or renaming a group is a visible
+// change to this list rather than something the tests absorb.
+func publicGroups() []string {
+	return []string{
+		"artifact", "build", "config", "container", "doctor", "lint", "plan", "platform",
+		"publish", "release", "report", "sbom", "security", "toolchain", "validate", "version",
+	}
+}
+
+// TestRender_AgainstLiveRoot requires the rendered reference to carry exactly
+// the public groups as top-level headings, plus representative nested ones.
+// The group check was a containment test over a list that had fallen three
+// groups behind the tree, so neither a missing nor an extra group failed it.
 func TestRender_AgainstLiveRoot(t *testing.T) {
 	t.Parallel()
 
 	body := internalcli.Render(internalcli.New(internalcli.BuildInfo{Version: "test"}))
 
-	// Smoke-test the top-level groups all appear.
-	for _, group := range []string{
-		"build", "config", "container", "lint", "plan", "platform", "publish",
-		"release", "report", "sbom", "security", "validate", "version",
-	} {
-		if !strings.Contains(body, "## `reusable-ci "+group+"`") {
-			t.Errorf("missing top-level group heading for %q", group)
-		}
+	matches := regexp.MustCompile("(?m)^## `reusable-ci ([^ `]+)`$").FindAllStringSubmatch(body, -1)
+
+	groups := make([]string, 0, len(matches))
+	for _, match := range matches {
+		groups = append(groups, match[1])
 	}
-	// A handful of representative subcommand headings.
+
+	if !slices.Equal(groups, publicGroups()) {
+		t.Errorf("top-level headings = %v, want %v", groups, publicGroups())
+	}
+
 	for _, want := range []string{
 		"### `reusable-ci build maven`",
 		"#### `reusable-ci build maven run`",
@@ -41,12 +58,17 @@ func TestRender_AgainstLiveRoot(t *testing.T) {
 	}
 }
 
+// TestRender_TableOfContentsHasOneEntryPerGroup parses the table of contents
+// and compares it whole against the visible top-level commands of the live
+// tree: one entry each, in heading order, each linking to the anchor its
+// heading gets. Hidden commands have no heading, so they must have no entry.
 func TestRender_TableOfContentsHasOneEntryPerGroup(t *testing.T) {
 	t.Parallel()
 
-	body := internalcli.Render(internalcli.New(internalcli.BuildInfo{}))
+	root := internalcli.New(internalcli.BuildInfo{})
+	body := internalcli.Render(root)
 
-	tocStart := strings.Index(body, "## Command groups")
+	tocStart := strings.Index(body, "## Command groups\n")
 	if tocStart < 0 {
 		t.Fatal("no ToC")
 	}
@@ -56,15 +78,38 @@ func TestRender_TableOfContentsHasOneEntryPerGroup(t *testing.T) {
 		t.Fatal("no group heading after ToC")
 	}
 
-	toc := body[tocStart : tocStart+firstHeading]
-	for _, group := range []string{"build", "platform", "container", "sbom", "security"} {
-		if !strings.Contains(toc, "[`"+group+"`]") {
-			t.Errorf("ToC missing link to %q", group)
+	var visible []string
+
+	for _, cmd := range root.Commands {
+		if !cmd.Hidden {
+			visible = append(visible, cmd.Name)
 		}
 	}
 
-	if !strings.Contains(toc, "[`build`](#reusable-ci-build)") {
-		t.Errorf("ToC link target does not match generated heading anchor:\n%s", toc)
+	slices.Sort(visible)
+
+	if !slices.Equal(visible, publicGroups()) {
+		t.Errorf("visible top-level commands = %v, want %v", visible, publicGroups())
+	}
+
+	entries := regexp.MustCompile("(?m)^- \\[`([^`]+)`\\]\\(#([^)]*)\\) ").FindAllStringSubmatch(body[tocStart:tocStart+firstHeading], -1)
+
+	names := make([]string, 0, len(entries))
+	anchors := make([]string, 0, len(entries))
+
+	for _, match := range entries {
+		names = append(names, match[1])
+		anchors = append(anchors, match[2])
+	}
+
+	if !slices.Equal(names, visible) {
+		t.Errorf("ToC entries = %v, want %v", names, visible)
+	}
+
+	for i, name := range names {
+		if want := "reusable-ci-" + name; anchors[i] != want {
+			t.Errorf("ToC entry %s links to #%s, want #%s", name, anchors[i], want)
+		}
 	}
 }
 
@@ -122,7 +167,7 @@ func TestRender_FillsMissingFlagDescription(t *testing.T) {
 	}
 
 	body := internalcli.Render(cmd)
-	if !strings.Contains(body, "| `--missing-usage` | Sets missing usage. | n/a |") {
+	if !strings.Contains(body, "| `--missing-usage` | Sets missing usage. | string | `\"\"` | n/a |") {
 		t.Errorf("missing fallback flag usage row:\n%s", body)
 	}
 }
