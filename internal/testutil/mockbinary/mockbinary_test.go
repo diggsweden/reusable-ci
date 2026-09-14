@@ -5,6 +5,7 @@ package mockbinary_test
 
 import (
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -41,7 +42,7 @@ func TestMock_RecordsInvocationsAndArgs(t *testing.T) {
 	}
 
 	want := []string{"image", "--severity", "HIGH", "alpine"}
-	if !equal(invs[0].Args, want) {
+	if !slices.Equal(invs[0].Args, want) {
 		t.Errorf("args = %v, want %v", invs[0].Args, want)
 	}
 }
@@ -66,6 +67,7 @@ func TestMock_RecordsStdin(t *testing.T) {
 		t.Errorf("stdin = %q, want substring %q", invs[0].Stdin, "PRESET_PASSPHRASE abc123")
 	}
 }
+
 func TestMock_AllNames(t *testing.T) {
 	m := mockbinary.New(t) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	m.Add("gh", `printf 'a\n'`)
@@ -75,21 +77,27 @@ func TestMock_AllNames(t *testing.T) {
 	_ = exec.CommandContext(t.Context(), "trivy").Run()
 
 	names := m.AllNames()
-	if !equal(names, []string{"gh", "trivy"}) {
+	if !slices.Equal(names, []string{"gh", "trivy"}) {
 		t.Errorf("AllNames = %v, want [gh trivy]", names)
 	}
 }
 
-func equal(a, b []string) bool { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if len(a) != len(b) {
-		return false
+// TestMock_EmptyScriptSucceedsAndStillRecords: an empty body is the common
+// "any call is fine" stub, and it must exit zero rather than fail to parse.
+func TestMock_EmptyScriptSucceedsAndStillRecords(t *testing.T) {
+	m := mockbinary.New(t)
+	m.Add("tool", "")
+
+	out, err := exec.CommandContext(t.Context(), m.Path("tool"), "--flag").CombinedOutput() //nolint:gosec // mockbinary stub path is test-generated.
+	if err != nil {
+		t.Fatalf("empty stub failed: %v\n%s", err, out)
 	}
 
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
+	if len(out) != 0 {
+		t.Errorf("empty stub wrote %q", out)
 	}
 
-	return true
+	if calls := m.Invocations("tool"); len(calls) != 1 || len(calls[0].Args) != 1 || calls[0].Args[0] != "--flag" {
+		t.Errorf("invocations = %#v, want one call with --flag", calls)
+	}
 }

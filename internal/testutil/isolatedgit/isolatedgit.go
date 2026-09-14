@@ -134,10 +134,20 @@ func (r *Repo) gitInWorkdir(args ...string) string {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.Dir
 
-	out, err := cmd.CombinedOutput()
+	// Stdout only, as Git's doc comment has always said. This used to return
+	// CombinedOutput, so a successful command that printed a hint or warning
+	// on stderr handed that text back as part of its value -- a SHA from
+	// HeadSHA, a subject from `log --format` -- and the caller compared the
+	// contaminated string. stderr is kept for the failure message, where it
+	// is the useful part.
+	var stderr strings.Builder
+
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
 	if err != nil {
-		r.t.Fatalf("git %s\nin %s\noutput:\n%s\nerr: %v",
-			strings.Join(args, " "), r.Dir, out, err)
+		r.t.Fatalf("git %s\nin %s\nstdout:\n%s\nstderr:\n%s\nerr: %v",
+			strings.Join(args, " "), r.Dir, out, stderr.String(), err)
 	}
 
 	return strings.TrimRight(string(out), "\n")

@@ -32,10 +32,18 @@ type T interface {
 // Equal compares got with the contents of testdata/golden/<name>.
 // On mismatch, t.Errorf is called. With -update, the golden file is rewritten.
 //
-// name is treated as a path relative to testdata/golden/ in the package's
-// test directory.
+// name is a local path relative to testdata/golden/ in the package's test
+// directory; an absolute or climbing name fails before anything is read or
+// written.
 func Equal(t T, name string, got []byte) { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	t.Helper()
+
+	// -update writes the file, so a name must stay below testdata/golden.
+	if !filepath.IsLocal(name) {
+		t.Fatalf("golden: %q is not a local name below testdata/golden", name)
+
+		return
+	}
 
 	path := filepath.Join("testdata", "golden", name)
 

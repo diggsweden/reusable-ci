@@ -16,7 +16,7 @@ import (
 
 // Env is the isolated environment handle for a test.
 type Env struct {
-	t    *testing.T
+	t    testing.TB
 	Home string
 	Temp string
 }
@@ -41,11 +41,21 @@ func (e *Env) Setenv(key, value string) {
 	e.t.Setenv(key, value)
 }
 
-// Path returns a path under the isolated temp directory.
+// Path returns a path under the isolated temp directory. An absolute or
+// climbing name fails the test rather than reaching outside it.
 func (e *Env) Path(parts ...string) string {
-	all := append([]string{e.Temp}, parts...)
+	e.t.Helper()
 
-	return filepath.Join(all...)
+	if len(parts) == 0 {
+		return e.Temp
+	}
+
+	rel := filepath.Join(parts...)
+	if !filepath.IsLocal(rel) {
+		e.t.Fatalf("testenv: %q is not a local path below the isolated temp directory", rel)
+	}
+
+	return filepath.Join(e.Temp, rel)
 }
 
 // MkdirAll creates a directory under the isolated temp directory and returns it.

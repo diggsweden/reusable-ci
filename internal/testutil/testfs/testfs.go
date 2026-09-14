@@ -19,7 +19,7 @@ import (
 // Real is a temp-dir-backed filesystem helper for tests that need real OS
 // paths because the production code under test uses os.* APIs directly.
 type Real struct {
-	t    *testing.T
+	t    testing.TB
 	Root string
 }
 
@@ -30,11 +30,32 @@ func NewReal(t *testing.T) *Real {
 	return &Real{t: t, Root: t.TempDir()}
 }
 
-// Path returns an absolute path under the helper's temp root.
+// Path returns an absolute path under the helper's temp root. The parts must
+// join to a local relative path: an absolute or climbing name fails the test
+// rather than reaching outside the owned root. Links inside the root are not
+// resolved; a test that plants one chooses where writes through it go. A test
+// that needs an outside canary uses a second owned root.
 func (r *Real) Path(parts ...string) string {
-	all := append([]string{r.Root}, parts...)
+	r.t.Helper()
 
-	return filepath.Join(all...)
+	return underRoot(r.t, "testfs", r.Root, parts)
+}
+
+// underRoot joins parts below root, failing tb when they name anything that is
+// not a local path.
+func underRoot(tb testing.TB, owner, root string, parts []string) string {
+	tb.Helper()
+
+	if len(parts) == 0 {
+		return root
+	}
+
+	rel := filepath.Join(parts...)
+	if !filepath.IsLocal(rel) {
+		tb.Fatalf("%s: %q is not a local path below the owned root", owner, rel)
+	}
+
+	return filepath.Join(root, rel)
 }
 
 // MkdirAll creates a directory tree under the temp root and returns it.

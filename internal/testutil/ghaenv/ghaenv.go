@@ -10,7 +10,6 @@
 package ghaenv
 
 import (
-	"bufio"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,39 +54,18 @@ func Setup(t *testing.T) *Env {
 	return &Env{t: t, OutputPath: outPath, SummaryPath: sumPath}
 }
 
-// Output reads the scalar value emitted under `key` (i.e. lines of
-// the form `key=value`). Returns empty string if the key is not present.
+// Output reads the latest value emitted under `key` if it is scalar (key=value).
+// Returns empty string if the key is absent or its latest declaration is multiline.
 // For multiline values written via the heredoc protocol, use Multiline.
 func (e *Env) Output(key string) string {
 	e.t.Helper()
 
-	f, err := os.Open(e.OutputPath) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if err != nil {
-		e.t.Fatalf("ghaenv: open output: %v", err)
-	}
-
-	defer func() { _ = f.Close() }()
-
-	prefix := key + "="
-
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := sc.Text()
-		if strings.HasPrefix(line, prefix) {
-			return strings.TrimPrefix(line, prefix)
-		}
-	}
-
-	if err := sc.Err(); err != nil {
-		e.t.Fatalf("ghaenv: scan output: %v", err)
-	}
-
-	return ""
+	return e.readOutput(key, false)
 }
 
-// Multiline reads the heredoc-style multiline value for `key`. Returns
+// Multiline reads the latest value for `key` if it is a heredoc. Returns
 // the full block as a single string with embedded newlines, or empty
-// string if `key` was not written as a multiline output.
+// string if `key` is absent or its latest declaration is scalar.
 //
 // Heredoc shape (per GitHub Actions):
 //
@@ -98,41 +76,7 @@ func (e *Env) Output(key string) string {
 func (e *Env) Multiline(key string) string {
 	e.t.Helper()
 
-	f, err := os.Open(e.OutputPath) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if err != nil {
-		e.t.Fatalf("ghaenv: open output: %v", err)
-	}
-
-	defer func() { _ = f.Close() }()
-
-	prefix := key + "<<"
-
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := sc.Text()
-		if strings.HasPrefix(line, prefix) {
-			delim := strings.TrimPrefix(line, prefix)
-
-			var lines []string
-
-			for sc.Scan() {
-				inner := sc.Text()
-				if inner == delim {
-					return strings.Join(lines, "\n")
-				}
-
-				lines = append(lines, inner)
-			}
-
-			e.t.Fatalf("ghaenv: heredoc for %q never closed (delim=%q)", key, delim)
-		}
-	}
-
-	if err := sc.Err(); err != nil {
-		e.t.Fatalf("ghaenv: scan output: %v", err)
-	}
-
-	return ""
+	return e.readOutput(key, true)
 }
 
 // Summary returns the full step-summary content as a single string.
@@ -145,4 +89,73 @@ func (e *Env) Summary() string {
 	}
 
 	return string(data)
+}
+
+//nolint:cyclop // Walk both output forms without treating heredoc payload as declarations.
+func (e *Env) readOutput(key string, multiline bool) string {
+	e.t.Helper()
+
+	data, err := os.ReadFile(e.OutputPath)
+	if err != nil {
+		e.t.Fatalf("ghaenv: read output: %v", err)
+	}
+
+	var value string
+
+	lines := strings.SplitAfter(string(data), "\n")
+	for index := 0; index < len(lines); index++ {
+		line := outputLine(lines[index])
+		equals := strings.Index(line, "=")
+		heredoc := strings.Index(line, "<<")
+		// The first separator determines the declaration type; separators in
+		// scalar values and heredoc payloads are just data.
+		if equals >= 0 && (heredoc < 0 || equals < heredoc) {
+			if line[:equals] == key {
+				value = ""
+				if !multiline {
+					value = line[equals+1:]
+				}
+			}
+
+			continue
+		}
+
+		if heredoc < 0 {
+			continue
+		}
+
+		name, delim := line[:heredoc], line[heredoc+2:]
+		if name == "" || delim == "" {
+			e.t.Fatalf("ghaenv: invalid heredoc declaration %q", line)
+		}
+
+		start := index + 1
+
+		index = start
+		for index < len(lines) && outputLine(lines[index]) != delim {
+			index++
+		}
+
+		if index == len(lines) {
+			e.t.Fatalf("ghaenv: heredoc for %q never closed (delim=%q)", name, delim)
+		}
+
+		if name == key {
+			value = ""
+			if multiline {
+				value = outputLine(strings.Join(lines[start:index], ""))
+			}
+		}
+	}
+
+	return value
+}
+
+// Strip only a terminating LF or CRLF; a lone terminal CR is payload data.
+func outputLine(line string) string {
+	if before, ok := strings.CutSuffix(line, "\n"); ok {
+		return strings.TrimSuffix(before, "\r")
+	}
+
+	return line
 }

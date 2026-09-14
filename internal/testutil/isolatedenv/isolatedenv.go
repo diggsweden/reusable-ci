@@ -30,6 +30,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
 )
 
 // scrubCIEnv clears every CI/forge/credential variable to empty (which
@@ -53,6 +55,7 @@ func scrubCIEnv(t *testing.T) {
 		"FORGEJO_", "GITEA_", // Forgejo / Gitea Actions
 		"REUSABLE_CI_", "ARTIFACT_", // reusable-ci's own provider/runner/format + artifact verb inputs
 		"REGISTRY_", // container/package registry auth
+		"NPM_", "SIGN_", "SIGSTORE_", "COSIGN_", "GPG_", "SSH_",
 	}
 
 	exact := map[string]struct{}{
@@ -63,6 +66,9 @@ func scrubCIEnv(t *testing.T) {
 		"DOCKER_CONFIG": {}, "DOCKER_AUTH_CONFIG": {}, // shared registry auth file
 		"GPG_PRIVATE_KEY": {}, "GPG_PASSPHRASE": {}, // release gpg import
 		"COSIGN_PASSWORD": {}, "COSIGN_PRIVATE_KEY": {}, "COSIGN_YES": {}, // signing
+	}
+	for _, key := range append(runcontext.Token().Keys(), runcontext.ReleaseToken().Keys()...) {
+		exact[key] = struct{}{}
 	}
 
 	for _, kv := range os.Environ() {
@@ -112,6 +118,19 @@ func Isolate(t *testing.T) string {
 	// Git: disable system + global gitconfig reads. Tests that want a
 	// gitconfig opt in by writing one and pointing GIT_CONFIG_GLOBAL at
 	// it. Author/committer identity defaults provide stable signatures.
+	// Git distinguishes unset from empty routing variables. Register restoration
+	// with testing before unsetting all ambient Git overrides, then pin our own.
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "GIT_") {
+			t.Setenv(key, "")
+
+			if err := os.Unsetenv(key); err != nil {
+				t.Fatalf("isolatedenv: unset %s: %v", key, err)
+			}
+		}
+	}
+
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_AUTHOR_NAME", "Test Bot")
@@ -119,13 +138,36 @@ func Isolate(t *testing.T) string {
 	t.Setenv("GIT_COMMITTER_NAME", "Test Bot")
 	t.Setenv("GIT_COMMITTER_EMAIL", "bot@example.invalid")
 
-	// Interactive prompts / credential helpers / hooks — disable all.
-	// A test should never hang waiting for password input or page in
-	// less/more, and the editor must never fire.
+	// `git init` copies the template directory's hooks into every new repo,
+	// and GIT_TEMPLATE_DIR is a real variable that git honours even with all
+	// config reads disabled. Stock git ships only .sample hooks, which never
+	// run — but a host that exports this would seed an executable hook into
+	// every scratch repo a test builds. Point it at an empty directory.
+	emptyTemplate := filepath.Join(home, ".git-template")
+	if err := os.MkdirAll(emptyTemplate, 0o700); err != nil {
+		t.Fatalf("isolatedenv: mkdir GIT_TEMPLATE_DIR %q: %v", emptyTemplate, err)
+	}
+
+	t.Setenv("GIT_TEMPLATE_DIR", emptyTemplate)
+
+	// Interactive prompts — disable all. A test should never hang waiting
+	// for password input or page in less/more, and the editor must never
+	// fire.
+	//
+	// Not here, deliberately, because git does not read them: there is no
+	// GIT_HOOKS_PATH and no GIT_CREDENTIAL_HELPER. Both were set here once
+	// and did nothing. What actually closes each vector:
+	//
+	//   - hooks: the git adapter passes `-c core.hooksPath=/dev/null` on
+	//     every invocation that could fire one, which adapters/git's tests
+	//     assert. Setting core.hooksPath here instead would need
+	//     GIT_CONFIG_COUNT, which adapters/git/checkout.go already uses for
+	//     the auth header — a second writer would silently drop one of them.
+	//   - credential helpers: GIT_CONFIG_NOSYSTEM and GIT_CONFIG_GLOBAL
+	//     above leave no config for a helper to be declared in.
+	//   - template hooks: GIT_TEMPLATE_DIR below.
 	t.Setenv("GIT_TERMINAL_PROMPT", "0")
 	t.Setenv("GIT_ASKPASS", "")
-	t.Setenv("GIT_CREDENTIAL_HELPER", "")
-	t.Setenv("GIT_HOOKS_PATH", "/dev/null")
 	t.Setenv("GIT_SSH_COMMAND", "false")
 	t.Setenv("GIT_PAGER", "cat")
 	t.Setenv("GIT_EDITOR", "false")

@@ -93,11 +93,21 @@ func (e *Env) Output(key string) string {
 
 	prefix := key + "="
 
+	// The LATEST declaration wins, not the first.
+	//
+	// A dotenv file is consumed the way a shell sources it, so a job that
+	// writes the same key twice ends up with the second value — and the
+	// GitHub reader next door already returns the latest. Returning the first
+	// match made this helper disagree with both: a test whose code emitted a
+	// provisional value and then corrected it read the provisional one and
+	// passed, describing an output the pipeline never sees.
+	latest := ""
+
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := sc.Text()
 		if strings.HasPrefix(line, prefix) {
-			return strings.TrimPrefix(line, prefix)
+			latest = strings.TrimPrefix(line, prefix)
 		}
 	}
 
@@ -105,7 +115,7 @@ func (e *Env) Output(key string) string {
 		e.t.Fatalf("glabenv: scan: %v", err)
 	}
 
-	return ""
+	return latest
 }
 
 // SetTagRef configures the env to look like a tag push (used by tests
@@ -115,11 +125,17 @@ func (e *Env) SetTagRef(name string) {
 	e.t.Setenv("CI_COMMIT_TAG", name)
 	e.t.Setenv("CI_COMMIT_REF_NAME", name)
 	e.t.Setenv("CI_COMMIT_BRANCH", "")
+	e.t.Setenv("CI_PIPELINE_SOURCE", "push")
+	e.t.Setenv("CI_MERGE_REQUEST_IID", "")
+	e.t.Setenv("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME", "")
+	e.t.Setenv("CI_MERGE_REQUEST_TARGET_BRANCH_NAME", "")
 }
 
 // SetMergeRequest configures the env to look like a merge-request pipeline.
 func (e *Env) SetMergeRequest(iid, sourceBranch, targetBranch string) {
 	e.t.Helper()
+	e.t.Setenv("CI_COMMIT_TAG", "")
+	e.t.Setenv("CI_COMMIT_BRANCH", "")
 	e.t.Setenv("CI_MERGE_REQUEST_IID", iid)
 	e.t.Setenv("CI_MERGE_REQUEST_SOURCE_BRANCH_NAME", sourceBranch)
 	e.t.Setenv("CI_MERGE_REQUEST_TARGET_BRANCH_NAME", targetBranch)
