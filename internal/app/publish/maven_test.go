@@ -6,12 +6,15 @@ package publish_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	apppublish "github.com/diggsweden/reusable-ci/v3/internal/app/publish"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
@@ -74,12 +77,16 @@ func TestMavenValidateArtifacts_ErrorsWhenSourcesMissing(t *testing.T) {
 	var stderr bytes.Buffer
 
 	_, err := apppublish.MavenValidateArtifacts(context.Background(), &bytes.Buffer{}, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), apppublish.MavenValidateArtifactsInput{Root: root})
-	if err == nil || !strings.Contains(err.Error(), "sources") {
-		t.Errorf("expected sources error, got: %v", err)
+	if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "sources") {
+		t.Errorf("err = %v, want ErrValidation naming the missing sources jar", err)
 	}
 
 	if !strings.Contains(stderr.String(), "Maven Central requires sources") {
 		t.Errorf("missing error message:\n%s", stderr.String())
+	}
+
+	if !strings.Contains(stderr.String(), "POM/profile") {
+		t.Errorf("missing project-owned attachment guidance:\n%s", stderr.String())
 	}
 }
 
@@ -90,8 +97,8 @@ func TestMavenValidateArtifacts_ErrorsWhenJavadocMissing(t *testing.T) {
 	writeJAR(t, fsys, "target/demo-1.0.0-sources.jar")
 
 	_, err := apppublish.MavenValidateArtifacts(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, output.Annotator{}, apppublish.MavenValidateArtifactsInput{Root: root})
-	if err == nil || !strings.Contains(err.Error(), "javadoc") {
-		t.Errorf("expected javadoc error, got: %v", err)
+	if !errors.Is(err, errs.ErrValidation) || !strings.Contains(err.Error(), "javadoc") {
+		t.Errorf("err = %v, want ErrValidation naming the missing javadoc jar", err)
 	}
 }
 
@@ -157,7 +164,7 @@ func TestMavenCentralDeploy_NoSettings(t *testing.T) {
 	}
 
 	want := []string{"--batch-mode", "deploy", "-Pcentral-release", "-DskipTests"}
-	if len(ops.runs) != 1 || !equalStrings(ops.runs[0], want) {
+	if len(ops.runs) != 1 || !slices.Equal(ops.runs[0], want) {
 		t.Errorf("args = %v, want %v", ops.runs[0], want)
 	}
 }
@@ -175,7 +182,7 @@ func TestMavenCentralDeploy_WithSettings(t *testing.T) {
 	}
 
 	want := []string{"deploy", "--settings", settings, "-Pcentral-release", "-DskipTests"}
-	if !equalStrings(ops.runs[0], want) {
+	if !slices.Equal(ops.runs[0], want) {
 		t.Errorf("args = %v, want %v", ops.runs[0], want)
 	}
 }
@@ -187,8 +194,8 @@ func TestMavenCentralDeploy_MissingSettingsFails(t *testing.T) {
 		SettingsPath: filepath.Join(t.TempDir(), "missing.xml"),
 		Profile:      "central-release",
 	})
-	if err == nil || !strings.Contains(err.Error(), "settings file") {
-		t.Fatalf("err = %v, want settings-file error", err)
+	if !errors.Is(err, errs.ErrMissingInput) || !strings.Contains(err.Error(), "settings file") {
+		t.Fatalf("err = %v, want ErrMissingInput naming the settings file", err)
 	}
 
 	if len(ops.runs) != 0 {
@@ -200,21 +207,39 @@ func TestMavenCentralDeploy_RequiresProfile(t *testing.T) {
 	ops := &fakePublishMaven{}
 
 	err := apppublish.MavenCentralDeploy(context.Background(), ops, &bytes.Buffer{}, &bytes.Buffer{}, apppublish.MavenCentralDeployInput{})
-	if err == nil || !strings.Contains(err.Error(), "profile is required") {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "profile is required") {
+		t.Fatalf("err = %v, want ErrUsage naming the missing profile", err)
+	}
+
+	if len(ops.runs) != 0 {
+		t.Errorf("mvn ran without a profile: %v", ops.runs)
 	}
 }
 
-func equalStrings(a, b []string) bool { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if len(a) != len(b) {
-		return false
+// TestMavenCentralDeploy_ReturnsTheMavenFailureUnchanged covers the failed
+// deploy, which had no test. The adapter's error must survive, so the CLI
+// classifies the exit from what Maven reported, and nothing after the attempt
+// may claim the deploy went through.
+func TestMavenCentralDeploy_ReturnsTheMavenFailureUnchanged(t *testing.T) {
+	t.Parallel()
+
+	errDeployRejected := errors.New("sonatype rejected the staging repository") //nolint:err113 // a unique value to find in the chain.
+	ops := &fakePublishMaven{runErr: errDeployRejected}
+
+	var out, stderr bytes.Buffer
+
+	err := apppublish.MavenCentralDeploy(context.Background(), ops, &out, &stderr, apppublish.MavenCentralDeployInput{
+		Profile: "central-release",
+	})
+	if !errors.Is(err, errDeployRejected) {
+		t.Errorf("err = %v, want the Maven error", err)
 	}
 
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
+	if len(ops.runs) != 1 {
+		t.Errorf("mvn runs = %v, want exactly one deploy attempt", ops.runs)
 	}
 
-	return true
+	if out.String() != "Deploying to Maven Central...\n" || stderr.Len() != 0 {
+		t.Errorf("stdout = %q, stderr = %q; want only the announcement before the attempt", out.String(), stderr.String())
+	}
 }

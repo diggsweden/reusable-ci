@@ -5,12 +5,15 @@ package publish
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"path/filepath"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/provider"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // NPMPublishOps is the streaming npm-adapter surface the forge-packages npm
@@ -75,14 +78,30 @@ func ForgePackagesNPMPublish(ctx context.Context, ops NPMPublishOps, resolver pr
 // erroring when none or more than one is present so the publish target is
 // unambiguous.
 func findSingleTarball(dir string) (string, error) {
-	matches, err := filepath.Glob(filepath.Join(dir, "*.tgz"))
+	root, err := pathsafe.OpenRoot(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("npm package directory is missing: %w", errs.ErrMissingInput)
+	}
+
+	if err != nil {
+		return "", err
+	}
+
+	defer func() { _ = root.Close() }()
+
+	matches, err := fs.Glob(root.FS(), "*.tgz")
 	if err != nil {
 		return "", fmt.Errorf("scan %q for npm tarball: %w", dir, err)
 	}
 
 	switch len(matches) {
 	case 1:
-		return matches[0], nil
+		info, statErr := root.Lstat(matches[0])
+		if statErr != nil || !info.Mode().IsRegular() {
+			return "", fmt.Errorf("npm tarball must be a confined regular file: %w", errs.ErrValidation)
+		}
+
+		return filepath.Join(dir, matches[0]), nil
 	case 0:
 		return "", fmt.Errorf("no *.tgz tarball in %q (run `npm pack` first): %w", dir, errs.ErrMissingInput)
 	default:

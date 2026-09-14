@@ -15,12 +15,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/archive"
 	"github.com/diggsweden/reusable-ci/v3/internal/clicolor"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // NPMRCInput drives WriteNPMRC.
@@ -80,6 +82,10 @@ func validateNPMRCInput(in NPMRCInput) (npmrcSettings, error) {
 
 	if parsed.Host == "" {
 		return npmrcSettings{}, fmt.Errorf("registry %q has no host: %w", registry, errs.ErrUsage)
+	}
+
+	if strings.ContainsFunc(parsed.Path, unicode.IsControl) {
+		return npmrcSettings{}, fmt.Errorf("registry path contains a control character: %w", errs.ErrUsage)
 	}
 
 	if err := validateRegistryScheme(parsed, registry); err != nil {
@@ -207,7 +213,7 @@ type NPMCheckVersionInput struct {
 // NPMCheckVersion checks whether package@version already exists in a registry
 // and emits already-published=true|false. E404-style npm failures are treated
 // as not found; other npm failures surface as errors.
-func NPMCheckVersion(ctx context.Context, npm NPMOps, sink ci.OutputSink, w io.Writer, annot output.Annotator, in NPMCheckVersionInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+func NPMCheckVersion(ctx context.Context, npm NPMOps, sink ci.OutputSink, w io.Writer, annot output.Annotator, in NPMCheckVersionInput) error { //nolint:cyclop,varnamelen // exact query evidence, absence and transport failure must remain distinct.
 	name := in.Name
 	if name == "" {
 		var err error
@@ -222,13 +228,21 @@ func NPMCheckVersion(ctx context.Context, npm NPMOps, sink ci.OutputSink, w io.W
 		return fmt.Errorf("version is required: %w", errs.ErrUsage)
 	}
 
-	args := []string{"view", name + "@" + in.Version, "version"}
+	args := []string{"view", name + "@" + in.Version, "name", "version", "--json"}
 	if in.Registry != "" {
 		args = append(args, "--registry", in.Registry)
 	}
 
-	_, stderr, err := npm.Run(ctx, defaultDir(in.Dir), args...)
+	stdout, stderr, err := npm.Run(ctx, defaultDir(in.Dir), args...)
 	if err == nil {
+		var evidence struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		}
+		if json.Unmarshal([]byte(stdout), &evidence) != nil || evidence.Name != name || evidence.Version != in.Version {
+			return fmt.Errorf("npm view did not confirm the requested package and version: %w", errs.ErrMalformedInput)
+		}
+
 		annot.Warningf("Package %s@%s already exists in registry - skipping publish", name, in.Version)
 
 		if setErr := setAlreadyPublished(ctx, sink, "true"); setErr != nil {
@@ -260,10 +274,9 @@ func setAlreadyPublished(ctx context.Context, sink ci.OutputSink, value string) 
 }
 
 // NPMValidateTarball finds a single *.tgz / *.tar.gz at the top of Dir,
-// extracts it with `tar --strip-components=1` semantics, removes the
-// tarball, lists the extracted contents from dist/ or build/, and
-// checks that dist/cli.js exists. Mirrors.
-func NPMValidateTarball(_ context.Context, w, stderr io.Writer, annot output.Annotator, in NPMValidateTarballInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
+// validates in private staging, then installs the contents and removes the
+// tarball for the snapshot-publish workflow. Rejected input changes no existing files.
+func NPMValidateTarball(_ context.Context, w, stderr io.Writer, annot output.Annotator, in NPMValidateTarballInput) error { //nolint:cyclop,varnamelen // discover, stage, validate, install, then remove the consumed archive.
 	dir := in.Dir
 	if dir == "" {
 		var err error
@@ -287,32 +300,43 @@ func NPMValidateTarball(_ context.Context, w, stderr io.Writer, annot output.Ann
 
 	_, _ = fmt.Fprintf(w, "Extracting %s...\n", tarball)
 
-	if err := archive.UntarStripOne(tarball, dir); err != nil {
-		return fmt.Errorf("extract %s: %w", tarball, err)
+	staging, err := pathsafe.NewArtifactStaging(dir)
+	if err != nil {
+		return fmt.Errorf("create npm validation directory: %w", err)
 	}
+	defer func() { _ = staging.Close() }()
 
-	if err := os.Remove(tarball); err != nil {
-		return fmt.Errorf("remove tarball: %w", err)
+	extracted := staging.Root().Name()
+	if err := archive.UntarStripOne(tarball, extracted); err != nil {
+		return fmt.Errorf("extract %s: %w", tarball, err)
 	}
 
 	_, _ = fmt.Fprintln(w, "Extracted contents:")
 
-	listed := listFiles(w, filepath.Join(dir, "dist"))
+	listed := listFiles(w, filepath.Join(extracted, "dist"))
 	if !listed {
-		listFiles(w, filepath.Join(dir, "build"))
+		listFiles(w, filepath.Join(extracted, "build"))
 	}
 
-	cliJS := filepath.Join(dir, "dist", "cli.js")
+	cliJS := filepath.Join(extracted, "dist", "cli.js")
 
 	_, _ = fmt.Fprintln(w, "")
 	_, _ = fmt.Fprintln(w, "Verifying dist/cli.js exists:")
 
-	if _, err := os.Stat(cliJS); err == nil {
+	if info, err := os.Lstat(cliJS); err == nil && info.Mode().IsRegular() {
 		_, _ = fmt.Fprintf(w, "%s dist/cli.js found\n", clicolor.Check(w))
 	} else {
 		_, _ = fmt.Fprintf(w, "%s dist/cli.js NOT found\n", clicolor.Cross(w))
 
 		return fmt.Errorf("dist/cli.js not found in extracted tarball: %w", errs.ErrValidation)
+	}
+
+	if err := staging.InstallWithRelativeSymlinks(); err != nil {
+		return fmt.Errorf("install validated npm contents: %w", err)
+	}
+
+	if err := os.Remove(tarball); err != nil {
+		return fmt.Errorf("remove validated tarball: %w", err)
 	}
 
 	return nil

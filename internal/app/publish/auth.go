@@ -21,8 +21,8 @@ import (
 // invalid.
 func RegistryAuth(_ context.Context, w, stderr io.Writer, annot output.Annotator, in publish.RegistryAuthInput) error { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
 	res := publish.ValidateRegistryAuth(in)
-	for _, w := range res.Warnings {
-		annot.Warningf("%s", w)
+	for _, warning := range res.Warnings {
+		annot.Warningf("%s", warning)
 	}
 
 	if len(res.Errors) > 0 {

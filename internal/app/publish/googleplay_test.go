@@ -6,6 +6,11 @@ package publish_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"strings"
 	"testing"
@@ -19,19 +24,37 @@ func TestGooglePlayCheckCredentials_AcceptsValidServiceAccount(t *testing.T) {
 
 	var out bytes.Buffer
 
-	in := apppublish.GooglePlayCheckCredentialsInput{
-		ServiceAccountJSON: `{
-			"type":"service_account",
-			"client_email":"x@y.iam.gserviceaccount.com",
-			"private_key":"k"
-		}`,
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
 	}
+
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	private := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+	email := "success-email-canary@example.iam.gserviceaccount.com"
+
+	body, err := json.Marshal(map[string]string{"type": "service_account", "client_email": email, "private_key": private})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	in := apppublish.GooglePlayCheckCredentialsInput{ServiceAccountJSON: string(body)}
 	if err := apppublish.GooglePlayCheckCredentials(context.Background(), &out, in); err != nil {
 		t.Fatal(err)
 	}
 
 	if !strings.Contains(out.String(), "Service account secret is configured") {
 		t.Errorf("missing success log: %s", out.String())
+	}
+
+	for _, secret := range []string{private, email, "BEGIN PRIVATE KEY"} {
+		if strings.Contains(out.String(), secret) {
+			t.Error("success output contains credential material")
+		}
 	}
 }
 

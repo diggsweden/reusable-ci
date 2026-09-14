@@ -6,10 +6,12 @@ package publish_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	apppublish "github.com/diggsweden/reusable-ci/v3/internal/app/publish"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
@@ -65,8 +67,15 @@ func TestFindArtifact_NonRecursiveIgnoresNestedMatches(t *testing.T) {
 		OutputKey: "tarball", //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Label:     "tarball",
 	})
-	if err == nil {
-		t.Fatal("expected error")
+
+	// The nested tarball is invisible without Recursive, so this is the
+	// nothing-found path, not a usage mistake.
+	if !errors.Is(err, errs.ErrMissingInput) {
+		t.Fatalf("err = %v, want ErrMissingInput", err)
+	}
+
+	if got := sink.Keys(); len(got) != 0 {
+		t.Errorf("emitted %q when nothing matched", got)
 	}
 }
 
@@ -131,8 +140,8 @@ func TestFindArtifact_MissingEmitsAnnotation(t *testing.T) {
 
 		return err
 	}()
-	if err == nil {
-		t.Fatal("expected error")
+	if !errors.Is(err, errs.ErrMissingInput) {
+		t.Fatalf("err = %v, want ErrMissingInput", err)
 	}
 
 	if !strings.Contains(stderr.String(), "No AAB file found") {
@@ -151,7 +160,7 @@ func TestFindArtifact_RequiresOutputKey(t *testing.T) {
 		Dir: fsys.Path("artifacts"),
 		Ext: ".aab",
 	})
-	if err == nil || !strings.Contains(err.Error(), "output key") {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "output key") {
+		t.Fatalf("err = %v, want ErrUsage naming the missing key", err)
 	}
 }

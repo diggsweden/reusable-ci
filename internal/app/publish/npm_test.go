@@ -16,10 +16,14 @@ import (
 	"testing"
 
 	apppublish "github.com/diggsweden/reusable-ci/v3/internal/app/publish"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/fakeoutputsink"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/testfs"
 )
+
+// Named so the propagation tests assert identity rather than a message.
+var errNPMFailed = errors.New("npm exited non-zero")
 
 type fakeNPMOps struct {
 	out    string
@@ -76,6 +80,29 @@ func makeNPMTarball(t *testing.T, dir, name string, files map[string]string) {
 	}
 }
 
+func TestWriteNPMRC_RejectsEncodedPathControlsBeforeWriting(t *testing.T) {
+	t.Parallel()
+
+	for _, encoded := range []string{"%0a", "%0d", "%09", "%00", "%c2%85"} {
+		t.Run(encoded, func(t *testing.T) {
+			t.Parallel()
+
+			out := bytes.NewBufferString("existing output\n")
+
+			err := apppublish.WriteNPMRC(apppublish.NPMRCInput{
+				Registry: "https://registry.example/packages/" + encoded + "extra", Output: out,
+			})
+			if !errors.Is(err, errs.ErrUsage) {
+				t.Errorf("err = %v, want ErrUsage", err)
+			}
+
+			if out.String() != "existing output\n" {
+				t.Error("rejected input changed the output")
+			}
+		})
+	}
+}
+
 func TestNPMValidateTarball_HappyPath(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	makeNPMTarball(t, fsys.Root, "demo-1.0.0.tgz", map[string]string{
@@ -112,8 +139,10 @@ func TestNPMValidateTarball_FlagsCLIJSMissing(t *testing.T) {
 	})
 
 	var out, stderr bytes.Buffer
-	if err := apppublish.NPMValidateTarball(context.Background(), &out, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), apppublish.NPMValidateTarballInput{Dir: fsys.Root}); err == nil {
-		t.Fatalf("expected missing dist/cli.js to fail")
+
+	err := apppublish.NPMValidateTarball(context.Background(), &out, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), apppublish.NPMValidateTarballInput{Dir: fsys.Root})
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation — the tarball is there and does not carry the entry point", err)
 	}
 
 	if !strings.Contains(out.String(), "✗ dist/cli.js NOT found") {
@@ -126,9 +155,11 @@ func TestNPMValidateTarball_NoTarballErrors(t *testing.T) {
 
 	var stderr bytes.Buffer
 
+	// ErrMissingInput, not ErrValidation: nothing was produced to validate,
+	// which is an upstream build failure rather than a bad package.
 	err := apppublish.NPMValidateTarball(context.Background(), io.Discard, &stderr, output.NewAnnotator(&stderr, output.FormatGitHub), apppublish.NPMValidateTarballInput{Dir: fsys.Root})
-	if err == nil {
-		t.Fatal("expected error")
+	if !errors.Is(err, errs.ErrMissingInput) {
+		t.Fatalf("err = %v, want ErrMissingInput", err)
 	}
 
 	if !strings.Contains(stderr.String(), "::error::No tarball") {
@@ -136,8 +167,13 @@ func TestNPMValidateTarball_NoTarballErrors(t *testing.T) {
 	}
 }
 
-func TestNPMValidateTarball_PrefersTgzOverTarGz_ButAcceptsBoth(t *testing.T) {
-	// Just confirms .tar.gz is a recognised suffix as well.
+// TestNPMValidateTarball_AcceptsATarGzSuffix pins that both spellings of
+// the archive are recognised. The old name claimed .tgz was preferred over
+// .tar.gz; findFirstTarball expresses no preference -- it takes the first
+// entry ReadDir returns that carries either suffix -- and nothing here
+// tested a preference either, so the name promised a rule that does not
+// exist.
+func TestNPMValidateTarball_AcceptsATarGzSuffix(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	makeNPMTarball(t, fsys.Root, "demo.tar.gz", map[string]string{
 		"package.json": `{}`,
@@ -158,7 +194,7 @@ func TestNPMCheckVersion_AlreadyPublished(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	if err := apppublish.NPMCheckVersion(context.Background(), fakeNPMOps{out: "1.2.3"}, sink, io.Discard, output.NewAnnotator(&stderr, output.FormatGitHub), apppublish.NPMCheckVersionInput{ //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
+	if err := apppublish.NPMCheckVersion(context.Background(), fakeNPMOps{out: `{"name":"@org/app","version":"1.2.3"}`}, sink, io.Discard, output.NewAnnotator(&stderr, output.FormatGitHub), apppublish.NPMCheckVersionInput{ //nolint:goconst // test fixture / generic identifier — extracting would explode setup boilerplate.
 		Dir:     fsys.Root,
 		Version: "1.2.3",
 	}); err != nil {
@@ -200,12 +236,18 @@ func TestNPMCheckVersion_PropagatesUnexpectedNPMError(t *testing.T) {
 
 	sink := fakeoutputsink.New(t)
 
-	err := apppublish.NPMCheckVersion(context.Background(), fakeNPMOps{stderr: "network down", err: errors.New("npm failed")}, sink, io.Discard, output.Annotator{}, apppublish.NPMCheckVersionInput{ //nolint:err113 // test mock error
+	err := apppublish.NPMCheckVersion(context.Background(), fakeNPMOps{stderr: "network down", err: errNPMFailed}, sink, io.Discard, output.Annotator{}, apppublish.NPMCheckVersionInput{
 		Dir:     fsys.Root,
 		Version: "1.2.3",
 	})
-	if err == nil {
-		t.Fatal("expected error")
+	if !errors.Is(err, errNPMFailed) {
+		t.Fatalf("err = %v, want npm's own failure to survive wrapping", err)
+	}
+
+	// And no answer was published: a registry that could not be reached is
+	// not evidence that the version is unpublished.
+	if got := sink.Keys(); len(got) != 0 {
+		t.Errorf("emitted %q after a failed lookup", got)
 	}
 }
 
@@ -216,17 +258,20 @@ func TestNPMCheckVersion_DoesNotTreatGenericNotFoundAsVersionMissing(t *testing.
 
 	err := apppublish.NPMCheckVersion(context.Background(), fakeNPMOps{
 		stderr: "registry host not found",
-		err:    errors.New("npm failed"), //nolint:err113 // test mock error
+		err:    errNPMFailed,
 	}, fakeoutputsink.New(t), io.Discard, output.Annotator{}, apppublish.NPMCheckVersionInput{
 		Dir:     fsys.Root,
 		Version: "1.2.3",
 	})
-	if err == nil {
-		t.Fatal("expected registry failure to propagate")
+
+	// "not found" in the message is not the E404 that means "no such
+	// version": only the code is, so a DNS failure must still propagate.
+	if !errors.Is(err, errNPMFailed) {
+		t.Fatalf("err = %v, want the registry failure to propagate", err)
 	}
 }
 
-func TestWriteNPMRC(t *testing.T) {
+func TestWriteNPMRC_WritesScopedAndUnscopedAuthLines(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -336,8 +381,16 @@ func TestWriteNPMRC_RejectsInvalidInputs(t *testing.T) {
 			t.Parallel()
 
 			err := apppublish.WriteNPMRC(tc.in)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("err = %v, want substring %q", err, tc.want)
+
+			// Every one of these is the caller handing over an unusable
+			// registry or scope, so they share ErrUsage; the message is what
+			// tells them apart for an operator.
+			if !errors.Is(err, errs.ErrUsage) {
+				t.Fatalf("err = %v, want ErrUsage", err)
+			}
+
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("err = %v, want substring %q", err, tc.want)
 			}
 		})
 	}

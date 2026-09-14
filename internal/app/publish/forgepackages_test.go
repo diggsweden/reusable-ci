@@ -9,7 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -71,7 +71,7 @@ func TestForgePackagesDeploy_BuildsMvnArgsFromResolvedRegistry(t *testing.T) {
 		"--settings", settings,
 		"-DaltDeploymentRepository=gitlab-maven::default::https://gl/api/v4/projects/1/packages/maven",
 	}
-	if !reflect.DeepEqual(argv, want) {
+	if !slices.Equal(argv, want) {
 		t.Errorf("mvn args = %q\nwant %q", argv, want)
 	}
 }
@@ -134,7 +134,7 @@ func TestForgePackagesNPMPublish_PublishesTheTarball(t *testing.T) {
 	// spellings, which is why this was not caught until a real npm saw it.
 	// Comparing the argv in order says it once and covers the rest with it.
 	want := []string{"publish", "./pkg-1.0.0.tgz", "--userconfig", userconfig}
-	if !reflect.DeepEqual(npmOps.args, want) {
+	if !slices.Equal(npmOps.args, want) {
 		t.Errorf("npm args = %q\nwant %q", npmOps.args, want)
 	}
 
@@ -201,20 +201,26 @@ func (o *credObservation) observe(flag string, args []string) {
 	}
 }
 
-type mavenCredProbe struct{ obs credObservation }
+type mavenCredProbe struct {
+	obs credObservation
+	err error
+}
 
 func (p *mavenCredProbe) RunInherit(_ context.Context, _, _ io.Writer, args ...string) error {
 	p.obs.observe("--settings", args)
 
-	return nil
+	return p.err
 }
 
-type npmCredProbe struct{ obs credObservation }
+type npmCredProbe struct {
+	obs credObservation
+	err error
+}
 
 func (p *npmCredProbe) RunInherit(_ context.Context, _ string, _, _ io.Writer, args ...string) error {
 	p.obs.observe("--userconfig", args)
 
-	return nil
+	return p.err
 }
 
 // TestForgePackages_CredentialFileIsOwnerOnlyAndRemoved covers the
@@ -295,5 +301,84 @@ func assertCredentialFileLifetime(t *testing.T, obs *credObservation, wantToken 
 	// And it is gone once the publish returns.
 	if _, err := os.Stat(obs.path); !os.IsNotExist(err) {
 		t.Errorf("credentials file %q survived the publish (stat err = %v)", obs.path, err)
+	}
+}
+
+// TestForgePackages_FailedPublishRemovesOnlyItsCredentialFile covers the
+// failing publish, where the cleanup matters most: a rejected deploy is the run
+// someone reruns, and the lifetime test above only exercised success. The
+// tool's error must come back, the token file must be gone, and nothing the
+// caller owns may be touched -- the tarball, and a file in the same temp
+// directory whose name the generated pattern would also match.
+//
+// TMPDIR points at an owned directory so that last claim can be checked by
+// listing it, which also means these cases cannot run in parallel.
+func TestForgePackages_FailedPublishRemovesOnlyItsCredentialFile(t *testing.T) {
+	errPublishRejected := errors.New("registry rejected the package") //nolint:err113 // a unique value to find in the chain.
+
+	for name, publish := range map[string]func(t *testing.T) (*credObservation, error){
+		"maven settings.xml": func(t *testing.T) (*credObservation, error) {
+			t.Helper()
+
+			probe := &mavenCredProbe{err: errPublishRejected}
+			resolver := fakeRegistryResolver{reg: provider.ForgeMavenRegistry{
+				ServerID: "gitlab-maven", URL: "https://gl/api/v4/projects/1/packages/maven",
+				AuthScheme: provider.MavenAuthJobTokenHeader, Token: "s3cret-token",
+			}}
+
+			err := apppublish.ForgePackagesDeploy(context.Background(), probe, resolver, io.Discard, io.Discard, apppublish.ForgePackagesDeployInput{})
+
+			return &probe.obs, err
+		},
+		"npm .npmrc": func(t *testing.T) (*credObservation, error) {
+			t.Helper()
+
+			dir := t.TempDir()
+			tarball := filepath.Join(dir, "pkg-1.0.0.tgz")
+
+			if err := os.WriteFile(tarball, []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			probe := &npmCredProbe{err: errPublishRejected}
+			resolver := fakeNPMRegistryResolver{reg: provider.ForgeNPMRegistry{Registry: "https://gl/api/v4/projects/1/packages/npm/", Token: "s3cret-token"}}
+
+			err := apppublish.ForgePackagesNPMPublish(context.Background(), probe, resolver, io.Discard, io.Discard,
+				apppublish.ForgePackagesNPMPublishInput{WorkingDir: dir})
+
+			if _, statErr := os.Stat(tarball); statErr != nil {
+				t.Errorf("the caller's tarball is gone after a failed publish: %v", statErr)
+			}
+
+			return &probe.obs, err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tmp := t.TempDir()
+			t.Setenv("TMPDIR", tmp)
+
+			callerFile := filepath.Join(tmp, "reusable-ci-settings-caller.xml")
+			if err := os.WriteFile(callerFile, []byte("<settings/>"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			obs, err := publish(t)
+			if !errors.Is(err, errPublishRejected) {
+				t.Errorf("err = %v, want the publish tool's error", err)
+			}
+
+			if obs.runCalls != 1 || !obs.existed || filepath.Dir(obs.path) != tmp {
+				t.Fatalf("observation = %+v, want one run with a credential file in %s", *obs, tmp)
+			}
+
+			entries, readErr := os.ReadDir(tmp)
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+
+			if len(entries) != 1 || entries[0].Name() != filepath.Base(callerFile) {
+				t.Errorf("temp dir after a failed publish holds %v, want only the caller's file", entries)
+			}
+		})
 	}
 }

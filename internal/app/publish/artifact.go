@@ -16,6 +16,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/output"
+	"github.com/diggsweden/reusable-ci/v3/internal/pathsafe"
 )
 
 // FindArtifactInput drives FindArtifact.
@@ -98,16 +99,23 @@ func normalizeArtifactExtensions(ext string, exts []string) []string {
 	return out
 }
 
+//nolint:cyclop // rooted walk, recursion, extension matching and file-type refusal are separate guards.
 func findArtifactsByExts(dir string, exts []string, recursive bool) ([]string, error) {
+	root, err := pathsafe.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+
 	var matches []string
 
-	if err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	if err := fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
 		if d.IsDir() {
-			if !recursive && path != dir {
+			if !recursive && path != "." {
 				return filepath.SkipDir
 			}
 
@@ -117,7 +125,16 @@ func findArtifactsByExts(dir string, exts []string, recursive bool) ([]string, e
 		lowerPath := strings.ToLower(path)
 		for _, ext := range exts {
 			if strings.HasSuffix(lowerPath, ext) {
-				matches = append(matches, path)
+				info, statErr := root.Lstat(path)
+				if statErr != nil {
+					return statErr
+				}
+
+				if !info.Mode().IsRegular() {
+					return fmt.Errorf("artifact must be a confined regular file: %w", errs.ErrValidation)
+				}
+
+				matches = append(matches, filepath.Join(dir, path))
 
 				break
 			}

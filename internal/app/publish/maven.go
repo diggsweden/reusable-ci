@@ -146,16 +146,39 @@ func MavenValidateArtifacts(_ context.Context, w, stderr io.Writer, annot output
 
 	if res.SourcesCount == 0 {
 		annot.Errorf("Missing sources JAR. Maven Central requires sources.")
-		annot.Errorf("Build with build-type: lib to generate sources and javadoc JARs")
+		annot.Errorf("Configure the Maven POM/profile to attach sources and javadoc JARs")
 
 		return res, fmt.Errorf("missing sources JAR: %w", errs.ErrValidation)
 	}
 
 	if res.JavadocCount == 0 {
 		annot.Errorf("Missing javadoc JAR. Maven Central requires javadoc.")
-		annot.Errorf("Build with build-type: lib to generate sources and javadoc JARs")
+		annot.Errorf("Configure the Maven POM/profile to attach sources and javadoc JARs")
 
 		return res, fmt.Errorf("missing javadoc JAR: %w", errs.ErrValidation)
+	}
+
+	modules := map[string][2]bool{}
+
+	var moduleOrder []string
+
+	for _, jar := range res.JARs {
+		dir := filepath.Dir(jar)
+		if _, seen := modules[dir]; !seen {
+			moduleOrder = append(moduleOrder, dir)
+		}
+
+		metadata := modules[dir]
+		metadata[0] = metadata[0] || strings.HasSuffix(jar, "-sources.jar")
+		metadata[1] = metadata[1] || strings.HasSuffix(jar, "-javadoc.jar")
+		modules[dir] = metadata
+	}
+
+	for _, dir := range moduleOrder {
+		metadata := modules[dir]
+		if !metadata[0] || !metadata[1] {
+			return res, fmt.Errorf("module %s must contain both sources and javadoc JARs: %w", dir, errs.ErrValidation)
+		}
 	}
 
 	_, _ = fmt.Fprintf(w, "%s All required artifacts present:\n", clicolor.Check(w))
