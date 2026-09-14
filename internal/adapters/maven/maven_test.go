@@ -6,10 +6,13 @@ package maven_test
 import (
 	"bytes"
 	"context"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/maven"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 )
 
@@ -32,7 +35,7 @@ func TestEvalExpression_ReturnsTrimmedStdout(t *testing.T) {
 	}
 
 	want := []string{"help:evaluate", "-Dexpression=project.version", "-q", "-DforceStdout"}
-	if !equal(invs[0].Args, want) {
+	if !slices.Equal(invs[0].Args, want) {
 		t.Errorf("args = %v, want %v", invs[0].Args, want)
 	}
 }
@@ -42,8 +45,8 @@ func TestEvalExpression_NonZeroExitIncludesOutput(t *testing.T) {
 	m.Add("mvn", `printf 'BOOM\n' >&2; exit 1`)
 
 	_, err := maven.New().EvalExpression(context.Background(), "project.version")
-	if err == nil {
-		t.Fatal("expected error")
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Fatalf("non-zero exit = %v, want ErrValidation", err)
 	}
 
 	if !strings.Contains(err.Error(), "BOOM") {
@@ -96,16 +99,37 @@ func TestRunInherit_StreamsStdoutAndStderr(t *testing.T) {
 	}
 }
 
-func equal(a, b []string) bool { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-	if len(a) != len(b) {
-		return false
+// TestEvalExpression_ValueIsStdoutAlone covers a JVM notice on stderr. With a
+// combined read, "Picked up JAVA_TOOL_OPTIONS: ..." came back as the first
+// line of the project version and reached the SBOM subject and the release
+// summary; the value is stdout, and stderr travels only on the error.
+func TestEvalExpression_ValueIsStdoutAlone(t *testing.T) {
+	m := mockbinary.New(t)
+	m.Add("mvn", `printf 'Picked up JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8\n' >&2; printf '1.2.3'`)
+
+	a := &maven.Adapter{MvnBin: m.Path("mvn")}
+
+	got, err := a.EvalExpression(context.Background(), "project.version")
+	if err != nil || got != "1.2.3" {
+		t.Fatalf("EvalExpression = %q, %v; want the stdout value alone", got, err)
+	}
+}
+
+// TestRunInheritIn_RunsInsideTheGivenDirectory: a multi-module release runs
+// mvn in the module's directory, so the directory decides which pom is
+// built; an empty directory means the current one.
+func TestRunInheritIn_RunsInsideTheGivenDirectory(t *testing.T) {
+	m := mockbinary.New(t)
+	m.Add("mvn", `pwd`)
+
+	dir := t.TempDir()
+
+	var stdout bytes.Buffer
+	if err := (&maven.Adapter{MvnBin: m.Path("mvn")}).RunInheritIn(context.Background(), dir, &stdout, &bytes.Buffer{}, "package"); err != nil {
+		t.Fatal(err)
 	}
 
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
+	if got := strings.TrimSpace(stdout.String()); got != dir {
+		t.Errorf("mvn ran in %q, want %q", got, dir)
 	}
-
-	return true
 }

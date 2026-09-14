@@ -78,8 +78,9 @@ func TestRun_EnvReplacesRatherThanExtends(t *testing.T) {
 
 // TestRun_FailureOutputIsRedacted covers the reason the error path goes
 // through RedactKeyMaterial: mise resolves tools from registries and its
-// failure output can echo a token or a key it was handed. That output is
-// folded into the returned error, which lands in the CI log.
+// failure output, which mise writes to stderr, can echo a token or a key it
+// was handed. That output is folded into the returned error, which lands in
+// the CI log.
 func TestRun_FailureOutputIsRedacted(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -89,17 +90,13 @@ func TestRun_FailureOutputIsRedacted(t *testing.T) {
 	}{
 		{
 			name:       "private key in the output",
-			script:     `printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nsecretbody\n'; exit 1`,
+			script:     `printf -- '-----BEGIN OPENSSH PRIVATE KEY-----\nsecretbody\n' >&2; exit 1`,
 			wantHidden: "secretbody",
 			wantMarker: "output redacted",
 		},
 		{
-			// A header carrying "typ" clears the pattern's length floor.
-			// The bare-{"alg"} variant does not and is propagated
-			// unredacted -- covered in internal/safeexec/redact_test.go
-			// and recorded in docs/open-questions.md.
 			name:       "jwt-shaped token in the output",
-			script:     `printf 'auth failed for eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk\n'; exit 1`,
+			script:     `printf 'auth failed for eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk\n' >&2; exit 1`,
 			wantHidden: "eyJzdWIiOiIxMjM0NTY3ODkw",
 			wantMarker: "output redacted",
 		},
@@ -133,11 +130,26 @@ func TestRun_FailureOutputIsRedacted(t *testing.T) {
 // tool install diagnosable.
 func TestRun_FailureKeepsOrdinaryOutput(t *testing.T) {
 	m := mockbinary.New(t)
-	m.Add("mise", `printf 'no such tool: nope@1.2.3\n'; exit 1`)
+	m.Add("mise", `printf 'no such tool: nope@1.2.3\n' >&2; exit 1`)
 
 	if _, err := mise.New().Run(context.Background(), nil, "install", "nope@1.2.3"); err == nil {
 		t.Fatal("expected an error")
 	} else if !strings.Contains(err.Error(), "no such tool: nope@1.2.3") {
 		t.Errorf("ordinary output should survive: %v", err)
+	}
+}
+
+// TestRun_ResultIsStdoutAlone covers what mise prints beside a result. It
+// writes progress and warnings to stderr while exiting 0, and a combined read
+// put "mise WARN ..." inside a value a caller parses, such as the path from
+// `mise which` or the environment from `mise env`. Stderr reaches the caller
+// only on failure.
+func TestRun_ResultIsStdoutAlone(t *testing.T) {
+	m := mockbinary.New(t)
+	m.Add("mise", `printf 'mise WARN  missing tool\n' >&2; printf '/opt/tool/bin/go\n'`)
+
+	got, err := mise.New().Run(context.Background(), nil, "which", "go")
+	if err != nil || got != "/opt/tool/bin/go" {
+		t.Fatalf("Run = %q, %v; want the stdout value alone", got, err)
 	}
 }

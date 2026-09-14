@@ -47,7 +47,10 @@ func (a *Adapter) Lint(ctx context.Context, dir string, files []string) (string,
 		return buf.String(), exitErr.ExitCode(), nil
 	}
 
-	return buf.String(), -1, runErr
+	// A non-exit failure (most commonly swift-format missing from PATH) is an
+	// external-dependency problem, not an internal bug — classify it as
+	// EX_UNAVAILABLE (69) rather than the unclassified EX_SOFTWARE (70).
+	return buf.String(), -1, safeexec.WrapError(runErr, a.bin(), safeexec.FirstArg(args))
 }
 
 func (a *Adapter) bin() string {

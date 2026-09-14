@@ -7,6 +7,7 @@
 package maven
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/diggsweden/reusable-ci/v3/internal/safeexec"
@@ -33,10 +34,17 @@ func (a *Adapter) EvalExpression(ctx context.Context, expr string) (string, erro
 	args := []string{"help:evaluate", "-Dexpression=" + expr, "-q", "-DforceStdout"}
 	cmd := safeexec.Command(ctx, a.bin(), args...)
 
-	out, err := cmd.CombinedOutput()
+	// The value is stdout alone. A JVM that prints a notice on stderr
+	// ("Picked up JAVA_TOOL_OPTIONS: ...") must not have it read back as the
+	// project version; stderr travels only on the error.
+	var stderr bytes.Buffer
+
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
 	if err != nil {
 		wrapped := safeexec.WrapError(err, a.bin(), "help:evaluate")
-		if len(out) == 0 {
+		if stderr.Len() == 0 {
 			return "", wrapped
 		}
 		// Defense-in-depth: a maven plugin diagnostic could in principle
@@ -44,7 +52,7 @@ func (a *Adapter) EvalExpression(ctx context.Context, expr string) (string, erro
 		// is a metadata query (no auth), so this is theoretical — but
 		// the redactor is a tripwire for any future plugin that would
 		// echo such material on stderr.
-		return "", fmt.Errorf("%w\n%s", wrapped, safeexec.RedactKeyMaterial(out))
+		return "", fmt.Errorf("%w\n%s", wrapped, safeexec.RedactKeyMaterial(stderr.Bytes()))
 	}
 
 	return strings.TrimRight(string(out), "\n"), nil

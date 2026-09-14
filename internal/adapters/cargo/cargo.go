@@ -37,7 +37,7 @@ func (a *Adapter) Available() bool {
 func (a *Adapter) Version(ctx context.Context) (string, error) {
 	out, err := safeexec.Command(ctx, a.bin(), "--version").CombinedOutput()
 
-	return strings.TrimSpace(string(out)), err
+	return strings.TrimSpace(string(out)), safeexec.WrapError(err, a.bin(), "--version")
 }
 
 // RunInherit invokes cargo with args inside dir, streaming output.

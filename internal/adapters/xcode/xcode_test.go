@@ -6,22 +6,13 @@ package xcode_test
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/xcode"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 )
-
-func TestNewConstructors(t *testing.T) {
-	if xcode.NewBuild() == nil {
-		t.Fatal("NewBuild returned nil")
-	}
-
-	if xcode.NewSecurity() == nil {
-		t.Fatal("NewSecurity returned nil")
-	}
-}
 
 func TestXcodeBuild_RunInherit(t *testing.T) {
 	m := mockbinary.New(t)
@@ -65,8 +56,9 @@ func TestSecurity_RunReturnsCombinedOutput(t *testing.T) {
 		t.Errorf("output = %q", out)
 	}
 
-	if got := m.Invocations("security")[0].Args; len(got) != 1 || got[0] != "find-identity" {
-		t.Errorf("args = %v", got)
+	want := []string{"find-identity"}
+	if got := m.Invocations("security")[0].Args; !slices.Equal(got, want) {
+		t.Errorf("args = %v, want %v", got, want)
 	}
 }
 

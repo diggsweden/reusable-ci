@@ -5,10 +5,12 @@ package swiftformat_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/swiftformat"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 )
 
@@ -66,5 +68,29 @@ func TestLint_MissingBinaryIsAnError(t *testing.T) {
 
 	if code != -1 {
 		t.Errorf("code = %d, want -1", code)
+	}
+}
+
+// TestLint_MissingBinaryIsADependencyProblem covers the branch that separates
+// "the formatter found something" from "the formatter is not installed".
+//
+// swift-format ships with Xcode, so a non-macOS runner not having it is the
+// ordinary case rather than an exotic one. Unclassified, that exited 70 --
+// "an error we did not classify, file a bug against reusable-ci" -- for a tool
+// the adopter simply has not installed.
+func TestLint_MissingBinaryIsADependencyProblem(t *testing.T) {
+	a := &swiftformat.Adapter{Bin: "swift-format-does-not-exist"}
+
+	_, code, err := a.Lint(context.Background(), t.TempDir(), []string{"a.swift"})
+	if !errors.Is(err, errs.ErrDependencyUnavailable) {
+		t.Fatalf("err = %v, want ErrDependencyUnavailable", err)
+	}
+
+	if !strings.Contains(err.Error(), "swift-format-does-not-exist") {
+		t.Errorf("err = %v, want it to name the binary", err)
+	}
+
+	if code != -1 {
+		t.Errorf("code = %d, want -1 for a binary that never ran", code)
 	}
 }

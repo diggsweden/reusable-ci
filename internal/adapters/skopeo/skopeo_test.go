@@ -83,11 +83,8 @@ func TestAdapter_CopyDockerToOCIArchive_RejectsEmptyRefOrArchive(t *testing.T) {
 // adapter's scrub test. The field and the envWithout helper behind it are
 // byte-identical between the two packages, and only syft's copy was
 // covered.
-//
-// Note that no caller sets UnsetEnv on this adapter today, so the
-// scrubbing is machinery that is built but not wired -- in the same
-// command where syft is given signerSecretEnv(). See
-// docs/open-questions.md.
+// Production image-evidence wiring supplies the same signer scrub list to
+// both adapters; this test keeps the adapter-level behavior pinned.
 func TestAdapter_CanUnsetSensitiveEnv(t *testing.T) {
 	m := mockbinary.New(t)
 	m.Add("skopeo", `

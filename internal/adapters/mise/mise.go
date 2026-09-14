@@ -5,6 +5,7 @@
 package mise
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -38,14 +39,20 @@ func (r *Runner) Run(ctx context.Context, env []string, args ...string) (string,
 		cmd.Env = env
 	}
 
-	out, err := cmd.CombinedOutput()
+	// Callers parse the result, so it is stdout alone; stderr travels only on
+	// the error.
+	var stderr bytes.Buffer
+
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
 	if err != nil {
 		wrapped := safeexec.WrapError(err, bin, safeexec.FirstArg(args))
-		if len(out) == 0 {
+		if stderr.Len() == 0 {
 			return "", wrapped
 		}
 
-		return "", fmt.Errorf("%w\n%s", wrapped, safeexec.RedactKeyMaterial(out))
+		return "", fmt.Errorf("%w\n%s", wrapped, safeexec.RedactKeyMaterial(stderr.Bytes()))
 	}
 
 	return strings.TrimRight(string(out), "\n"), nil

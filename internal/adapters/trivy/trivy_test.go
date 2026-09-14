@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -14,12 +15,6 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 )
-
-func TestNew(t *testing.T) {
-	if trivy.New() == nil {
-		t.Fatal("New returned nil")
-	}
-}
 
 func TestAdapter_RunInheritPassesArgs(t *testing.T) {
 	m := mockbinary.New(t) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -37,8 +32,9 @@ func TestAdapter_RunInheritPassesArgs(t *testing.T) {
 		t.Errorf("stdout = %q", stdout.String())
 	}
 
-	if got := m.Invocations("trivy")[0].Args; len(got) != 2 || got[0] != "image" || got[1] != "alpine" {
-		t.Errorf("args = %v", got)
+	want := []string{"image", "alpine"}
+	if got := m.Invocations("trivy")[0].Args; !slices.Equal(got, want) {
+		t.Errorf("args = %v, want %v", got, want)
 	}
 }
 

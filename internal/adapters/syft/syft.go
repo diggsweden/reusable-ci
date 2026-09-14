@@ -65,7 +65,10 @@ func (a *Adapter) Generate(ctx context.Context, target string, outputs map[strin
 
 	cmd.Stderr = errOut
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("syft %s: %w", strings.Join(args, " "), err)
+		// A non-exit failure (most commonly syft missing from PATH) is an
+		// external-dependency problem, not an internal bug — classify it as
+		// EX_UNAVAILABLE (69) rather than the unclassified EX_SOFTWARE (70).
+		return safeexec.WrapError(err, a.bin(), safeexec.FirstArg(args))
 	}
 
 	return nil
@@ -97,7 +100,7 @@ func (a *Adapter) RunInherit(ctx context.Context, stdout, stderr io.Writer, args
 
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("syft %s: %w", strings.Join(args, " "), err)
+		return safeexec.WrapError(err, a.bin(), safeexec.FirstArg(args))
 	}
 
 	return nil

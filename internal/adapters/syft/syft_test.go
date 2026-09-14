@@ -6,19 +6,17 @@ package syft_test
 import (
 	"bytes"
 	"context"
-	"reflect"
+	"errors"
+	"io"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/syft"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 )
-
-func TestNew(t *testing.T) {
-	if syft.New() == nil {
-		t.Fatal("New returned nil")
-	}
-}
 
 func TestAdapter_GenerateUsesSortedOutputArgs(t *testing.T) {
 	m := mockbinary.New(t) //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
@@ -36,7 +34,7 @@ func TestAdapter_GenerateUsesSortedOutputArgs(t *testing.T) {
 	}
 
 	wantArgs := []string{"./target", "-o", "cyclonedx-json=out.cyclonedx.json", "-o", "spdx-json=out.spdx.json"}
-	if got := m.Invocations("syft")[0].Args; !reflect.DeepEqual(got, wantArgs) {
+	if got := m.Invocations("syft")[0].Args; !slices.Equal(got, wantArgs) {
 		t.Errorf("args = %v, want %v", got, wantArgs)
 	}
 
@@ -49,8 +47,8 @@ func TestAdapter_GenerateRequiresOutputs(t *testing.T) {
 	a := &syft.Adapter{Bin: "syft"}
 
 	err := a.Generate(context.Background(), "./target", nil, &bytes.Buffer{})
-	if err == nil || !strings.Contains(err.Error(), "no outputs requested") {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), "no outputs requested") {
+		t.Fatalf("err = %v, want ErrUsage naming the missing outputs", err)
 	}
 }
 
@@ -90,5 +88,35 @@ func TestAdapter_RunInherit(t *testing.T) {
 
 	if !strings.Contains(stdout.String(), "syft --version") {
 		t.Errorf("stdout = %q", stdout.String())
+	}
+}
+
+// TestSyft_MissingBinaryIsADependencyProblem covers both entry points.
+//
+// syft is installed by the toolchain step, so "not on PATH" means that step
+// did not run or did not finish -- an environment problem the operator can
+// act on. Unclassified it exited 70, "file a bug against reusable-ci".
+func TestSyft_MissingBinaryIsADependencyProblem(t *testing.T) {
+	adapter := &syft.Adapter{Bin: "syft-does-not-exist"}
+
+	for name, run := range map[string]func() error{
+		"Generate": func() error {
+			return adapter.Generate(context.Background(), "img",
+				map[string]string{"spdx-json": filepath.Join(t.TempDir(), "out.json")}, io.Discard)
+		},
+		"RunInherit": func() error {
+			return adapter.RunInherit(context.Background(), io.Discard, io.Discard, "--version")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := run()
+			if !errors.Is(err, errs.ErrDependencyUnavailable) {
+				t.Fatalf("err = %v, want ErrDependencyUnavailable", err)
+			}
+
+			if !strings.Contains(err.Error(), "syft-does-not-exist") {
+				t.Errorf("err = %v, want it to name the binary", err)
+			}
+		})
 	}
 }

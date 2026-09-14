@@ -27,9 +27,10 @@ func TestSink_AppendsMarkdown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	data := fsys.ReadFile("summary.md")
-	if !strings.Contains(string(data), "## title") || !strings.Contains(string(data), "second line") {
-		t.Errorf("file content = %q", data)
+	// Exact, not Contains: appending is about order and about not
+	// rewriting what is already there, and neither shows in a Contains.
+	if got, want := string(fsys.ReadFile("summary.md")), "## title\nsecond line\n"; got != want {
+		t.Errorf("file content = %q, want %q", got, want)
 	}
 }
 

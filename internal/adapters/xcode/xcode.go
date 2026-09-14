@@ -72,7 +72,7 @@ func (a *Security) Run(ctx context.Context, args ...string) (string, error) {
 
 	out, err := cmd.CombinedOutput()
 
-	return string(safeexec.RedactKeyMaterial(out)), err
+	return string(safeexec.RedactKeyMaterial(out)), safeexec.WrapError(err, a.bin(), safeexec.FirstArg(args))
 }
 
 func (a *Security) bin() string {

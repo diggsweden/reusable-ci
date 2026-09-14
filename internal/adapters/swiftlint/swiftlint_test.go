@@ -5,10 +5,12 @@ package swiftlint_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/swiftlint"
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/mockbinary"
 )
 
@@ -107,5 +109,30 @@ func TestLint_ArgvShape(t *testing.T) {
 				t.Errorf("argv = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestLint_MissingBinaryIsADependencyProblem covers the branch that separates
+// "the linter found something" from "the linter is not installed".
+//
+// A non-exit failure from cmd.Run -- overwhelmingly the binary missing from
+// $PATH, which on a non-macOS runner is the normal case -- used to come back
+// unclassified and exit 70, whose meaning is "an error we did not classify,
+// file a bug against reusable-ci". It is 69 and the message names the binary.
+func TestLint_MissingBinaryIsADependencyProblem(t *testing.T) {
+	adapter := &swiftlint.Adapter{Bin: "swiftlint-does-not-exist"}
+
+	_, code, err := adapter.Lint(context.Background(), swiftlint.LintInput{Dir: t.TempDir()})
+	if !errors.Is(err, errs.ErrDependencyUnavailable) {
+		t.Fatalf("err = %v, want ErrDependencyUnavailable", err)
+	}
+
+	if !strings.Contains(err.Error(), "swiftlint-does-not-exist") {
+		t.Errorf("err = %v, want it to name the binary", err)
+	}
+
+	// -1 keeps the "no exit code" case distinct from a real exit 0.
+	if code != -1 {
+		t.Errorf("code = %d, want -1 for a binary that never ran", code)
 	}
 }

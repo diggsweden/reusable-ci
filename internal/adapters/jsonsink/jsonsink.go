@@ -28,7 +28,13 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// errSinkClosed is returned by Set/SetMultiline after Close.
+// errSinkClosed is returned by the write methods after Close. It is
+// deliberately unexported and wraps no errs.* sentinel: writing to a
+// closed sink is a lifecycle bug in the calling command, not anything
+// the operator did, so it falls through errs.ExitCodeFromError to
+// ExitCodeSoftware -- "an error we did not classify, file a bug", which
+// is the honest answer here. Classifying it as ErrUsage would exit 64
+// and blame the user's command line for a defect in this program.
 var errSinkClosed = errors.New("output sink is closed")
 
 // Sink buffers OutputSink writes and emits them as a single JSON

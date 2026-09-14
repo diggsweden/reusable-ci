@@ -30,10 +30,10 @@ printf 'DIGESTFILE %s\n' "$digest_path" >&2
 printf 'REGISTRY_AUTH_FILE=%s\n' "${REGISTRY_AUTH_FILE:-<unset>}" >&2
 `
 
-// TestPushImageToRefWithDigest covers a function with no coverage at all,
+// TestPushImageToRefWithDigest_ReturnsBuildahsDigestAndAlwaysStatesTLS covers a function with no coverage at all,
 // including under the integration tag. It is what actually publishes a
 // release image.
-func TestPushImageToRefWithDigest(t *testing.T) {
+func TestPushImageToRefWithDigest_ReturnsBuildahsDigestAndAlwaysStatesTLS(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		authFile  string
@@ -84,9 +84,9 @@ func TestPushImageToRefWithDigest(t *testing.T) {
 	}
 }
 
-// TestPushManifestToRefWithDigest covers the manifest-list push, which a
+// TestPushManifestToRefWithDigest_PushesEveryArchAndHonoursRemove covers the manifest-list push, which a
 // multi-arch release actually uses.
-func TestPushManifestToRefWithDigest(t *testing.T) {
+func TestPushManifestToRefWithDigest_PushesEveryArchAndHonoursRemove(t *testing.T) {
 	for _, remove := range []bool{true, false} {
 		name := "keeps the local manifest"
 		if remove {
@@ -287,5 +287,33 @@ func TestExportLocalToLayout_ArgvShape(t *testing.T) {
 				t.Errorf("argv = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestInfoDriver_IgnoresBuildahsStderrWarnings is the control on reading
+// buildah's stdout rather than its combined streams.
+//
+// buildah exits 0 while warning on stderr about anything it did not like in a
+// system storage.conf. InfoDriver's result is compared against the configured
+// driver by setupbuildah, so a warning line merged into it fails that
+// comparison and aborts container setup with a message that quotes the warning
+// as though it were a driver name.
+func TestInfoDriver_IgnoresBuildahsStderrWarnings(t *testing.T) {
+	bins := mockbinary.New(t)
+	bins.Add("buildah", `
+echo 'WARN[0000] Failed to decode the keys ["storage.options.override_kernel_check"] from "/etc/containers/storage.conf"' >&2
+echo overlay
+`)
+
+	adapter := &buildah.Adapter{Bin: bins.Path("buildah")}
+
+	got, err := adapter.InfoDriver(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("InfoDriver: %v", err)
+	}
+
+	if got != "overlay" {
+		t.Errorf("InfoDriver = %q, want %q — buildah's stderr reached the driver name, "+
+			"which setupbuildah then compares against the configured driver", got, "overlay")
 	}
 }

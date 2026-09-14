@@ -5,7 +5,7 @@ package osfs_test
 
 import (
 	"path/filepath"
-	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/adapters/osfs"
@@ -43,6 +43,8 @@ func TestFS_FileChecks(t *testing.T) {
 	}
 }
 
+// No t.Parallel(): ListSignatureSidecars globs the working directory, so
+// this test has to Chdir, and cwd is process-global.
 func TestFS_FindReleaseArtifactsAndGlobs(t *testing.T) {
 	fsys := testfs.NewReal(t)
 	fsys.WriteFile("release-artifacts/app.jar", []byte("jar"))
@@ -51,6 +53,8 @@ func TestFS_FindReleaseArtifactsAndGlobs(t *testing.T) {
 	fsys.WriteFile("release-artifacts/readme.txt", []byte("ignored"))
 	fsys.WriteFile("a.asc", []byte("sig"))
 	fsys.WriteFile("b.asc", []byte("sig"))
+	fsys.WriteFile("c.bundle", []byte("sigstore"))
+	fsys.WriteFile("d.bundle.bak", []byte("ignored"))
 	fsys.Chdir()
 
 	adapter := osfs.New()
@@ -60,7 +64,7 @@ func TestFS_FindReleaseArtifactsAndGlobs(t *testing.T) {
 		fsys.Path("release-artifacts", "app.jar"),
 		fsys.Path("release-artifacts", "archive.tar.gz"),
 	}
-	if !reflect.DeepEqual(got, want) {
+	if !slices.Equal(got, want) {
 		t.Errorf("release artifacts = %v, want %v", got, want)
 	}
 
@@ -68,11 +72,13 @@ func TestFS_FindReleaseArtifactsAndGlobs(t *testing.T) {
 		t.Errorf("missing dir artifacts = %v, want nil", got)
 	}
 
-	if got := adapter.Glob(filepath.Join(fsys.Root, "*.asc")); !reflect.DeepEqual(got, []string{fsys.Path("a.asc"), fsys.Path("b.asc")}) {
+	if got := adapter.Glob(filepath.Join(fsys.Root, "*.asc")); !slices.Equal(got, []string{fsys.Path("a.asc"), fsys.Path("b.asc")}) {
 		t.Errorf("glob = %v", got)
 	}
 
-	if got := adapter.ListSignatureSidecars(); !reflect.DeepEqual(got, []string{"a.asc", "b.asc"}) {
-		t.Errorf("signature sidecars = %v", got)
+	// Both signing methods leave a sidecar: *.asc from gpg and *.bundle from
+	// cosign. A listing of only the gpg ones would upload half the evidence.
+	if got := adapter.ListSignatureSidecars(); !slices.Equal(got, []string{"a.asc", "b.asc", "c.bundle"}) {
+		t.Errorf("signature sidecars = %v, want the gpg and cosign sidecars", got)
 	}
 }

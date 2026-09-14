@@ -249,7 +249,14 @@ func (a *Adapter) outputBytesWithEnv(ctx context.Context, env []string, args ...
 		cmd.Env = append(os.Environ(), env...)
 	}
 
-	out, err := cmd.CombinedOutput()
+	// Output, not CombinedOutput: callers parse this. InfoDriver reads it as
+	// the graph-driver name and compares it to the configured one, and buildah
+	// writes warnings to stderr while exiting 0 -- a "WARN[0000] Failed to
+	// decode the keys ..." line from a system storage.conf would be returned
+	// as the driver name and fail that comparison with a nonsense message.
+	// Stderr still reaches the operator: it travels on the ExitError that
+	// WrapError classifies.
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, safeexec.WrapError(err, a.bin(), safeexec.FirstArg(args))
 	}

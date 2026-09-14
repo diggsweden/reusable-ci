@@ -135,7 +135,7 @@ func TestDetectRunner_IdentityIsNotTarget(t *testing.T) {
 	}
 }
 
-func TestDetectRunner(t *testing.T) {
+func TestDetectRunner_IdentifiesGitHubGitLabAndLocal(t *testing.T) {
 	cases := []struct {
 		name   string
 		github string
@@ -189,5 +189,66 @@ func TestDetectRunner_Override(t *testing.T) {
 
 	if got := platform.DetectRunner(); got != provider.RunnerForgejo {
 		t.Errorf("DetectRunner() = %q, want RunnerForgejo from override", got)
+	}
+}
+
+// TestDetect_ForgejoTargetNeedsAGitHubStyleRunner pins which runners a
+// Forgejo target variable can redirect. $FORGEJO_SERVER_URL on a runner that
+// sets GITHUB_ACTIONS=true means "a GitHub-hosted workflow publishing to
+// Forgejo"; on GitLab or a laptop the same variable is inert, so a stray
+// export cannot point a GitLab job at another forge. docs/forgejo.md and
+// docs/providers.md state this rule.
+func TestDetect_ForgejoTargetNeedsAGitHubStyleRunner(t *testing.T) {
+	for _, testCase := range []struct {
+		name           string
+		github, gitlab string
+		want           provider.ForgeAPI
+	}{
+		{"github runner", "true", "", provider.ForgeForgejo},
+		{"gitlab runner", "", "true", provider.ForgeGitLab},
+		{"no runner", "", "", provider.ForgeLocal},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			env := testenv.New(t)
+			env.Setenv("GITHUB_ACTIONS", testCase.github)
+			env.Setenv("GITLAB_CI", testCase.gitlab)
+			env.Setenv("FORGEJO_SERVER_URL", "https://codeberg.org")
+			env.Setenv("FORGEJO_REPOSITORY", "org/repo")
+
+			if got := platform.Detect(); got != testCase.want {
+				t.Errorf("Detect() = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestDetect_OverridesAreCaseInsensitiveAndMarkersExact: an operator typing
+// "GitLab" into the override gets GitLab, while a runner marker is only the
+// literal "true" the runners set, so "True" or "1" does not claim a forge.
+func TestDetect_OverridesAreCaseInsensitiveAndMarkersExact(t *testing.T) {
+	env := testenv.New(t)
+	env.Setenv("GITHUB_ACTIONS", "true")
+	env.Setenv("GITLAB_CI", "")
+	env.Setenv("REUSABLE_CI_PROVIDER", "GitLab")
+	env.Setenv("REUSABLE_CI_RUNNER", " FORGEJO ")
+
+	if got := platform.Detect(); got != provider.ForgeGitLab {
+		t.Errorf("Detect() = %q, want GitLab from a mixed-case override", got)
+	}
+
+	if got := platform.DetectRunner(); got != provider.RunnerForgejo {
+		t.Errorf("DetectRunner() = %q, want Forgejo from a padded upper-case override", got)
+	}
+
+	for _, marker := range []string{"True", "1", "yes"} {
+		env := testenv.New(t)
+		env.Setenv("REUSABLE_CI_PROVIDER", "")
+		env.Setenv("REUSABLE_CI_RUNNER", "")
+		env.Setenv("GITLAB_CI", "")
+		env.Setenv("GITHUB_ACTIONS", marker)
+
+		if got := platform.Detect(); got != provider.ForgeLocal {
+			t.Errorf("GITHUB_ACTIONS=%q: Detect() = %q, want local; the marker must be exactly \"true\"", marker, got)
+		}
 	}
 }

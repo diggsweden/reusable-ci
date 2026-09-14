@@ -121,10 +121,10 @@ func TestRemoveManifest_MissingIsANoOp(t *testing.T) {
 	})
 }
 
-// TestSignerImageManifestArgv covers the remaining manifest helpers in
+// TestSignerImageManifest_ArgvIsPinnedForEveryVerb covers the remaining manifest helpers in
 // one place. They are thin, but each argv encodes something a reader
 // cannot infer from the call site.
-func TestSignerImageManifestArgv(t *testing.T) {
+func TestSignerImageManifest_ArgvIsPinnedForEveryVerb(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		call func(a *buildah.Adapter, w *strings.Builder) error
