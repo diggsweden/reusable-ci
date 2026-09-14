@@ -14,7 +14,7 @@ import (
 	"github.com/diggsweden/reusable-ci/v3/internal/testutil/golden"
 )
 
-func TestParseChecksums(t *testing.T) {
+func TestParseChecksums_ReadsBinaryModeAndSkipsBlankLines(t *testing.T) {
 	t.Parallel()
 
 	in := strings.NewReader(
@@ -49,8 +49,15 @@ func TestParseChecksums(t *testing.T) {
 func TestParseChecksums_Errors(t *testing.T) {
 	t.Parallel()
 
-	if _, err := provenance.ParseChecksums(strings.NewReader("not a checksum line\n")); err == nil {
-		t.Error("expected error on malformed line")
+	// A checksums file that does not parse is a rule failure about supplied
+	// data, distinct from the ErrUsage below for "you gave me nothing".
+	_, err := provenance.ParseChecksums(strings.NewReader("not a checksum line\n"))
+	if !errors.Is(err, errs.ErrValidation) {
+		t.Errorf("malformed line: err = %v, want ErrValidation", err)
+	}
+
+	if !strings.Contains(err.Error(), "not a checksum line") {
+		t.Errorf("err = %v, want it to quote the offending line", err)
 	}
 
 	if _, err := provenance.ParseChecksums(strings.NewReader("\n   \n")); !errors.Is(err, errs.ErrUsage) {
@@ -58,7 +65,7 @@ func TestParseChecksums_Errors(t *testing.T) {
 	}
 }
 
-func TestParseGoSum(t *testing.T) {
+func TestParseGoSum_SkipsGoModHashes(t *testing.T) {
 	t.Parallel()
 
 	in := strings.NewReader(
@@ -241,4 +248,129 @@ func TestPredicate_BaseLineage(t *testing.T) {
 	// `container attest --base-*` path; forgejo-ci's retired shipped
 	// compatibility shape now lives on only in signed attestations).
 	golden.Equal(t, "provenance_base_lineage_predicate.json", body)
+}
+
+// TestBuild_WorkflowProfileRequiresEachField: the workflow profile replaces
+// source and ref with the calling workflow's coordinates, so each of the
+// three has to be present. A statement with an empty repository or path
+// would verify against nothing.
+func TestBuild_WorkflowProfileRequiresEachField(t *testing.T) {
+	t.Parallel()
+
+	complete := func() provenance.Input {
+		return provenance.Input{
+			Subjects:  []provenance.Subject{{Name: "a", SHA256: strings.Repeat("a", 64)}},
+			BuildType: provenance.ReleaseBuildType, BuilderID: "https://forge.example/b", SourceURI: "git+https://forge.example/r",
+			Workflow: &provenance.WorkflowExternalParameters{Ref: "refs/tags/v1", Repository: "org/repo", Path: ".github/workflows/release.yml"},
+		}
+	}
+
+	if _, err := provenance.Build(complete()); err != nil {
+		t.Fatalf("control: %v", err)
+	}
+
+	for name, blank := range map[string]func(*provenance.WorkflowExternalParameters){
+		"Workflow.Ref":        func(w *provenance.WorkflowExternalParameters) { w.Ref = "" },
+		"Workflow.Repository": func(w *provenance.WorkflowExternalParameters) { w.Repository = "" },
+		"Workflow.Path":       func(w *provenance.WorkflowExternalParameters) { w.Path = "" },
+	} {
+		in := complete()
+		blank(in.Workflow)
+
+		if _, err := provenance.Build(in); !errors.Is(err, errs.ErrUsage) || !strings.Contains(err.Error(), name) {
+			t.Errorf("%s blank: err = %v, want ErrUsage naming the field", name, err)
+		}
+	}
+}
+
+// TestPredicate_OmitsAbsentRefAndEmptyInternalParameters: an absent ref is
+// left out of externalParameters rather than emitted as "", and an internal
+// parameter with no value is dropped, so a verifier never compares against an
+// empty string that means "unknown".
+func TestPredicate_OmitsAbsentRefAndEmptyInternalParameters(t *testing.T) {
+	t.Parallel()
+
+	body, err := provenance.Predicate(provenance.Input{
+		BuildType: provenance.ReleaseBuildType, BuilderID: "https://forge.example/b", SourceURI: "git+https://forge.example/r",
+		InternalParameters: map[string]string{"runner": "ubuntu", "unset": ""},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var predicate struct {
+		BuildDefinition struct {
+			ExternalParameters map[string]any    `json:"externalParameters"`
+			InternalParameters map[string]string `json:"internalParameters"`
+		} `json:"buildDefinition"`
+	}
+	if err := json.Unmarshal(body, &predicate); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, present := predicate.BuildDefinition.ExternalParameters["ref"]; present {
+		t.Errorf("an absent ref was emitted: %v", predicate.BuildDefinition.ExternalParameters)
+	}
+
+	if got := predicate.BuildDefinition.InternalParameters; len(got) != 1 || got["runner"] != "ubuntu" {
+		t.Errorf("internalParameters = %v, want only the set one", got)
+	}
+}
+
+// TestEnvelopes_AcceptsEveryShapeCosignPrints covers the three shapes:
+// one object, an array, and JSON Lines, which is what cosign
+// verify-attestation prints for an image carrying several attestations. The
+// lines shape used to be refused as malformed, so a release image with both a
+// CycloneDX and a SLSA attestation could not be verified or pruned.
+func TestEnvelopes_AcceptsEveryShapeCosignPrints(t *testing.T) {
+	t.Parallel()
+
+	one := `{"payloadType":"application/vnd.in-toto+json","payload":"e30=","signatures":[]}`
+	two := `{"payloadType":"application/vnd.in-toto+json","payload":"e30K","signatures":[]}`
+
+	for name, testCase := range map[string]struct {
+		body string
+		want int
+	}{
+		"object": {body: one, want: 1},
+		"array":  {body: "[" + one + "," + two + "]", want: 2},
+		"lines":  {body: one + "\n" + two + "\n", want: 2},
+	} {
+		envelopes, err := provenance.Envelopes([]byte(testCase.body))
+		if err != nil || len(envelopes) != testCase.want {
+			t.Errorf("%s: envelopes = %d, %v; want %d", name, len(envelopes), err, testCase.want)
+		}
+	}
+
+	for name, body := range map[string]string{"empty": "", "blank": "\n", "truncated": one[:20], "trailing garbage": one + "\nnot json"} {
+		if _, err := provenance.Envelopes([]byte(body)); !errors.Is(err, errs.ErrMalformedInput) {
+			t.Errorf("%s: err = %v, want ErrMalformedInput", name, err)
+		}
+	}
+
+	// An envelope without a payload is skipped by the payload accessor rather
+	// than decoded as an empty statement.
+	if _, ok := provenance.EnvelopePayload(map[string]any{"payload": ""}); ok {
+		t.Error("an empty payload was reported as present")
+	}
+
+	if _, ok := provenance.EnvelopePayload("not an envelope"); ok {
+		t.Error("a non-object was reported as an envelope")
+	}
+}
+
+// TestParseGoSum_SkipsShortLines states the handling of lines with fewer than
+// three fields: they are skipped, not refused, matching the jq pipeline this
+// replaced. A truncated final line therefore drops silently.
+func TestParseGoSum_SkipsShortLines(t *testing.T) {
+	t.Parallel()
+
+	deps, err := provenance.ParseGoSum(strings.NewReader("github.com/a/b v1.0.0 h1:abc=\ngithub.com/c/d v2.0.0\n\ngithub.com/e/f v3.0.0 h1:def=\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(deps) != 2 || deps[0].URI != "pkg:golang/github.com/a/b@v1.0.0" || deps[1].URI != "pkg:golang/github.com/e/f@v3.0.0" {
+		t.Errorf("deps = %+v, want the two complete lines", deps)
+	}
 }

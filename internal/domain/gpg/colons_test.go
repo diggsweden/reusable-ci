@@ -4,6 +4,7 @@
 package gpg_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/gpg"
@@ -17,23 +18,17 @@ ssb:u:255:22:0123456789ABCDEF:1700000000:::::s:::+:::ed25519::
 fpr:::::::::AABBCCDDEEFF11223344556677889900AABBCCDD:
 grp:::::::::FEDCBA0987654321FEDCBA0987654321FEDCBA09:`
 
-func TestParseKeygrips(t *testing.T) {
+func TestParseKeygrips_ExtractsEveryKeygripFromColonOutput(t *testing.T) {
 	t.Parallel()
 
-	grips := gpg.ParseKeygrips(sampleColons)
+	// Both grips, in file order: the primary key's and the subkey's. Order
+	// matters because callers delete them in sequence.
 	want := []string{
 		"1234567890ABCDEF1234567890ABCDEF12345678",
 		"FEDCBA0987654321FEDCBA0987654321FEDCBA09",
 	}
-
-	if len(grips) != 2 {
-		t.Fatalf("got %d grips, want 2: %v", len(grips), grips)
-	}
-
-	for i, g := range grips {
-		if g != want[i] {
-			t.Errorf("grips[%d] = %q, want %q", i, g, want[i])
-		}
+	if got := gpg.ParseKeygrips(sampleColons); !slices.Equal(got, want) {
+		t.Errorf("ParseKeygrips = %v, want %v", got, want)
 	}
 }
 

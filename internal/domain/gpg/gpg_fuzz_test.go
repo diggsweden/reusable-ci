@@ -38,6 +38,9 @@ func FuzzParseKeygrips(f *testing.F) {
 	for _, seed := range []string{
 		sampleColons,
 		`grp:::::::::FEDCBA0987654321FEDCBA0987654321FEDCBA09:`,
+		// A grp line whose keygrip field is empty: the seed that makes the
+		// no-empty-grip property run in an ordinary test run.
+		"grp:::::::::\n",
 		"",
 		"not:colons:format",
 	} {

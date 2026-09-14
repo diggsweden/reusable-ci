@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/ci"
@@ -68,8 +69,8 @@ func TestEmitMultiline_NativeSinkWritesLinesAndSkipsManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !reflect.DeepEqual(sink.lines["tags"], []string{"a", "b"}) ||
-		!reflect.DeepEqual(sink.lines["labels"], []string{"k=v"}) {
+	if !slices.Equal(sink.lines["tags"], []string{"a", "b"}) ||
+		!slices.Equal(sink.lines["labels"], []string{"k=v"}) {
 		t.Fatalf("sink lines = %#v", sink.lines)
 	}
 

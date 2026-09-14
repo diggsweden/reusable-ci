@@ -33,14 +33,16 @@ func ParseExternalParametersJSON(raw string) (map[string]any, error) {
 	return params, nil
 }
 
-// MergeExternalParameters merges caller-declared extras into ext with
-// every already-present key reserved: the engine's computed facts and a
-// base predicate's own fields can never be shadowed by a declared
-// document. A collision fails with ErrValidation rather than
-// overriding. This is the single merge implementation shared by the
-// statement builder and the signer's per-image predicate enrichment.
+// MergeExternalParameters merges caller-declared extras into ext. Engine-owned
+// names are reserved across every profile, including profiles that omit a name,
+// and already-present predicate fields can never be shadowed. A collision fails
+// with ErrValidation rather than overriding.
 func MergeExternalParameters(ext, extras map[string]any) error {
 	for key, value := range extras {
+		if reservedExternalParameter(key) {
+			return fmt.Errorf("provenance key %q is reserved for an engine-computed externalParameters field: %w", key, errs.ErrValidation)
+		}
+
 		if _, taken := ext[key]; taken {
 			return fmt.Errorf("provenance key %q collides with a computed externalParameters field: %w", key, errs.ErrValidation)
 		}
@@ -49,4 +51,13 @@ func MergeExternalParameters(ext, extras map[string]any) error {
 	}
 
 	return nil
+}
+
+func reservedExternalParameter(key string) bool {
+	switch key {
+	case "source", "ref", "workflow", "image", "flavor", "base_input_id", "base":
+		return true
+	default:
+		return false
+	}
 }

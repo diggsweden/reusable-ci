@@ -5,22 +5,30 @@ package gpg_test
 
 import (
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/gpg"
 )
 
-func TestIsArmored(t *testing.T) {
+func TestIsArmored_IgnoresLeadingWhitespaceBeforeTheHeader(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]bool{
 		"-----BEGIN PGP PRIVATE KEY BLOCK-----\n…":   true,
 		"\n-----BEGIN PGP PRIVATE KEY BLOCK-----\n…": true,
 		"\n\n-----BEGIN something":                   true,
-		"bGFsYWxh":                                   false, // base64 of "lalala"
-		"":                                           false,
-		"random bytes":                               false,
+		// A secret authored on Windows, and one indented by a YAML block
+		// scalar. Both used to fall through to the base64 branch and fail
+		// with "illegal base64 data" about a perfectly good armored key.
+		"\r\n-----BEGIN PGP PRIVATE KEY BLOCK-----\r\n…": true,
+		"  -----BEGIN PGP PRIVATE KEY BLOCK-----\n…":     true,
+		"\t-----BEGIN PGP PRIVATE KEY BLOCK-----\n…":     true,
+		"bGFsYWxh":     false, // base64 of "lalala"
+		"":             false,
+		"random bytes": false,
 	}
 	for in, want := range tests {
 		t.Run(in[:min(len(in), 20)], func(t *testing.T) {
@@ -73,12 +81,7 @@ func TestDecodeKey_Base64WithWhitespace(t *testing.T) {
 	var wrapped strings.Builder
 
 	for i := 0; i < len(encoded); i += 4 { //nolint:varnamelen // idiomatic short name (testing/http/io conventions).
-		end := i + 4
-		if end > len(encoded) {
-			end = len(encoded)
-		}
-
-		wrapped.WriteString(encoded[i:end])
+		wrapped.WriteString(encoded[i:min(i+4, len(encoded))])
 		wrapped.WriteString("\n")
 	}
 
@@ -96,12 +99,19 @@ func TestDecodeKey_InvalidBase64Errors(t *testing.T) {
 	t.Parallel()
 
 	_, err := gpg.DecodeKey("not valid base64 ===///===")
-	if err == nil {
-		t.Error("expected error on invalid base64")
+	// A secret that is neither armored nor base64 is malformed input (65),
+	// not an internal bug: the operator pasted the wrong thing.
+	if !errors.Is(err, errs.ErrMalformedInput) {
+		t.Fatalf("err = %v, want ErrMalformedInput", err)
+	}
+
+	// And the message must not echo the value back -- it is a secret.
+	if strings.Contains(err.Error(), "not valid base64 ===///===") {
+		t.Errorf("the rejection echoed the supplied secret: %v", err)
 	}
 }
 
-func TestHexEncodePassphrase(t *testing.T) {
+func TestHexEncodePassphrase_EncodesBytesAsUppercaseHex(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]string{
@@ -148,5 +158,28 @@ func TestAgentConfig_HasExpectedDirectives(t *testing.T) {
 	// be a gpg-agent.conf comment so it doesn't change agent behaviour.
 	if !strings.HasPrefix(gpg.AgentConfig, "# Managed by reusable-ci") {
 		t.Errorf("AgentConfig must begin with a '# Managed by reusable-ci' marker comment; got:\n%s", gpg.AgentConfig)
+	}
+}
+
+// TestDecodeKey_Base64WrappedWithCRLFOrTabs covers the wrappings a secret
+// picks up on its way through a Windows editor or an indented YAML block.
+// Every whitespace kind is stripped before decoding, so all spellings yield
+// the same key bytes.
+func TestDecodeKey_Base64WrappedWithCRLFOrTabs(t *testing.T) {
+	t.Parallel()
+
+	const armored = "-----BEGIN PGP PRIVATE KEY BLOCK-----\nbody\n-----END PGP PRIVATE KEY BLOCK-----" //nolint:gosec // armor framing around a placeholder body, no key material
+
+	encoded := base64.StdEncoding.EncodeToString([]byte(armored))
+	half := len(encoded) / 2
+
+	for name, wrapped := range map[string]string{
+		"crlf": encoded[:half] + "\r\n" + encoded[half:] + "\r\n",
+		"tabs": "\t" + encoded[:half] + "\t\n\t" + encoded[half:] + "\n",
+	} {
+		got, err := gpg.DecodeKey(wrapped)
+		if err != nil || string(got) != armored {
+			t.Errorf("%s: DecodeKey = %q, %v; want the armored key", name, got, err)
+		}
 	}
 }

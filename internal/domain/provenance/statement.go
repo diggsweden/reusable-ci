@@ -4,33 +4,55 @@
 package provenance
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/domain/errs"
 )
 
-// Envelopes normalises `cosign verify-attestation` output into a list of DSSE
-// envelopes.
+// Envelopes normalises attestation output into a list of DSSE envelopes.
 //
-// cosign emits a bare envelope object when it verified one attestation and a
-// JSON array when it verified several, and callers cannot know in advance
-// which they will get. Handling only the object shape makes a multi-attestation
-// image look like it has no attestation at all, which for a caller deciding
-// whether something is still referenced is the dangerous direction to be wrong
-// in. Both shapes are normalised here so no caller has to remember.
+// cosign prints one envelope object per line from `verify-attestation`, a
+// bare object when there is one, and a JSON array from some download paths;
+// callers cannot know in advance which they will get. Handling only the
+// object shape made a multi-attestation image (CycloneDX beside SLSA) look
+// malformed, which for a caller deciding whether something is still
+// referenced is the dangerous direction to be wrong in. Every shape is
+// normalised here so no caller has to remember; output holding no JSON value
+// at all is malformed.
 func Envelopes(body []byte) ([]any, error) {
-	var raw any
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("parse attestation output: %w: %w", err, errs.ErrMalformedInput)
+	decoder := json.NewDecoder(bytes.NewReader(body))
+
+	var envelopes []any
+
+	for {
+		var raw any
+
+		err := decoder.Decode(&raw)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("parse attestation output: %w: %w", err, errs.ErrMalformedInput)
+		}
+
+		if list, ok := raw.([]any); ok {
+			envelopes = append(envelopes, list...)
+		} else {
+			envelopes = append(envelopes, raw)
+		}
 	}
 
-	if envelopes, ok := raw.([]any); ok {
-		return envelopes, nil
+	if envelopes == nil {
+		return nil, fmt.Errorf("parse attestation output: no JSON value: %w", errs.ErrMalformedInput)
 	}
 
-	return []any{raw}, nil
+	return envelopes, nil
 }
 
 // EnvelopePayload extracts the base64 payload from one DSSE envelope as
