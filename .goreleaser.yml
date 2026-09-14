@@ -4,10 +4,8 @@
 # goreleaser config for reusable-ci.
 #
 # Produces linux/darwin × amd64/arm64 archives plus a checksums file.
-# Cosign signing + SBOM emission are gated behind env-only secrets — set
-# COSIGN_PRIVATE_KEY / COSIGN_PASSWORD on the release runner to enable.
-#
-# See docs/migration-history.md (Distribution) for the rationale.
+# The release workflows install syft for per-archive SBOMs and use cosign with
+# the runner's OIDC identity for keyless signing of the checksum manifest.
 
 version: 2
 

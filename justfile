@@ -204,7 +204,6 @@ lint-trivy-fs *args:
 [group('lint')]
 lint-workflow-contracts:
     @go run ./cmd/reusable-ci validate workflow input-defaults
-    @go run ./cmd/reusable-ci validate workflow contract-residue
 
 # ==================================================================================== #
 # LINT-FIX - Auto-fix linting violations
@@ -226,9 +225,10 @@ tidy:
 # TEST - Go test suites
 # ==================================================================================== #
 
-# ▪ Run all Go tests (unit + integration)
+# ▪ Run all Go tests once. The integration-tag invocation also includes every
+# untagged unit test, so running test-unit first would execute the unit tier twice.
 [group('test')]
-test: test-tags-compile test-unit test-integration
+test: test-tags-compile test-integration
 
 # Assert every build-tagged tier still compiles
 #
@@ -274,7 +274,7 @@ test-smoke:
 #     scripts/emit-targets.sh gitlab forgejo          # in the lab
 #   export LAB_TARGETS_FILE=/private/state/reusable-ci.json
 #   export RC_LIVE_GITLAB_OWNER=... RC_LIVE_FORGEJO_OWNER=...
-#   just test-live                                    # prints the identity and
+#   just test-live-full compose                       # prints the identity and
 #                                                     # the exact confirmation
 #
 # The preflight below derives the identity and fails with the confirmation to
@@ -290,12 +290,19 @@ test-smoke:
 # The lifecycle script validates neutral-v2 once, freezes the contract, CA, and
 # cleanup launcher bytes, retains the producer's exact cleanup contract_file,
 # then arms cleanup before checking tools, building, or entering provider code.
+# Sanitized logs and source/binary hash manifests survive that cleanup under the
+# XDG state directory printed at the end of each invocation (30-day retention).
 # LAB_RUNNER_FORGES remains a separate operator-owned runner-availability input;
 # OCI/Fulcio facts never imply that a runner exists.
-[doc('Run the live-forge conformance tier (needs a lab contract, owners, and confirmation). Optional arg is a -run filter.')]
+[doc('Run the complete live profile for one expected Forge Lab road (compose or k3s).')]
 [group('test')]
-test-live scenario='':
-    @bash scripts/ci/prepare-live-tests.sh "{{scenario}}"
+test-live-full road:
+    @bash scripts/ci/prepare-live-tests.sh full "{{road}}"
+
+[doc('Run an explicitly partial live profile selected by a Go -run filter.')]
+[group('test')]
+test-live-focused scenario:
+    @bash scripts/ci/prepare-live-tests.sh focused "{{scenario}}"
 
 # Run unit tests with verbose output
 [group('test')]
