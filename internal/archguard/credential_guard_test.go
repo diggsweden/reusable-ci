@@ -9,8 +9,10 @@ import (
 	"go/token"
 	"io/fs"
 	"path/filepath"
-	"strings"
+	"strconv"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 )
 
 // TestOnlyCompositionRootMintsOperatorCredentials fails when a package
@@ -43,14 +45,14 @@ import (
 func TestOnlyCompositionRootMintsOperatorCredentials(t *testing.T) {
 	t.Parallel()
 
-	root := filepath.Join("..", "..", "internal")
+	root := filepath.Join(reporoot.Path(t), "internal")
 
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if !isProductGoFile(d, path) {
 			return nil
 		}
 
@@ -84,22 +86,7 @@ func reportOperatorCredentialMint(t *testing.T, path string) {
 		t.Fatalf("parse %s: %v", path, err)
 	}
 
-	ast.Inspect(file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-
-		pkg, ok := sel.X.(*ast.Ident)
-		if !ok || pkg.Name != "runcontext" || sel.Sel.Name != "OperatorCredential" {
-			return true
-		}
-
+	for _, position := range operatorCredentialReferences(file) {
 		t.Errorf(
 			"%s: mints an unrestricted credential from a string.\n"+
 				"    OperatorCredential means \"an operator typed this secret next to the\n"+
@@ -110,9 +97,59 @@ func reportOperatorCredentialMint(t *testing.T, path string) {
 				"    Fix: resolve via runcontext.Token()/ReleaseToken(), which bind the\n"+
 				"    credential to the server that issued it, and name your destination with\n"+
 				"    Credential.For.",
-			fset.Position(n.Pos()),
+			fset.Position(position),
 		)
+	}
+}
+
+// Forbid references, not just direct calls: a function value can be passed to
+// reflection or another helper. Parser objects distinguish local shadowing.
+func operatorCredentialReferences(file *ast.File) []token.Pos {
+	names := map[string]bool{}
+	dot := false
+
+	for _, spec := range file.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || path != internalPrefix+"runcontext" {
+			continue
+		}
+
+		name := "runcontext"
+		if spec.Name != nil {
+			name = spec.Name.Name
+		}
+
+		if name == "." {
+			dot = true
+		} else {
+			names[name] = true
+		}
+	}
+
+	var (
+		found []token.Pos
+		visit func(ast.Node) bool
+	)
+
+	visit = func(node ast.Node) bool {
+		switch node := node.(type) {
+		case *ast.SelectorExpr:
+			if pkg, ok := node.X.(*ast.Ident); ok && pkg.Obj == nil && names[pkg.Name] && node.Sel.Name == "OperatorCredential" {
+				found = append(found, node.Pos())
+			}
+
+			ast.Inspect(node.X, visit)
+
+			return false
+		case *ast.Ident:
+			if dot && node.Obj == nil && node.Name == "OperatorCredential" {
+				found = append(found, node.Pos())
+			}
+		}
 
 		return true
-	})
+	}
+	ast.Inspect(file, visit)
+
+	return found
 }

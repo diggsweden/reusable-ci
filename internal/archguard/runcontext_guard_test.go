@@ -4,17 +4,26 @@
 package archguard
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"go/ast"
+	"go/constant"
+	"go/importer"
 	"go/parser"
 	"go/token"
-	"io/fs"
+	"go/types"
+	"io"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/diggsweden/reusable-ci/v3/internal/runcontext"
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 )
 
 // guardedLayers are the layers that must not name a run-context variable
@@ -23,7 +32,7 @@ import (
 //	Only an adapter may name a forge's variables, because an adapter IS a
 //	dialect. Everyone else resolves the shared chain.
 //
-// adapters is therefore the ONE exemption, and it is principled rather than
+// adapters is therefore the ONE production exemption, principled rather than
 // pragmatic. adapters/github/context.go reading $GITHUB_SHA, or
 // adapters/gitlab reading $CI_SERVER_URL, is that adapter doing its job:
 // normalizing one forge's names into a neutral Context. cienv's EventName
@@ -48,7 +57,9 @@ import (
 //     a flag is wrong. Secrets are the case where a flag IS wrong: argv is
 //     world-readable, so validate/prerequisites.go keeps its os.Getenv and
 //     only borrows the chain.
-func guardedLayers() []string { return []string{"domain", "app", "cli"} }
+//   - utilities accept values or injected lookups; moving a direct read to
+//     a provider-neutral helper must not evade the same rule.
+func guardedLayers() []string { return []string{"domain", "app", "cli", "utility"} }
 
 // ownedNames returns every environment variable runcontext defines,
 // derived from runcontext.All() rather than restated here -- a hand-copied
@@ -78,75 +89,114 @@ func TestLayersDoNotNameRunContextVars(t *testing.T) {
 	t.Parallel()
 
 	owned := ownedNames()
-	root := filepath.Join("..", "..", "internal")
+	packages, imp, fset := envGuardPackages(t, "./internal/...")
+	checked := 0
 
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	for _, pkg := range packages {
+		rel, internal := strings.CutPrefix(pkg.ImportPath, internalPrefix)
+		if !internal {
+			continue
 		}
 
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-
-		layer := layerOf(filepath.ToSlash(filepath.Dir(rel)))
+		layer := layerOf(rel)
 		if !slices.Contains(guardedLayers(), layer) {
-			return nil
+			continue
 		}
 
-		reportEnvReads(t, path, layer, owned)
+		files := make([]*ast.File, 0, len(pkg.CompiledGoFiles))
+		for _, path := range pkg.CompiledGoFiles {
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(pkg.Dir, path)
+			}
 
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk internal/: %v", err)
+			file, err := parser.ParseFile(fset, path, nil, 0)
+			if err != nil {
+				t.Fatalf("parse %s: %v", path, err)
+			}
+
+			files = append(files, file)
+		}
+
+		checked += len(files)
+
+		reads, err := runContextEnvReads(fset, pkg.ImportPath, files, imp)
+		if err != nil {
+			t.Fatalf("check %s: %v", pkg.ImportPath, err)
+		}
+
+		for _, read := range reads {
+			t.Errorf("%s: reads $%s directly; %q run context is owned by internal/runcontext (%s).\n    Fix: %s",
+				fset.Position(read.pos), read.name, owned[read.name], conceptNames(read.name, owned), runContextFix(layer))
+		}
+	}
+
+	if checked == 0 {
+		t.Fatal("env guard checked no production files")
 	}
 }
 
-// reportEnvReads flags each os.Getenv/os.LookupEnv in path whose argument is
-// a run-context variable name.
-func reportEnvReads(t *testing.T, path, layer string, owned map[string]string) {
+type envGuardPackage struct {
+	Dir             string   `json:"Dir"`
+	ImportPath      string   `json:"ImportPath"`
+	Export          string   `json:"Export"`
+	CompiledGoFiles []string `json:"CompiledGoFiles"`
+}
+
+// Use the installed compiler's export data, not guessed import stubs or partial
+// type information. go list only builds metadata/export archives; it runs no
+// application or provider code. This scans production files selected by go list's
+// GOOS/GOARCH/GOFLAGS, not tests, testdata, or excluded platform/tag variants.
+// Command-line -tags on an outer go test are not inherited; use GOFLAGS for tags.
+func envGuardPackages(t *testing.T, patterns ...string) ([]envGuardPackage, types.Importer, *token.FileSet) {
 	t.Helper()
 
-	fset := token.NewFileSet()
+	args := append([]string{"list", "-mod=readonly", "-buildvcs=false", "-deps", "-export", "-compiled", "-json"}, patterns...)
+	goRoot := runtime.GOROOT()                                                           //nolint:staticcheck // SA1019: export data must use the build toolchain's Go, not a potentially different Go on PATH.
+	cmd := exec.CommandContext(t.Context(), filepath.Join(goRoot, "bin", "go"), args...) //nolint:gosec // matching installed Go executable; callers supply fixed source/metadata package patterns.
+	cmd.Dir = reporoot.Path(t)
 
-	file, err := parser.ParseFile(fset, path, nil, 0)
+	cmd.Env = append(os.Environ(), "GOPROXY=off", "GOSUMDB=off", "GOTOOLCHAIN=local")
+
+	var stderr bytes.Buffer
+
+	cmd.Stderr = &stderr
+
+	data, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
+		t.Fatalf("env guard export metadata: %v\n%s", err, &stderr)
 	}
 
-	ast.Inspect(file, func(n ast.Node) bool {
-		name, ok := envReadArg(n)
-		if !ok {
-			return true
+	var packages []envGuardPackage
+
+	exports := make(map[string]string)
+
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	for decoder.More() {
+		var pkg envGuardPackage
+		if err := decoder.Decode(&pkg); err != nil {
+			t.Fatalf("env guard metadata: %v", err)
 		}
 
-		concept, owns := owned[name]
-		if !owns {
-			// Not a run-context variable. SOURCE_DATE_EPOCH and
-			// DOCKER_CONFIG are read by app code and are not this
-			// guard's business: they name a build input or a tool's
-			// own config, not the CI run.
-			return true
+		packages = append(packages, pkg)
+		exports[pkg.ImportPath] = pkg.Export
+	}
+
+	fset := token.NewFileSet()
+	imp := importer.ForCompiler(fset, "gc", func(path string) (io.ReadCloser, error) {
+		archive := exports[path]
+		if archive == "" {
+			return nil, fmt.Errorf("no export archive for %s: %w", path, os.ErrNotExist)
 		}
 
-		t.Errorf(
-			"%s: reads $%s directly.\n"+
-				"    $%s is the %q run context, owned by internal/runcontext.\n"+
-				"    This read resolves that ONE name, so it cannot honour the precedence\n"+
-				"    the shared chain implements (%s) --\n"+
-				"    the same run would answer differently here than at every flag.\n"+
-				"    Fix: %s",
-			fset.Position(n.Pos()), name, name, concept, conceptNames(name, owned), runContextFix(layer),
-		)
-
-		return true
+		return os.Open(archive)
 	})
+
+	return packages, imp, fset
+}
+
+type runContextEnvRead struct {
+	pos  token.Pos
+	name string
 }
 
 // runContextFix states the remedy in the terms the offending layer can act on.
@@ -159,44 +209,155 @@ func runContextFix(layer string) string {
 			"    resolve the shared chain: runcontext.<Concept>().Resolve(os.Getenv)."
 	}
 
+	if layer == "utility" {
+		return "accept the value or an injected lookup; resolve runcontext.<Concept>()\n" +
+			"    against that lookup rather than naming a forge variable."
+	}
+
 	return "this layer receives the run context, it does not look for it. Give the\n" +
 		"    command a flag with Sources: cienv.<Concept>(), carry the value on the use\n" +
 		"    case's *Input, and delete the read."
 }
 
-// envReadArg reports the literal variable name when n is an os.Getenv or
-// os.LookupEnv call on a constant string.
-func envReadArg(n ast.Node) (string, bool) {
-	call, ok := n.(*ast.CallExpr)
-	if !ok || len(call.Args) != 1 {
-		return "", false
+// runContextEnvReads recognizes stdlib object identity and Go string constants,
+// including sibling-file/imported constants. Function values are deliberately
+// bounded to single-write, non-address-taken variables within this package.
+// Reassigned/escaped functions, imported function variables, wrappers, parameters,
+// fields, containers and runtime-computed keys need review, not an invented flow
+// result. Passing os.Getenv to runcontext.Resolve is not a direct named read.
+//
+// The bound is forced, not lazy, and it is worth knowing why before trying to
+// tighten it. A rule that treats any `func(string) string` callee as an
+// environment read was written and reverted: it flags the SANCTIONED seam, in
+// which a use case accepts an injected lookup from the composition root, and
+// the "injected lookup" and "shadowed package parameter" fixtures in
+// runcontext_envsemantic_test.go pin that pattern as permitted. No local rule
+// separates a lookup handed in by the composition root from one smuggled
+// through a field, so failing closed here means failing on the approved design.
+//
+// So the supported claim is "this reports the flows it models", not "no
+// unmodelled flow exists". Closing that gap needs interprocedural analysis that
+// can tell an injected lookup from a smuggled one. docs/testing.md says the
+// same thing for readers who never open this file.
+func runContextEnvReads(fset *token.FileSet, path string, files []*ast.File, imp types.Importer) ([]runContextEnvRead, error) { //nolint:gocognit,gocyclo // bounded write accounting and object-based call recognition form one scanner, not a general flow engine.
+	info := &types.Info{
+		Types: make(map[ast.Expr]types.TypeAndValue),
+		Defs:  make(map[*ast.Ident]types.Object),
+		Uses:  make(map[*ast.Ident]types.Object),
 	}
 
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok {
-		return "", false
+	config := types.Config{Importer: imp, Sizes: types.SizesFor("gc", runtime.GOARCH)}
+	if _, err := config.Check(path, fset, files, info); err != nil {
+		return nil, err
 	}
 
-	pkg, ok := sel.X.(*ast.Ident)
-	if !ok || pkg.Name != "os" {
-		return "", false
+	object := func(expr ast.Expr) types.Object {
+		switch expr := ast.Unparen(expr).(type) {
+		case *ast.Ident:
+			return info.ObjectOf(expr)
+		case *ast.SelectorExpr:
+			return info.ObjectOf(expr.Sel)
+		default:
+			return nil
+		}
+	}
+	values := make(map[types.Object]ast.Expr)
+	writes := make(map[types.Object]int)
+	escaped := make(map[types.Object]bool)
+
+	for _, file := range files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			switch node := node.(type) {
+			case *ast.ValueSpec:
+				for i, name := range node.Names {
+					if len(node.Values) > 0 {
+						obj := info.ObjectOf(name)
+
+						writes[obj]++
+						if len(node.Names) == len(node.Values) {
+							values[obj] = node.Values[i]
+						}
+					}
+				}
+			case *ast.AssignStmt:
+				for i, lhs := range node.Lhs {
+					obj := object(lhs)
+
+					writes[obj]++
+					if len(node.Lhs) == len(node.Rhs) {
+						values[obj] = node.Rhs[i]
+					}
+				}
+			case *ast.RangeStmt:
+				if node.Key != nil {
+					writes[object(node.Key)]++
+				}
+
+				if node.Value != nil {
+					writes[object(node.Value)]++
+				}
+			case *ast.UnaryExpr:
+				if node.Op == token.AND {
+					escaped[object(node.X)] = true
+				}
+			case *ast.Field:
+				// Parameters/results are injected values, not single-write aliases.
+				for _, name := range node.Names {
+					escaped[info.ObjectOf(name)] = true
+				}
+			}
+
+			return true
+		})
 	}
 
-	if sel.Sel.Name != "Getenv" && sel.Sel.Name != "LookupEnv" {
-		return "", false
+	var isEnvFunc func(ast.Expr, map[types.Object]bool) bool
+
+	isEnvFunc = func(expr ast.Expr, seen map[types.Object]bool) bool {
+		obj := object(expr)
+		if fn, ok := obj.(*types.Func); ok {
+			return fn.Pkg() != nil && fn.Pkg().Path() == "os" && fn.Parent() == fn.Pkg().Scope() &&
+				(fn.Name() == "Getenv" || fn.Name() == "LookupEnv")
+		}
+
+		v, ok := obj.(*types.Var)
+		if !ok || v.IsField() || seen[obj] || writes[obj] != 1 || escaped[obj] || values[obj] == nil {
+			return false
+		}
+		// A local call before the assignment is not evidence of its later value.
+		if v.Parent() != v.Pkg().Scope() && expr.Pos() < values[obj].Pos() {
+			return false
+		}
+
+		seen[obj] = true
+
+		return isEnvFunc(values[obj], seen)
 	}
 
-	lit, ok := call.Args[0].(*ast.BasicLit)
-	if !ok || lit.Kind != token.STRING {
-		return "", false
+	var reads []runContextEnvRead
+
+	owned := ownedNames()
+
+	for _, file := range files {
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok || len(call.Args) != 1 || !isEnvFunc(call.Fun, make(map[types.Object]bool)) {
+				return true
+			}
+
+			value := info.Types[call.Args[0]].Value
+			if value != nil && value.Kind() == constant.String {
+				name := constant.StringVal(value)
+				if _, owns := owned[name]; owns {
+					reads = append(reads, runContextEnvRead{pos: call.Pos(), name: name})
+				}
+			}
+
+			return true
+		})
 	}
 
-	name, err := strconv.Unquote(lit.Value)
-	if err != nil {
-		return "", false
-	}
-
-	return name, true
+	return reads, nil
 }
 
 // conceptNames renders the full chain the offending name belongs to, so the

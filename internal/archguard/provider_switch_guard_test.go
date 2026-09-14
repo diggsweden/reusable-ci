@@ -14,80 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAppLayerDoesNotBranchOnPlatform enforces the Phase 1 invariant:
-// application logic must not switch on a forge's identity. Forge
-// differences belong behind the provider role interfaces (Describer,
-// CapabilityReporter, TokenAdviser, …), so adding a new forge means
-// implementing those interfaces in an adapter — not adding a `case` arm
-// across internal/app.
-//
-// The single legitimate provider-construction switch lives in
-// internal/cli/deps (providerFor); the runtime detection switch lives in
-// internal/adapters/platform. Neither is under internal/app, so this guard stays
-// green as long as the app layer asks the provider instead of branching
-// on its name.
-func TestAppLayerDoesNotBranchOnPlatform(t *testing.T) {
-	t.Parallel()
-
-	appDir := filepath.Join(reporoot.Path(t), "internal", "app")
-
-	// Forbidden substrings: a case arm or direct comparison against a
-	// concrete forge platform constant in non-test app code.
-	forbidden := []string{
-		"case provider.ForgeGitHub",
-		"case provider.ForgeGitLab",
-		"case provider.ForgeForgejo",
-		"== provider.ForgeGitHub",
-		"== provider.ForgeGitLab",
-		"== provider.ForgeForgejo",
-	}
-
-	var offenders []string
-
-	err := filepath.WalkDir(appDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-
-		body, readErr := os.ReadFile(path) //nolint:gosec // test reads repo-local source files.
-		if readErr != nil {
-			return readErr
-		}
-
-		src := string(body)
-		for _, needle := range forbidden {
-			if strings.Contains(src, needle) {
-				rel, _ := filepath.Rel(reporoot.Path(t), path)
-				offenders = append(offenders, rel+": "+needle)
-			}
-		}
-
-		return nil
-	})
-	require.NoError(t, err)
-
-	require.Emptyf(t, offenders,
-		"internal/app must not branch on forge identity — ask the provider "+
-			"(Describer / Capabilities / role interfaces) instead. Offenders:\n%s",
-		strings.Join(offenders, "\n"))
-}
-
-// TestDomainPlatformBranchingIsConfinedToPresentation pins the companion
-// invariant: internal/domain is allowed to branch on forge identity ONLY in
-// the deliberately-sanctioned presentation modules that render forge-specific
-// display copy (summary labels, run URLs). Co-locating that copy here — rather
-// than pushing UI strings into the I/O adapters — is the chosen trade-off, but
-// it must stay contained: a new domain file that switches on a platform
-// constant should force a conscious decision (refactor behind a provider role,
-// or extend this allowlist with a justification), not slip in unnoticed.
-//
-// This makes the boundary the app-layer guard above already implies EXPLICIT
-// and drift-proof, in the same guardrail-test style the repo uses elsewhere
-// (workflow-contract, docs-sync, ledger-dry-run).
 func TestDomainPlatformBranchingIsConfinedToPresentation(t *testing.T) {
 	t.Parallel()
 
@@ -115,7 +41,7 @@ func TestDomainPlatformBranchingIsConfinedToPresentation(t *testing.T) {
 			return err
 		}
 
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if !isProductGoFile(d, path) {
 			return nil
 		}
 

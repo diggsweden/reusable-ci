@@ -20,14 +20,15 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/diggsweden/reusable-ci/v3/internal/testutil/reporoot"
 )
 
 const internalPrefix = "github.com/diggsweden/reusable-ci/v3/internal/"
 
 // layerOf classifies an internal package path (given relative to internal/)
-// into its hexagonal layer. The empty string means "unlayered": leaf
-// utilities such as listval, clicolor, safeexec, and testutil carry no
-// domain knowledge and sit outside the stack, so any layer may use them.
+// into its hexagonal layer. Utilities may depend inward on domain but never
+// on app, cli or adapters. Test infrastructure has an explicit separate layer.
 // listval in particular is imported by domain itself, which is exactly why
 // it cannot live inside one of the layered trees.
 func layerOf(rel string) string {
@@ -37,7 +38,13 @@ func layerOf(rel string) string {
 		}
 	}
 
-	return ""
+	for _, prefix := range []string{"testutil", "livetest"} {
+		if rel == prefix || strings.HasPrefix(rel, prefix+"/") {
+			return "test"
+		}
+	}
+
+	return "utility"
 }
 
 // forbiddenEdges lists, per layer, the layers it may not import. Every arrow
@@ -53,20 +60,7 @@ func forbiddenEdges() map[string][]string {
 		"domain":   {"app", "adapters", "cli"},
 		"adapters": {"app", "cli"},
 		"app":      {"adapters", "cli"},
-	}
-}
-
-// pureAdapters are adapter packages the app layer may still import directly,
-// because the functions it calls are pure: they take bytes and return a
-// value, touching no file, network, or subprocess. Calling one is using a
-// library, not driving a port, so there is nothing to inject or to fake.
-//
-// This is a narrow exemption, not a loophole. adapters/openpgp also exposes
-// a *Signer whose methods do touch the filesystem; app code must reach those
-// through a port like it does every other adapter.
-func pureAdapters() map[string]string {
-	return map[string]string{
-		"adapters/openpgp": "VerifyDetachedArmored / PrimaryFingerprints are pure over armored bytes",
+		"utility":  {"app", "adapters", "cli"},
 	}
 }
 
@@ -74,13 +68,16 @@ func pureAdapters() map[string]string {
 // rather than restating the rule.
 func fixFor(edge string) string {
 	return map[string]string{
-		"domain->app":      "domain holds rules, not sequencing; move the orchestration into internal/app and leave the rule behind.",
-		"domain->adapters": "domain must not know a concrete tool. Declare a small interface (a port) in domain and let the adapter satisfy it.",
-		"domain->cli":      "domain must not know it is driven by a CLI. Pass the value in as a parameter instead.",
-		"adapters->app":    "an adapter is driven by a use case, never the reverse. Invert the call, or move the shared logic into domain.",
-		"adapters->cli":    "an adapter must not read flags. Take the value as a struct field or parameter and let cmd/ wire it.",
-		"app->adapters":    "a use case must depend on a port, not a concrete tool. Declare the small interface it needs (see gitOps in app/validate/tags.go) and construct the adapter in internal/cli.",
-		"app->cli":         "a use case must not parse flags or own stdout. Accept an io.Writer and plain inputs; wire it in internal/cli.",
+		"domain->app":       "domain holds rules, not sequencing; move the orchestration into internal/app and leave the rule behind.",
+		"domain->adapters":  "domain must not know a concrete tool. Declare a small interface (a port) in domain and let the adapter satisfy it.",
+		"domain->cli":       "domain must not know it is driven by a CLI. Pass the value in as a parameter instead.",
+		"adapters->app":     "an adapter is driven by a use case, never the reverse. Invert the call, or move the shared logic into domain.",
+		"adapters->cli":     "an adapter must not read flags. Take the value as a struct field or parameter and let cmd/ wire it.",
+		"app->adapters":     "a use case must depend on a port, not a concrete tool. Declare the small interface it needs (see gitOps in app/validate/tags.go) and construct the adapter in internal/cli.",
+		"app->cli":          "a use case must not parse flags or own stdout. Accept an io.Writer and plain inputs; wire it in internal/cli.",
+		"utility->app":      "a shared utility must not orchestrate use cases; move orchestration into app or cli.",
+		"utility->cli":      "a shared utility receives values, not CLI flags or composition code.",
+		"utility->adapters": "a shared utility must not construct concrete adapters; accept a narrow interface or move composition into cli.",
 	}[edge]
 }
 
@@ -92,7 +89,7 @@ type outwardEdge struct {
 
 // violationsIn returns the forbidden edges the file at path introduces,
 // given the layer it belongs to.
-func violationsIn(fset *token.FileSet, path, from string, forbidden map[string][]string, pure map[string]string) ([]outwardEdge, error) {
+func violationsIn(fset *token.FileSet, path, from string, forbidden map[string][]string) ([]outwardEdge, error) {
 	file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
 	if err != nil {
 		return nil, err
@@ -116,10 +113,6 @@ func violationsIn(fset *token.FileSet, path, from string, forbidden map[string][
 			continue
 		}
 
-		if from == "app" && to == "adapters" && pure[target] != "" {
-			continue
-		}
-
 		found = append(found, outwardEdge{name: from + "->" + to, imported: imported})
 	}
 
@@ -134,16 +127,12 @@ func violationsIn(fset *token.FileSet, path, from string, forbidden map[string][
 func TestNoOutwardImports(t *testing.T) {
 	t.Parallel()
 
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
-	}
+	root := reporoot.Path(t)
 
 	var (
 		internalDir = filepath.Join(root, "internal")
 		fset        = token.NewFileSet()
 		forbidden   = forbiddenEdges()
-		pure        = pureAdapters()
 		offenders   []string
 	)
 
@@ -152,7 +141,7 @@ func TestNoOutwardImports(t *testing.T) {
 			return err
 		}
 
-		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if !isProductGoFile(entry, path) {
 			return nil
 		}
 
@@ -166,7 +155,7 @@ func TestNoOutwardImports(t *testing.T) {
 			return nil
 		}
 
-		found, err := violationsIn(fset, path, from, forbidden, pure)
+		found, err := violationsIn(fset, path, from, forbidden)
 		if err != nil {
 			return err
 		}
