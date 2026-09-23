@@ -84,3 +84,18 @@ teardown() {
   run get_github_output "opengrep-result"
   assert_output "failure"
 }
+
+@test "ignores nosemgrep-suppressed findings when checking threshold" {
+  export OPENGREP_FAIL_ON_SEVERITY="high"
+  export OPENGREP_TEST_JSON='{"version":"1.18.0","results":[{"check_id":"rule.error","extra":{"severity":"ERROR","is_ignored":true}},{"check_id":"rule.warning","extra":{"severity":"WARNING","is_ignored":false}}],"errors":[]}'
+  export OPENGREP_TEST_TEXT='suppressed finding'
+
+  run_script "security/run-opengrep.sh"
+
+  assert_success
+  assert_summary_contains "| Findings | 1 |"
+  assert_summary_contains "| ERROR | 0 |"
+  assert_summary_contains "| WARNING | 1 |"
+  run get_github_output "opengrep-result"
+  assert_output "success"
+}
