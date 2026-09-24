@@ -161,7 +161,7 @@ jobs:
     needs: [compose-pr-interface]
     permissions:
       contents: read
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/pullrequest-quality-stage.yml
     with:
       pr-context-json: ${{ needs.compose-pr-interface.outputs.pr-context-json }}

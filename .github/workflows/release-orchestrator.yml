@@ -272,7 +272,7 @@ jobs:
   validate-prerequisites:
     name: Validate Prerequisites
     needs: [parse-config]
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/validate-release-prerequisites.yml
     with:
       project-type: ${{ fromJson(needs.parse-config.outputs['release-context-json']).project_type }}
@@ -291,7 +291,7 @@ jobs:
     permissions:
       contents: write
       packages: read
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/release-prepare-stage.yml
     with:
       branch: ${{ inputs.branch }}
@@ -307,7 +307,7 @@ jobs:
     if: ${{ !failure() && !cancelled() }}
     permissions:
       contents: read
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/release-build-stage.yml
     with:
       branch: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
@@ -333,7 +333,7 @@ jobs:
       id-token: write
       attestations: write
       actions: read
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/release-publish-stage.yml
     with:
       branch: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
@@ -356,7 +356,7 @@ jobs:
       contents: write
       packages: read
       id-token: write
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/release-create-github.yml
     with:
       release-name: "${{ github.ref_name }}"

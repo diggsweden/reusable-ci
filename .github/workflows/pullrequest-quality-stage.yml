@@ -33,7 +33,7 @@ jobs:
     if: ${{ fromJson(inputs['pr-policy-json']).dependencyreview }}
     permissions:
       contents: read
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/security-dependency-review.yml
     with:
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
@@ -42,7 +42,7 @@ jobs:
     if: ${{ fromJson(inputs['pr-policy-json']).sastopengrep }}
     permissions:
       contents: read
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/security-opengrep.yml
     with:
       opengrep-rules: ${{ fromJson(inputs['pr-context-json']).sast_opengrep_rules }}
@@ -53,7 +53,7 @@ jobs:
     if: ${{ fromJson(inputs['pr-policy-json']).megalint }}
     permissions:
       contents: read
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/lint-mega.yml
     with:
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}

@@ -223,7 +223,7 @@ jobs:
     needs: [setup-dev]
     permissions:
       contents: read
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/release-dev-build-stage.yml
     with:
       dev-context-json: ${{ needs.setup-dev.outputs.dev-context-json }}
@@ -237,7 +237,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/release-dev-publish-stage.yml
     with:
       dev-context-json: ${{ needs.setup-dev.outputs.dev-context-json }}

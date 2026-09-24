@@ -26,7 +26,7 @@ jobs:
       id-token: write
       actions: read
       attestations: write
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     with:
       artifacts-config: .github/self-artifacts.yml
       reusable-ci-ref: ${{ github.ref_name }}

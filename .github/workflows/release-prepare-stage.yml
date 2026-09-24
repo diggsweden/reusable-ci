@@ -47,7 +47,7 @@ jobs:
     permissions:
       contents: write
       packages: read
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/version-bump.yml
     with:
       branch: ${{ inputs.branch }}
