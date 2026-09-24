@@ -63,13 +63,20 @@ build_config_args() {
   fi
 }
 
-count_occurrences() {
+# Count findings in the OpenGrep JSON output, optionally filtered by severity.
+# Findings suppressed with nosemgrep are kept in the output (is_ignored: true)
+# when SARIF output is also requested, so they are skipped here.
+count_findings() {
   local file="$1"
-  local needle="$2"
+  local severity="${2:-}"
   local count="0"
 
   if [[ -f "$file" ]]; then
-    count="$(grep -o "$needle" "$file" 2>/dev/null | wc -l | tr -d '[:space:]')"
+    # shellcheck disable=SC2016 # $severity is a jq variable, not shell
+    count="$(jq --arg severity "$severity" \
+      '[.results[]? | select(.extra.is_ignored != true)
+        | select($severity == "" or .extra.severity == $severity)] | length' \
+      "$file")"
   fi
 
   printf '%s' "${count:-0}"
@@ -262,10 +269,10 @@ main() {
     exit "$scan_exit"
   fi
 
-  findings_total="$(count_occurrences "$json_file" '"check_id":')"
-  error_total="$(count_occurrences "$json_file" '"severity":"ERROR"')"
-  warning_total="$(count_occurrences "$json_file" '"severity":"WARNING"')"
-  info_total="$(count_occurrences "$json_file" '"severity":"INFO"')"
+  findings_total="$(count_findings "$json_file")"
+  error_total="$(count_findings "$json_file" ERROR)"
+  warning_total="$(count_findings "$json_file" WARNING)"
+  info_total="$(count_findings "$json_file" INFO)"
   threshold_failure="$(has_findings_meeting_threshold "$fail_on_severity" "$findings_total" "$error_total" "$warning_total")"
 
   write_scan_summary "$config" "$target_path" "$fail_on_severity" "$findings_total" "$error_total" "$warning_total" "$info_total" "$threshold_failure" "$text_file"

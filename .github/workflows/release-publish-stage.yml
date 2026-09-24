@@ -60,7 +60,7 @@ jobs:
     permissions:
       contents: write
       packages: write
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/publish-maven-github.yml
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
@@ -80,7 +80,7 @@ jobs:
       contents: write
       packages: write
       id-token: write
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/publish-maven-central.yml
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
@@ -97,7 +97,7 @@ jobs:
       fail-fast: false
     permissions:
       contents: read
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/publish-apple-appstore.yml
     with:
       ipa-artifact-name: ${{ matrix.artifact.name }}
@@ -115,7 +115,7 @@ jobs:
       fail-fast: false
     permissions:
       contents: read
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/publish-google-play.yml
     with:
       aab-artifact-name: ${{ matrix.artifact.name }}
@@ -144,7 +144,7 @@ jobs:
       id-token: write
       attestations: write
       actions: read
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/publish-container.yml
     with:
       branch: ${{ inputs.branch }}
@@ -193,7 +193,7 @@ jobs:
       fail-fast: false
     permissions:
       contents: read
-    secrets: inherit
+    secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
     uses: ./.github/workflows/sbom-cargo.yml
     with:
       working-directory: ${{ matrix.artifact['working-directory'] }}
