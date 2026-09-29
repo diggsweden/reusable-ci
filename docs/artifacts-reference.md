@@ -636,6 +636,13 @@ artifacts:
 jobs:
   release:
     uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      actions: read
+      attestations: write
+      pull-requests: read
     with:
       reusable-ci-ref: v2.7.0
       artifacts-config: .github/artifacts.yml
@@ -934,6 +941,7 @@ jobs:
     uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
     permissions:
       contents: write
+      pull-requests: read
       packages: write
       id-token: write
       actions: read

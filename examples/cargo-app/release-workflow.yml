@@ -19,6 +19,7 @@ jobs:
     uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
     permissions:
       contents: write
+      pull-requests: read
       packages: write
       id-token: write
       actions: read

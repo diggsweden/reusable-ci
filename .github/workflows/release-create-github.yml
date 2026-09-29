@@ -117,6 +117,7 @@ jobs:
     name: Generate Release Changelog
     permissions:
       contents: read
+      pull-requests: read
     uses: ./.github/workflows/generate-changelog.yml
     with:
       branch: ${{ inputs['checkout-ref'] }}

@@ -34,6 +34,7 @@
 | **PR Workflow** | `contents: read` | Read code | Cannot checkout |
 | | `packages: read` | Read private packages | Cannot fetch dependencies |
 | **Release Workflow** | `contents: write` | Create tags/releases | Cannot create release |
+| | `pull-requests: read` | Read PR metadata for changelogs using `GITHUB_TOKEN` | Nested workflow rejected or private-repo changelog API returns 403 |
 | | `packages: write` | Push packages | Cannot publish artifacts |
 | | `id-token: write` | OIDC for SLSA | No attestation |
 | | `attestations: write` | Attach SBOMs | No SBOM attachment |
@@ -41,6 +42,10 @@
 | | `issues: write` | Update issues | Cannot add labels/comments |
 | **Dev Workflow** | `contents: read` | Read code | Cannot checkout |
 | | `packages: write` | Push images | Cannot push to ghcr.io |
+
+The release caller must permit `pull-requests: read` even for public repositories: nested workflows cannot elevate the caller's token permissions. This applies to the automatic `GITHUB_TOKEN`, not the release PAT. See the short [Migration Guide](migration.md).
+
+For later steps in private repositories, see [Private Repository Release Notes](private-repositories.md) for package authentication, repository rules, and attestation/upload availability.
 
 ## Passing Secrets
 

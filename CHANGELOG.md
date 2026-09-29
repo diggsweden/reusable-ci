@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Release callers must grant `pull-requests: read` for changelog generation, including callers in public repositories. Follow the short [Migration Guide](docs/migration.md) for this permission, canonical secret names, and explicit secret mappings.
 - **Breaking:** align secret names with `main-golang`: `RELEASE_TOKEN`, `RELEASE_GPG_PRIVATE_KEY`, `RELEASE_GPG_PASSPHRASE`, `RELEASE_GPG_PUBLIC_KEY`, `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, and `CODE_SCANNING_TOKEN`. Previous names have no aliases or runtime fallbacks. Update caller mappings, secret configuration, and direct-script environments before upgrading; see [Canonical Secret Names](docs/reference.md#canonical-secret-names-breaking-change).
 - New consumers must use explicit secret mappings; updated examples pin a workflow revision that declares the accepted secrets. See [Passing Secrets](docs/reference.md#passing-secrets) for compatible versions and migration guidance.
 
@@ -18,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- OpenGrep summary counts and failure thresholds exclude `nosemgrep`-suppressed findings, including when SARIF output retains them in JSON. Active findings are counted structurally rather than by matching JSON text.
+- Grant the automatic `GITHUB_TOKEN` PR read access through both nested changelog paths, fixing git-cliff's 403 when reading pull requests in private repositories.
+- OpenGrep summary counts and failure thresholds exclude `nosemgrep`-suppressed findings, including when SARIF output retains them in JSON. Active findings are counted structurally rather than by matching JSON text, incorporating Erik Eriksson's original fix from [#121](https://github.com/diggsweden/reusable-ci/pull/121).
 
 ## [2.8.3] - 2026-05-06
 

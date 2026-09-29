@@ -169,6 +169,9 @@ with:
 Handles version bumping and updates version files.
 ```yaml
 uses: ./.github/workflows/version-bump.yml
+permissions:
+  contents: write
+  pull-requests: read
 with:
   project-type: maven      # Determines version file (pom.xml vs package.json)
   branch: main             # Base branch for comparison
@@ -179,13 +182,18 @@ with:
 Generates changelog from git commits.
 ```yaml
 uses: ./.github/workflows/generate-changelog.yml
+permissions:
+  contents: read
+  pull-requests: read
 with:
   branch: main             # Base branch for changelog comparison
-  config-file: ""          # Optional: Custom changelog config
+  changelog-config: cliff.toml # Optional: Custom changelog config
 ```
 
 #### `release-create-github.yml`
 Creates GitHub releases with assets.
+
+Callers must include `pull-requests: read` alongside the release job's other permissions. Changelog generation uses the automatic `GITHUB_TOKEN` to read PR metadata; it does not use `RELEASE_TOKEN`. See the [Migration Guide](migration.md).
 
 Usually called by `release-orchestrator.yml`, but can also be used directly by advanced consumers that want lower-level release composition.
 

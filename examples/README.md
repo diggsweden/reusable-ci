@@ -103,6 +103,8 @@ Complete working examples for different project types.
 
 ## Quick Start
 
+Existing consumers: follow the short [Migration Guide](../docs/migration.md) for `pull-requests: read`, canonical secret names, and explicit `secrets:` mappings.
+
 > [!WARNING]
 > New integrations must use explicit secret mappings. Existing `secrets: inherit` callers remain supported during the current major version; migrate before upgrading to the next major release. See [Passing Secrets](../docs/reference.md#passing-secrets) for compatibility and temporary suppression guidance. Bare inheritance can still fail scanning today.
 

@@ -101,6 +101,7 @@ When changing workflows or workflow helper scripts:
 4. Parse workflow YAML and check reusable-workflow input compatibility.
 5. Run `bash -n` for touched helper scripts.
 6. Add or update Bats tests when helper scripts are added or changed.
+7. Run `bats tests/validate/changelog-permissions.bats` when changing release/changelog permissions; it checks every local call boundary and the consumer examples (requires Python 3 and the project's `yq`).
 
 ## Secret Mapping Migration Release Preparation
 

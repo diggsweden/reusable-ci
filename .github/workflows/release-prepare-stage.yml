@@ -57,6 +57,7 @@ jobs:
     permissions:
       contents: write
       packages: read
+      pull-requests: read
     secrets:
       RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
       RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}

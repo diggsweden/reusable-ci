@@ -72,6 +72,13 @@ artifacts:
 jobs:
   release:
     uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@<sha>
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      actions: read
+      attestations: write
+      pull-requests: read
     with:
       release.sboms: build      # release-orchestrator dot-prefix convention
 

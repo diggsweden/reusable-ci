@@ -44,6 +44,7 @@
 #   id-token: write      # OIDC for attestations
 #   attestations: write  # Attach SBOMs
 #   actions: read        # Read workflow for SLSA
+#   pull-requests: read  # Read PR metadata for changelogs
 #
 # v3 Design
 # - Removed single-artifact inline mode
@@ -379,6 +380,7 @@ jobs:
     permissions:
       contents: write
       packages: read
+      pull-requests: read
     secrets:
       RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
       RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
@@ -467,6 +469,7 @@ jobs:
       contents: write
       packages: read
       id-token: write
+      pull-requests: read
     secrets:
       RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
       RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
