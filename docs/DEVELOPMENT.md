@@ -105,13 +105,13 @@ When changing workflows or workflow helper scripts:
 
 ## Secret Mapping Migration Release Preparation
 
-The supported caller contract requires new integrations to use explicit secret mappings. Existing `secrets: inherit` callers remain supported during the current major version; support ends with the next major release.
+The upcoming release is v3.0.0. Its supported caller contract requires explicit mappings with canonical secret names for all consumers. `secrets: inherit` and retired secret names are unsupported; no grace period is offered in v3.
 
-Before publishing the migration release:
+Before publishing v3.0.0:
 
-1. Commit and make available a revision containing both the callable secret declarations and the OpenGrep suppression-counting fix.
-2. Update the migration examples in `README.md`, `examples/`, and the reference/publishing guides so `uses:` and `reusable-ci-ref` select that same revision. The current `73d5d61ddca95f965193ce7a57bdeb7a3ae10899` pin contains the declarations only, so it is not a complete upgrade target for consumers using temporary suppressions.
-3. Update [Passing Secrets](reference.md#passing-secrets) with that upgrade target, keeping the next-major deadline and the temporary suppression instructions together.
-4. Validate the pinned examples against the called workflows' accepted inputs and secrets. Verify the scanner accepts explicit mappings and targeted suppressions while still reporting unsuppressed inheritance. Exercise secret forwarding with representative consumer PR and release runs, including optional secrets being absent.
+1. Make the pinned revision available in the remote repository before consumers use it. The migration baseline is `747ac6d4ff82d409a48c125266939a15df9a3270`, containing the canonical secret names, OpenGrep suppression-counting fix, and changelog PR-read permissions.
+2. Keep `uses:` and `reusable-ci-ref` aligned in `README.md`, `examples/`, and the reference/publishing guides when moving to a release containing that baseline.
+3. Update [Passing Secrets](reference.md#passing-secrets) and the [Migration Guide](migration.md) with that upgrade target and the v3.0.0 requirements. Do not offer inheritance suppressions as a supported v3 migration path.
+4. Validate the pinned examples against the called workflows' accepted inputs and secrets. Verify explicit mappings and secret forwarding with representative consumer PR and release runs, including optional secrets being absent. Retain regression coverage for OpenGrep's general suppression-counting behavior.
 
-Before publishing the next major release, make explicit mappings a requirement in its breaking-change notes. GitHub's native `inherit` syntax is not disabled by named secret declarations; any additional enforcement must be explicit and must not be backported as a current-major compatibility break.
+Document these requirements in the v3.0.0 breaking-change notes. GitHub's native `inherit` syntax is not disabled by named secret declarations; any additional enforcement must be explicit and must not be backported as a v2 compatibility break.

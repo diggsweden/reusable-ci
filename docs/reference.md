@@ -50,7 +50,7 @@ For later steps in private repositories, see [Private Repository Release Notes](
 ## Passing Secrets
 
 > [!WARNING]
-> New integrations must map the secrets they need explicitly. Existing `secrets: inherit` callers remain supported during the current major version. Support ends with the next major release: migrate before upgrading to it. This does not disable OpenGrep's `secrets-inherit` rule; an unsuppressed finding can still fail the configured scan threshold today.
+> v3.0.0 requires explicit mappings using the canonical secret names for all consumers. `secrets: inherit` is unsupported in v3, including for existing callers upgrading from v2. Follow the short [Migration Guide](migration.md).
 
 For PR checks, replace the caller's `secrets: inherit` line with:
 
@@ -79,40 +79,34 @@ This revision aligns with `main-golang`. The previous secret names are not accep
 
 Update caller mappings and repository/organization secret configuration before adopting this revision. Ensure each consuming repository has access to the new names and that its GPG key, passphrase, and public key match. Custom Maven settings must use `${env.MAVEN_CENTRAL_USERNAME}` and `${env.MAVEN_CENTRAL_PASSWORD}`. Direct script users must update their environment variables too.
 
-The current-major grace period applies only to the `secrets: inherit` syntax, not to these retired names. Inherited callers must supply the canonical secrets as well. No aliases or automatic fallback to previous credentials are provided.
+There is no grace period in v3.0.0 for inherited calls or retired secret names. No aliases or automatic fallback to previous credentials are provided.
 
 ### Compatible Workflow Versions
 
-Explicit mappings require a called workflow that declares those secrets. The updated examples pin both `uses:` and `reusable-ci-ref` to `73d5d61ddca95f965193ce7a57bdeb7a3ae10899`, the commit introducing these declarations. Use that commit or a release containing it; do not copy the new mappings onto an older workflow that does not accept them. Keep the workflow ref and helper-script ref aligned when upgrading.
+The updated examples pin both `uses:` and `reusable-ci-ref` to `747ac6d4ff82d409a48c125266939a15df9a3270`, which contains the canonical secret declarations, OpenGrep suppression-counting fix, and changelog PR-read permissions. Use that commit once published, or a release containing it. Older revisions may lack these contracts or fixes. Keep the workflow ref and helper-script ref aligned when upgrading.
 
 Once callers use the canonical names, moving from inheritance to explicit mappings only changes the `secrets:` block. No new workflow inputs are required.
 
-### Migration Before The Next Major Release
+### Migration To v3.0.0
 
-| Caller | Current major version | Next major version |
-|--------|-----------------------|--------------------|
-| New integration | Explicit mappings required by the supported setup | Explicit mappings required |
-| Existing explicit mappings | Supported | Supported |
-| Existing `secrets: inherit` | Supported temporarily; scanner findings still apply | Unsupported; migrate before upgrading |
+| Caller | Required action |
+|--------|-----------------|
+| New v3 integration | Use explicit mappings with canonical secret names |
+| Existing explicit mappings | Update any retired secret names before adopting v3 |
+| Existing `secrets: inherit` | Replace inheritance with explicit canonical mappings before adopting v3 |
+| Staying on pinned v2 workflows | Retain the selected v2 workflow's contract until upgrading |
 
-1. Choose a compatible workflow version and keep `uses:` and `reusable-ci-ref` pinned to the same revision. Consumers using the temporary suppression below need a revision containing both the declarations and the counting fix.
+1. Choose the v3.0.0 release once available, or the complete migration baseline above, and keep `uses:` and `reusable-ci-ref` pinned to the same revision. Include the new `pull-requests: read` permission in release callers.
 2. Replace `secrets: inherit` at each call site with the canonical secrets needed by that workflow. Omit the block when no custom secrets are needed. Keep workflow inputs and build/publish configuration; update any previous secret names as described above.
-3. Check the relevant PR, signing, and publishing paths with your existing credentials before adopting the next major release. Remove any temporary inheritance suppression when replacing the line.
+3. Check the relevant PR, signing, and publishing paths with your configured canonical secrets before adopting v3.0.0. Remove any old inheritance suppression when replacing the line.
 
-Consumers already using explicit mappings with the canonical names do not need another secrets-related migration for the inheritance deadline. Consumers staying on a pinned current-major release are not automatically upgraded when the next major is published. Pin the helper-script ref too: a `reusable-ci-ref` of `main` follows newer implementation changes independently of the workflow pin.
+Consumers already using explicit mappings with the canonical names need no further secret-name or mapping changes. Consumers staying on pinned v2 workflows are not automatically upgraded when v3.0.0 is published. Pin the helper-script ref too: a `reusable-ci-ref` of `main` follows newer implementation changes independently of the workflow pin.
 
-This deadline concerns the supported caller contract. `inherit` is a GitHub Actions feature; declaring named secrets in a reusable workflow does not make GitHub reject inherited calls. Scan enforcement is separate from workflow-call compatibility.
+This is the supported v3 caller contract. `inherit` remains a GitHub Actions feature; declaring named secrets in a reusable workflow does not itself make GitHub reject inherited calls. A technically accepted or scanner-suppressed inherited call is still unsupported in v3.
 
-### Temporary Suppression For Existing Callers
+### Suppressed Scan Findings
 
-During the current major version, if inheritance is intentional while you migrate, suppress only this rule on the caller's own line:
-
-```yaml
-# Compatibility: replace inheritance before upgrading to the next major release.
-secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
-```
-
-This requires the OpenGrep suppression-counting fix listed under **Unreleased** in the [changelog](../CHANGELOG.md). The declaration commit above alone does not include that fix: `reusable-ci-ref` must select a commit or release containing it. Correctly suppressed findings do not contribute to the summary counts or failure threshold; original JSON/SARIF reports can still retain them for auditing. Other active findings continue to be checked normally.
+The pinned upgrade target above includes the OpenGrep suppression-counting fix listed under **Unreleased** in the [changelog](../CHANGELOG.md). Correctly suppressed findings do not contribute to the summary counts or failure threshold; original JSON/SARIF reports can still retain them for auditing. Other active findings continue to be checked normally. This counting fix does not provide an inheritance compatibility exception in v3.
 
 ## Getting Access to Secrets
 

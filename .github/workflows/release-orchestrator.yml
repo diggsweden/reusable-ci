@@ -24,10 +24,9 @@
 # Required Secrets (depending on configuration):
 #   GITHUB_TOKEN: Automatically provided for GitHub operations
 #
-# New callers must map the secrets declared under on.workflow_call.secrets
-# explicitly. Existing `secrets: inherit` callers remain supported during the
-# current major version; migrate before upgrading to the next major release.
-# See docs/reference.md#passing-secrets for the transition and scan behavior.
+# In v3.0.0, all callers must map the secrets declared under
+# on.workflow_call.secrets explicitly. `secrets: inherit` is unsupported.
+# See docs/migration.md before upgrading a v2 caller.
 # Pass only what the release actually uses, for example:
 #
 #   secrets:

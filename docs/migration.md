@@ -4,13 +4,13 @@ SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
 SPDX-License-Identifier: CC0-1.0
 -->
 
-# Migration: Permissions And Secret Names
+# Migration To v3.0.0: Permissions And Secret Names
 
-Existing consumers need to update their workflow revision, release permissions, and secret mappings. Keep your existing build/publish inputs and add any ecosystem-specific secrets your setup needs.
+All consumers upgrading from v2 to v3.0.0 must use the canonical secret names and explicit secret mappings. Update the workflow revision and release permissions too. Keep your existing build/publish inputs and add any ecosystem-specific secrets your setup needs.
 
 ## 1. Upgrade Both References And Allow PR Reads
 
-Use a revision containing the canonical secret names, OpenGrep suppression-counting fix, and changelog permission fix. Update **both** `uses: ...@ref` and `with.reusable-ci-ref` to that revision. Updating only the helper-script ref does not change workflow permissions.
+The example below pins a revision containing the canonical secret names, OpenGrep suppression-counting fix, and changelog permission fix. Use it once published, or a release containing it. Update **both** `uses: ...@ref` and `with.reusable-ci-ref` to the same revision. Updating only the helper-script ref does not change workflow permissions.
 
 Add `pull-requests: read` to the consumer's release job, retaining its other permissions. This is required for **public and private repositories** when adopting the fixed workflows. Changelog generation uses the automatic `GITHUB_TOKEN`; no additional permission on the release PAT is needed for this fix.
 
@@ -30,12 +30,12 @@ The workflows and scripts provide **no aliases or fallbacks** for the previous n
 
 ## 3. Replace Inheritance With Explicit Secret Mappings
 
-For a reusable-workflow call, use **`secrets:`**, not `env:`. Replace `<FIXED_SHA>` below with the revision chosen in step 1:
+For a reusable-workflow call, use **`secrets:`**, not `env:`:
 
 ```yaml
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@<FIXED_SHA>
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@747ac6d4ff82d409a48c125266939a15df9a3270
     permissions:
       contents: write
       packages: write
@@ -50,7 +50,7 @@ jobs:
       RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
       CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }} # Optional SARIF upload
     with:
-      reusable-ci-ref: <FIXED_SHA>
+      reusable-ci-ref: 747ac6d4ff82d409a48c125266939a15df9a3270
       artifacts-config: .github/artifacts.yml
       # Retain your existing release inputs here.
 ```
@@ -66,6 +66,6 @@ Map only what the called workflow needs. Add Maven Central, Android, or Apple cr
   run: bash .github-shared/scripts/validate/gpg-public-key.sh
 ```
 
-**Deadline:** existing `secrets: inherit` syntax is supported during the current major, but must be replaced before upgrading to the next major. This grace period does **not** preserve old secret names. Bare inheritance can still fail OpenGrep today; [Passing Secrets](reference.md#temporary-suppression-for-existing-callers) documents the targeted temporary suppression.
+**Required for v3.0.0:** replace `secrets: inherit` before adopting this release. There is no grace period for inheritance or old secret names in v3. A `nosemgrep` suppression is not a substitute for migrating the caller. See [Passing Secrets](reference.md#passing-secrets).
 
 Before upgrading production, run the PR and release paths using the new mappings, including changelog generation in a private repo when applicable. Consumers staying on older pinned workflows are unaffected by the new permission requirement. Private repositories should also review the [remaining release conditions](private-repositories.md), particularly SLSA container provenance and private package dependencies.

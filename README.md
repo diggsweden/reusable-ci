@@ -79,7 +79,7 @@ Most projects require two or three files:
 
 #### Example 1: Just Use Flows As Is
 ```yaml
-uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@747ac6d4ff82d409a48c125266939a15df9a3270 # Migration baseline
 permissions:
   contents: write
   packages: write
@@ -88,7 +88,7 @@ permissions:
   attestations: write
   pull-requests: read
 with:
-  reusable-ci-ref: v2.7.0
+  reusable-ci-ref: 747ac6d4ff82d409a48c125266939a15df9a3270
   artifacts-config: .github/artifacts.yml
   release-publisher: github-cli
 ```
@@ -125,9 +125,9 @@ jobs:
 ### For New Projects
 
 > [!WARNING]
-> New integrations must map only the secrets they need. Existing `secrets: inherit` callers remain supported during the current major version. Migrate before upgrading to the next major release. Unsuppressed inheritance can still fail OpenGrep today; see [Passing Secrets](docs/reference.md#passing-secrets) for the transition and temporary suppression.
+> v3.0.0 requires explicit mappings using the canonical secret names for all consumers. Replace `secrets: inherit` when upgrading from v2; there is no inheritance grace period in v3. See the short [Migration Guide](docs/migration.md).
 
-The quick-start workflows below pin the commit introducing explicit secret declarations. Keep `uses:` and `reusable-ci-ref` aligned when moving to a release containing that commit.
+The quick-start workflows below pin the commit containing the canonical secret names, OpenGrep suppression-counting fix, and changelog PR-read permissions. Keep `uses:` and `reusable-ci-ref` aligned when moving to a release containing that commit. Previous secret names are not accepted; see the [breaking naming migration](docs/reference.md#canonical-secret-names-breaking-change).
 
 1. **Create artifacts configuration** - Define what to build:
    ```yaml
@@ -151,14 +151,14 @@ The quick-start workflows below pin the commit introducing explicit secret decla
      contents: read
    jobs:
       pr-checks:
-        uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
+        uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@747ac6d4ff82d409a48c125266939a15df9a3270 # Migration baseline
         permissions:
           contents: read
           packages: read
         secrets:
           CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }} # Optional Code Scanning upload
         with:
-          reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
+          reusable-ci-ref: 747ac6d4ff82d409a48c125266939a15df9a3270
           project-type: maven  # or npm, gradle, gradle-android, xcode-ios
           # Recommended: Use devbase-check (lightweight, just+mise-based)
           linters.devbasecheck: true
@@ -185,7 +185,7 @@ The quick-start workflows below pin the commit introducing explicit secret decla
      contents: read
    jobs:
      release:
-       uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
+       uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@747ac6d4ff82d409a48c125266939a15df9a3270 # Migration baseline
        permissions:
          contents: write
          pull-requests: read
@@ -200,7 +200,7 @@ The quick-start workflows below pin the commit introducing explicit secret decla
          RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
          CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }} # Optional Code Scanning upload
        with:
-         reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
+         reusable-ci-ref: 747ac6d4ff82d409a48c125266939a15df9a3270
          artifacts-config: .github/artifacts.yml
    ```
 
@@ -215,13 +215,13 @@ The quick-start workflows below pin the commit introducing explicit secret decla
      contents: read
    jobs:
      dev-release:
-        uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
+        uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@747ac6d4ff82d409a48c125266939a15df9a3270 # Migration baseline
         permissions:
           contents: write
           packages: write
         # GHCR uses the automatic GITHUB_TOKEN; no custom secrets are needed.
         with:
-          reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
+          reusable-ci-ref: 747ac6d4ff82d409a48c125266939a15df9a3270
           project-type: maven  # or npm, gradle, gradle-android, xcode-ios
     ```
 

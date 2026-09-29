@@ -7,15 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Upcoming release: **3.0.0**.
+
 ### Changed
 
 - Release callers must grant `pull-requests: read` for changelog generation, including callers in public repositories. Follow the short [Migration Guide](docs/migration.md) for this permission, canonical secret names, and explicit secret mappings.
 - **Breaking:** align secret names with `main-golang`: `RELEASE_TOKEN`, `RELEASE_GPG_PRIVATE_KEY`, `RELEASE_GPG_PASSPHRASE`, `RELEASE_GPG_PUBLIC_KEY`, `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, and `CODE_SCANNING_TOKEN`. Previous names have no aliases or runtime fallbacks. Update caller mappings, secret configuration, and direct-script environments before upgrading; see [Canonical Secret Names](docs/reference.md#canonical-secret-names-breaking-change).
-- New consumers must use explicit secret mappings; updated examples pin a workflow revision that declares the accepted secrets. See [Passing Secrets](docs/reference.md#passing-secrets) for compatible versions and migration guidance.
+- All v3 consumers must use explicit secret mappings; updated examples pin a workflow revision that declares the accepted secrets. See [Passing Secrets](docs/reference.md#passing-secrets) for compatible versions and migration guidance.
 
-### Deprecated
+### Removed
 
-- Caller-side `secrets: inherit` remains supported during the current major version, but support ends with the next major release. Migrate before upgrading to that release. The existing OpenGrep rule can still fail on unsuppressed inheritance during the transition; the migration guide includes a targeted temporary suppression requiring the counting fix below.
+- **Breaking:** support for caller-side `secrets: inherit` ends in v3.0.0. All consumers upgrading to v3 must use explicit mappings with the canonical secret names. Consumers remaining on pinned v2 workflows retain those workflows' behavior.
 
 ### Fixed
 

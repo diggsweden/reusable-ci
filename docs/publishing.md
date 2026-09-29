@@ -431,7 +431,7 @@ podman pull ghcr.io/diggsweden/repo-name/my-app:v1.0.0
 2. Generate access token
 3. Configure repository variable `DOCKERHUB_USERNAME` and request secret `DOCKERHUB_TOKEN`.
 
-Call the container publisher directly for a custom registry. This example builds inside the Containerfile (`artifact-types: ""`). Map the registry credential explicitly; existing inheritance callers remain supported during the current major version as described in [Passing Secrets](reference.md#passing-secrets).
+Call the container publisher directly for a custom registry. This example builds inside the Containerfile (`artifact-types: ""`). Map the registry credential explicitly; v3.0.0 requires explicit secret mappings as described in [Passing Secrets](reference.md#passing-secrets).
 
 This is a standalone container-publishing job, not a drop-in replacement for release orchestration: it does not bump versions or create a GitHub release. Existing consumers migrating secrets should keep their release jobs and change only the credential mappings. The username is a repository variable in this example because GitHub does not allow the `secrets` context in a reusable-workflow job's `with:` inputs.
 
@@ -439,7 +439,7 @@ This is a standalone container-publishing job, not a drop-in replacement for rel
 # .github/workflows/release-workflow.yml
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
+    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@747ac6d4ff82d409a48c125266939a15df9a3270 # Migration baseline
     permissions:
       contents: read
       packages: write
@@ -447,7 +447,7 @@ jobs:
       attestations: write
       actions: read
     with:
-      reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
+      reusable-ci-ref: 747ac6d4ff82d409a48c125266939a15df9a3270
       artifact-types: ""
       registry: docker.io
       registry-username: ${{ vars.DOCKERHUB_USERNAME }}
@@ -471,7 +471,7 @@ Configure repository variable `REGISTRY_USERNAME` and secret `REGISTRY_PASSWORD`
 # .github/workflows/release-workflow.yml
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
+    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@747ac6d4ff82d409a48c125266939a15df9a3270 # Migration baseline
     permissions:
       contents: read
       packages: write
@@ -479,7 +479,7 @@ jobs:
       attestations: write
       actions: read
     with:
-      reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
+      reusable-ci-ref: 747ac6d4ff82d409a48c125266939a15df9a3270
       artifact-types: ""
       registry: registry.example.com
       registry-username: ${{ vars.REGISTRY_USERNAME }}

@@ -635,7 +635,7 @@ artifacts:
 ```yaml
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@747ac6d4ff82d409a48c125266939a15df9a3270 # Migration baseline
     permissions:
       contents: write
       packages: write
@@ -644,7 +644,7 @@ jobs:
       attestations: write
       pull-requests: read
     with:
-      reusable-ci-ref: v2.7.0
+      reusable-ci-ref: 747ac6d4ff82d409a48c125266939a15df9a3270
       artifacts-config: .github/artifacts.yml
       release-publisher: github-cli
 ```
@@ -938,7 +938,7 @@ permissions:
 
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@747ac6d4ff82d409a48c125266939a15df9a3270 # Migration baseline
     permissions:
       contents: write
       pull-requests: read
@@ -953,7 +953,7 @@ jobs:
       RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
       CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }} # Optional Code Scanning upload
     with:
-      reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
+      reusable-ci-ref: 747ac6d4ff82d409a48c125266939a15df9a3270
       artifacts-config: .github/artifacts.yml
       changelog-creator: git-cliff
       release-publisher: github-cli

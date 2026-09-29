@@ -1,12 +1,5 @@
 # TODO
 
-## Secret mapping migration release pins
-
-Before publishing, repin the migration examples and their helper-script refs to a
-published revision containing both secret declarations and the OpenGrep counting
-fix. The current declaration pin predates the counting fix. Follow
-[release preparation](docs/DEVELOPMENT.md#secret-mapping-migration-release-preparation).
-
 ## Private repository container provenance
 
 The pinned SLSA generator requires an explicit `private-repository: true` opt-in,

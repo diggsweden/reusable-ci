@@ -106,9 +106,9 @@ Complete working examples for different project types.
 Existing consumers: follow the short [Migration Guide](../docs/migration.md) for `pull-requests: read`, canonical secret names, and explicit `secrets:` mappings.
 
 > [!WARNING]
-> New integrations must use explicit secret mappings. Existing `secrets: inherit` callers remain supported during the current major version; migrate before upgrading to the next major release. See [Passing Secrets](../docs/reference.md#passing-secrets) for compatibility and temporary suppression guidance. Bare inheritance can still fail scanning today.
+> v3.0.0 requires explicit mappings with canonical secret names for all consumers. Replace `secrets: inherit` before adopting v3; there is no inheritance grace period in this release. See [Passing Secrets](../docs/reference.md#passing-secrets).
 
-The updated workflow files pin `uses:` and `reusable-ci-ref` to the commit that introduces explicit secret declarations. Older releases may not accept these mappings. Move both refs together when adopting a release containing the change.
+The updated workflow files pin `uses:` and `reusable-ci-ref` to the commit containing the canonical secret declarations, OpenGrep suppression-counting fix, and changelog PR-read permissions. Older releases may not accept these mappings or have the permission fix. Move both refs together when adopting a release containing the change.
 
 Map only the secrets your chosen configuration needs. PR examples map the optional `CODE_SCANNING_TOKEN`; omit that block when uploads are not needed. Release examples map signing and publishing credentials for their ecosystem. `GITHUB_TOKEN` is automatic. The [canonical secret-name migration](../docs/reference.md#canonical-secret-names-breaking-change) is a breaking change with no aliases; update old caller names before adopting this revision.
 

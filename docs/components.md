@@ -307,7 +307,7 @@ secrets:
   CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
 ```
 
-Existing `secrets: inherit` callers remain supported during the current major version; migrate before upgrading to the next major release. See [Passing Secrets](reference.md#passing-secrets) for compatible versions, scanner behavior, and migration guidance.
+All v3.0.0 callers must use explicit mappings with canonical secret names. Replace `secrets: inherit` when upgrading from v2. See [Passing Secrets](reference.md#passing-secrets) for the supported contract and migration guidance.
 
 #### `security-openssf-scorecard.yml`
 Generates OpenSSF security scorecard for the repository.

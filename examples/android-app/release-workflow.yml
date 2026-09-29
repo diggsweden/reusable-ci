@@ -17,7 +17,7 @@ permissions:
   contents: read
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@747ac6d4ff82d409a48c125266939a15df9a3270 # Migration baseline
     permissions:
       contents: write
       pull-requests: read
@@ -37,7 +37,7 @@ jobs:
       SECRETS_PROPERTIES_BASE64: ${{ secrets.SECRETS_PROPERTIES_BASE64 }} # Optional Gradle configuration
       GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
     with:
-      reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
+      reusable-ci-ref: 747ac6d4ff82d409a48c125266939a15df9a3270
       artifacts-config: .github/artifacts.yml
       release.attachartifacts: |
         app/build/outputs/apk/demo/release/*.apk
