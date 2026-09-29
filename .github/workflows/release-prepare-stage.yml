@@ -22,13 +22,13 @@ on:
         required: true
         type: string
     secrets:
-      OSPO_BOT_GPG_PASS:
-        description: "Passphrase for OSPO_BOT_GPG_PRIV"
+      RELEASE_GPG_PASSPHRASE:
+        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
         required: false
-      OSPO_BOT_GPG_PRIV:
+      RELEASE_GPG_PRIVATE_KEY:
         description: "GPG private key used to sign tags, commits and release artifacts"
         required: false
-      RELEASE_BOT_TOKEN:
+      RELEASE_TOKEN:
         description: "Token used to create GitHub releases and push release commits"
         required: false
     outputs:
@@ -58,9 +58,9 @@ jobs:
       contents: write
       packages: read
     secrets:
-      OSPO_BOT_GPG_PASS: ${{ secrets.OSPO_BOT_GPG_PASS }}
-      OSPO_BOT_GPG_PRIV: ${{ secrets.OSPO_BOT_GPG_PRIV }}
-      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
     uses: ./.github/workflows/version-bump.yml
     with:
       branch: ${{ inputs.branch }}

@@ -24,17 +24,19 @@
 # Required Secrets (depending on configuration):
 #   GITHUB_TOKEN: Automatically provided for GitHub operations
 #
-# Secrets are declared under on.workflow_call.secrets and must be passed
-# explicitly; `secrets: inherit` hands over every repository secret and is no
-# longer needed. Pass only what the release actually uses, for example:
+# New callers must map the secrets declared under on.workflow_call.secrets
+# explicitly. Existing `secrets: inherit` callers remain supported during the
+# current major version; migrate before upgrading to the next major release.
+# See docs/reference.md#passing-secrets for the transition and scan behavior.
+# Pass only what the release actually uses, for example:
 #
 #   secrets:
-#     OSPO_BOT_GPG_PRIV: ${{ secrets.OSPO_BOT_GPG_PRIV }}
-#     OSPO_BOT_GPG_PASS: ${{ secrets.OSPO_BOT_GPG_PASS }}
-#     RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+#     RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+#     RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+#     RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
 #
 # Every declared secret is optional; omit the ones your ecosystem does not use.
-# SARIF_UPLOAD_TOKEN needs code_scanning_alerts:write (GitHub App or PAT).
+# CODE_SCANNING_TOKEN needs code_scanning_alerts:write (GitHub App or PAT).
 #
 # Required Permissions:
 #   contents: write       # Create releases and tags
@@ -177,31 +179,31 @@ on:
       KEYCHAIN_PASSWORD:
         description: "Password for the temporary macOS keychain"
         required: false
-      MAVENCENTRAL_PASSWORD:
+      MAVEN_CENTRAL_PASSWORD:
         description: "Maven Central (Sonatype) password or token"
         required: false
-      MAVENCENTRAL_USERNAME:
+      MAVEN_CENTRAL_USERNAME:
         description: "Maven Central (Sonatype) username"
         required: false
       NPM_TOKEN:
         description: "NPM registry auth token"
         required: false
-      OSPO_BOT_GPG_PASS:
-        description: "Passphrase for OSPO_BOT_GPG_PRIV"
+      RELEASE_GPG_PASSPHRASE:
+        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
         required: false
-      OSPO_BOT_GPG_PRIV:
+      RELEASE_GPG_PRIVATE_KEY:
         description: "GPG private key used to sign tags, commits and release artifacts"
         required: false
-      OSPO_BOT_GPG_PUB:
+      RELEASE_GPG_PUBLIC_KEY:
         description: "GPG public key used to verify signed tags"
         required: false
       PROVISIONING_PROFILE_BASE64:
         description: "Base64 encoded Apple provisioning profile"
         required: false
-      RELEASE_BOT_TOKEN:
+      RELEASE_TOKEN:
         description: "Token used to create GitHub releases and push release commits"
         required: false
-      SARIF_UPLOAD_TOKEN:
+      CODE_SCANNING_TOKEN:
         description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
         required: false
       SECRETS_PROPERTIES_BASE64:
@@ -351,14 +353,14 @@ jobs:
     needs: [parse-config]
     secrets:
       AUTHORIZED_RELEASE_DEVELOPERS: ${{ secrets.AUTHORIZED_RELEASE_DEVELOPERS }}
-      MAVENCENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
-      MAVENCENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      OSPO_BOT_GPG_PASS: ${{ secrets.OSPO_BOT_GPG_PASS }}
-      OSPO_BOT_GPG_PRIV: ${{ secrets.OSPO_BOT_GPG_PRIV }}
-      OSPO_BOT_GPG_PUB: ${{ secrets.OSPO_BOT_GPG_PUB }}
-      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
-      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
     uses: ./.github/workflows/validate-release-prerequisites.yml
     with:
       project-type: ${{ fromJson(needs.parse-config.outputs['release-context-json']).project_type }}
@@ -378,9 +380,9 @@ jobs:
       contents: write
       packages: read
     secrets:
-      OSPO_BOT_GPG_PASS: ${{ secrets.OSPO_BOT_GPG_PASS }}
-      OSPO_BOT_GPG_PRIV: ${{ secrets.OSPO_BOT_GPG_PRIV }}
-      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
     uses: ./.github/workflows/release-prepare-stage.yml
     with:
       branch: ${{ inputs.branch }}
@@ -437,11 +439,11 @@ jobs:
       APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_API_PRIVATE_KEY_BASE64 }}
       APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
       GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-      MAVENCENTRAL_PASSWORD: ${{ secrets.MAVENCENTRAL_PASSWORD }}
-      MAVENCENTRAL_USERNAME: ${{ secrets.MAVENCENTRAL_USERNAME }}
-      OSPO_BOT_GPG_PASS: ${{ secrets.OSPO_BOT_GPG_PASS }}
-      OSPO_BOT_GPG_PRIV: ${{ secrets.OSPO_BOT_GPG_PRIV }}
-      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
       registry-password: ${{ secrets['registry-password'] }}
     uses: ./.github/workflows/release-publish-stage.yml
     with:
@@ -466,9 +468,9 @@ jobs:
       packages: read
       id-token: write
     secrets:
-      OSPO_BOT_GPG_PASS: ${{ secrets.OSPO_BOT_GPG_PASS }}
-      OSPO_BOT_GPG_PRIV: ${{ secrets.OSPO_BOT_GPG_PRIV }}
-      RELEASE_BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
     uses: ./.github/workflows/release-create-github.yml
     with:
       release-name: "${{ github.ref_name }}"

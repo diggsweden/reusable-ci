@@ -43,7 +43,7 @@
 # - Per-platform SBOM generation (analyzed-container layer) with attest-sbom
 #   against the per-arch digest
 # - Signed attestations attached to image
-# - Security scan results uploaded to Code Scanning (when SARIF_UPLOAD_TOKEN
+# - Security scan results uploaded to Code Scanning (when CODE_SCANNING_TOKEN
 #   is configured)
 # - Namespace validation (enforces ghcr.io/OWNER/REPO pattern)
 #
@@ -53,7 +53,7 @@
 #
 # Required Secrets:
 #   registryPassword: Required when useGithubToken=false (for Docker Hub, Quay, etc)
-#   SARIF_UPLOAD_TOKEN: Optional — uploads Trivy scan results to Code Scanning
+#   CODE_SCANNING_TOKEN: Optional — uploads Trivy scan results to Code Scanning
 #
 # Required Permissions:
 #   contents: read         # Read Containerfile and context
@@ -62,7 +62,7 @@
 #   attestations: write    # Attach SBOM attestation
 #   actions: read          # Read workflow for provenance
 #   security-events: write # Upload SARIF (only required when running without
-#                            SARIF_UPLOAD_TOKEN; the script falls back to the
+#                            CODE_SCANNING_TOKEN; the script falls back to the
 #                            github/codeql-action upload path)
 #
 # Outputs:
@@ -201,7 +201,7 @@ on:
       registry-password:
         description: "Registry password/token (required when use-ci-token=false)"
         required: false
-      SARIF_UPLOAD_TOKEN:
+      CODE_SCANNING_TOKEN:
         description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
         required: false
     outputs:
@@ -325,7 +325,7 @@ jobs:
       attestations: write # Required for SBOM attestation
       actions: read # Required for SLSA provenance v2
     env:
-      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
     steps:
       - name: Harden GitHub runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

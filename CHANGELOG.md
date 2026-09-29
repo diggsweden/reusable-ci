@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking:** align secret names with `main-golang`: `RELEASE_TOKEN`, `RELEASE_GPG_PRIVATE_KEY`, `RELEASE_GPG_PASSPHRASE`, `RELEASE_GPG_PUBLIC_KEY`, `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, and `CODE_SCANNING_TOKEN`. Previous names have no aliases or runtime fallbacks. Update caller mappings, secret configuration, and direct-script environments before upgrading; see [Canonical Secret Names](docs/reference.md#canonical-secret-names-breaking-change).
+- New consumers must use explicit secret mappings; updated examples pin a workflow revision that declares the accepted secrets. See [Passing Secrets](docs/reference.md#passing-secrets) for compatible versions and migration guidance.
+
+### Deprecated
+
+- Caller-side `secrets: inherit` remains supported during the current major version, but support ends with the next major release. Migrate before upgrading to that release. The existing OpenGrep rule can still fail on unsuppressed inheritance during the transition; the migration guide includes a targeted temporary suppression requiring the counting fix below.
+
+### Fixed
+
+- OpenGrep summary counts and failure thresholds exclude `nosemgrep`-suppressed findings, including when SARIF output retains them in JSON. Active findings are counted structurally rather than by matching JSON text.
+
 ## [2.8.3] - 2026-05-06
 
 ### Fixed

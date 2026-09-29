@@ -43,7 +43,7 @@ on:
         default: "main"
         type: string
     secrets:
-      SARIF_UPLOAD_TOKEN:
+      CODE_SCANNING_TOKEN:
         description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
         required: false
 permissions:
@@ -118,7 +118,7 @@ jobs:
         if: hashFiles('results.sarif') != ''
         continue-on-error: true
         env:
-          SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+          CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
           SARIF_FILE: results.sarif
           SARIF_CATEGORY: scorecard
         run: bash .github-shared/scripts/security/upload-sarif.sh

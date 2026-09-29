@@ -65,7 +65,7 @@ teardown() {
   assert_summary_contains 'Passed with `0` findings.'
   assert_summary_contains "| Security / Code Scanning | SARIF generated, upload not configured |"
   assert_summary_contains "test-owner/test-repo/actions/runs/12345"
-  assert_summary_contains 'Configure SARIF_UPLOAD_TOKEN to publish results in Security / Code Scanning.'
+  assert_summary_contains 'Configure CODE_SCANNING_TOKEN to publish results in Security / Code Scanning.'
   run get_github_output "opengrep-result"
   assert_output "success"
 }
@@ -85,10 +85,9 @@ teardown() {
   assert_output "failure"
 }
 
-@test "ignores nosemgrep-suppressed findings when checking threshold" {
+@test "ignores suppressed errors but still counts active warnings" {
   export OPENGREP_FAIL_ON_SEVERITY="high"
-  export OPENGREP_TEST_JSON='{"version":"1.18.0","results":[{"check_id":"rule.error","extra":{"severity":"ERROR","is_ignored":true}},{"check_id":"rule.warning","extra":{"severity":"WARNING","is_ignored":false}}],"errors":[]}'
-  export OPENGREP_TEST_TEXT='suppressed finding'
+  export OPENGREP_TEST_JSON='{"results":[{"check_id":"rule.error","extra":{"severity":"ERROR","is_ignored":true}},{"check_id":"rule.warning","extra":{"severity":"WARNING","is_ignored":false}}]}'
 
   run_script "security/run-opengrep.sh"
 
@@ -98,4 +97,59 @@ teardown() {
   assert_summary_contains "| WARNING | 1 |"
   run get_github_output "opengrep-result"
   assert_output "success"
+}
+
+@test "only suppressed findings pass even the low threshold" {
+  export OPENGREP_FAIL_ON_SEVERITY="low"
+  export OPENGREP_TEST_JSON='{"results":[{"check_id":"rule.error","extra":{"severity":"ERROR","is_ignored":true}},{"check_id":"rule.warning","extra":{"severity":"WARNING","is_ignored":true}},{"check_id":"rule.info","extra":{"severity":"INFO","is_ignored":true}}]}'
+
+  run_script "security/run-opengrep.sh"
+
+  assert_success
+  assert_summary_contains 'Passed with `0` findings.'
+  run get_github_output "opengrep-findings-total"
+  assert_output "0"
+  # Keep the original report for auditing; only counts and gating are filtered.
+  run jq '.results | length' "$TEST_DIR/opengrep-results.json"
+  assert_output "3"
+}
+
+@test "active errors still fail with formatted JSON and suppressed findings" {
+  export OPENGREP_FAIL_ON_SEVERITY="high"
+  export OPENGREP_TEST_JSON='{
+    "results": [
+      {"check_id": "ignored", "extra": {"severity": "ERROR", "is_ignored": true}},
+      {"check_id": "active", "extra": {"severity": "ERROR"}}
+    ]
+  }'
+
+  run_script "security/run-opengrep.sh"
+
+  assert_failure
+  assert_summary_contains "| Findings | 1 |"
+  assert_summary_contains "| ERROR | 1 |"
+  run get_github_output "opengrep-result"
+  assert_output "failure"
+}
+
+@test "metadata that resembles a finding is not counted" {
+  export OPENGREP_FAIL_ON_SEVERITY="high"
+  export OPENGREP_TEST_JSON='{"results":[{"check_id":"rule.info","extra":{"severity":"INFO","metadata":{"check_id":"example","severity":"ERROR"}}}]}'
+
+  run_script "security/run-opengrep.sh"
+
+  assert_success
+  assert_summary_contains "| Findings | 1 |"
+  assert_summary_contains "| ERROR | 0 |"
+  assert_summary_contains "| INFO | 1 |"
+}
+
+@test "invalid JSON cannot report a successful scan" {
+  export OPENGREP_TEST_JSON='not JSON'
+
+  run_script "security/run-opengrep.sh"
+
+  assert_failure
+  run get_github_output "opengrep-result"
+  refute_output "success"
 }

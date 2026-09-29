@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: CC0-1.0
 # Description:
 # Runs OpenGrep SAST, emits portable JSON/SARIF/GitLab SAST outputs, and
-# uploads SARIF to GitHub Code Scanning when SARIF_UPLOAD_TOKEN is configured.
+# uploads SARIF to GitHub Code Scanning when CODE_SCANNING_TOKEN is configured.
 name: Analyze OpenGrep SAST
 on:
   workflow_call:
@@ -24,7 +24,7 @@ on:
         default: "main"
         type: string
     secrets:
-      SARIF_UPLOAD_TOKEN:
+      CODE_SCANNING_TOKEN:
         description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
         required: false
 permissions:
@@ -53,7 +53,7 @@ jobs:
         env:
           OPENGREP_CONFIG: ${{ inputs['opengrep-rules'] }}
           OPENGREP_FAIL_ON_SEVERITY: ${{ inputs['fail-on-severity'] }}
-          HAS_SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN != '' }}
+          HAS_CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN != '' }}
         run: bash .github-shared/scripts/security/run-opengrep.sh
       - name: Enrich OpenGrep SARIF for GitHub
         if: always() && hashFiles('opengrep-results.sarif') != ''
@@ -110,7 +110,7 @@ jobs:
         if: hashFiles('opengrep-results.sarif') != ''
         continue-on-error: true
         env:
-          SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+          CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
           SARIF_FILE: opengrep-results.sarif
           SARIF_CATEGORY: opengrep-sast
         run: bash .github-shared/scripts/security/upload-sarif.sh

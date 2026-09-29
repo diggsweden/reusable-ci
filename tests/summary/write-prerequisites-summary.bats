@@ -255,19 +255,19 @@ set_standard_env() {
 
   assert_success
   run get_summary
-  assert_output --partial "RELEASE_BOT_TOKEN"
+  assert_output --partial "RELEASE_TOKEN"
   assert_output --partial "Missing"
 }
 
 @test "write-prerequisites-summary shows available release bot token" {
   set_standard_env
-  export HAS_RELEASE_BOT_TOKEN="true"
+  export HAS_RELEASE_TOKEN="true"
 
   run_write_prerequisites_summary
 
   assert_success
   run get_summary
-  assert_output --partial "RELEASE_BOT_TOKEN"
+  assert_output --partial "| RELEASE_TOKEN | Push commits & releases | ✓ Available |"
   assert_output --partial "Available"
 }
 
@@ -279,8 +279,8 @@ set_standard_env() {
 
   assert_success
   run get_summary
-  assert_output --partial "OSPO_BOT_GPG_PRIV"
-  assert_output --partial "OSPO_BOT_GPG_PASS"
+  assert_output --partial "RELEASE_GPG_PRIVATE_KEY"
+  assert_output --partial "RELEASE_GPG_PASSPHRASE"
 }
 
 # =============================================================================
@@ -424,7 +424,7 @@ set_standard_env() {
   assert_success
   run get_summary
   assert_output --partial "Maven Central"
-  assert_output --partial "MAVENCENTRAL_USERNAME"
+  assert_output --partial "MAVEN_CENTRAL_USERNAME"
 }
 
 @test "write-prerequisites-summary checks NPM credentials" {

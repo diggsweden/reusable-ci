@@ -18,13 +18,13 @@
 #   PUBLISH_TO           - Publish target (maven-central, npmjs, github-packages)
 #
 # Boolean secret availability flags (true/false):
-#   HAS_GPG_PRIV              - Whether OSPO_BOT_GPG_PRIV secret exists
-#   HAS_GPG_PASS              - Whether OSPO_BOT_GPG_PASS secret exists
-#   HAS_RELEASE_BOT_TOKEN     - Whether RELEASE_BOT_TOKEN secret exists
-#   HAS_GPG_PUB               - Whether OSPO_BOT_GPG_PUB secret exists
-#   HAS_MAVENCENTRAL_USERNAME - Whether MAVENCENTRAL_USERNAME secret exists
-#   HAS_MAVENCENTRAL_PASSWORD - Whether MAVENCENTRAL_PASSWORD secret exists
-#   HAS_NPM_TOKEN             - Whether NPM_TOKEN secret exists
+#   HAS_RELEASE_GPG_PRIVATE_KEY - Whether RELEASE_GPG_PRIVATE_KEY secret exists
+#   HAS_RELEASE_GPG_PASSPHRASE  - Whether RELEASE_GPG_PASSPHRASE secret exists
+#   HAS_RELEASE_TOKEN           - Whether RELEASE_TOKEN secret exists
+#   HAS_RELEASE_GPG_PUBLIC_KEY  - Whether RELEASE_GPG_PUBLIC_KEY secret exists
+#   HAS_MAVEN_CENTRAL_USERNAME  - Whether MAVEN_CENTRAL_USERNAME secret exists
+#   HAS_MAVEN_CENTRAL_PASSWORD  - Whether MAVEN_CENTRAL_PASSWORD secret exists
+#   HAS_NPM_TOKEN               - Whether NPM_TOKEN secret exists
 
 set -euo pipefail
 
@@ -45,12 +45,12 @@ JOB_STATUS="${JOB_STATUS:-}"
 PUBLISH_TO="${PUBLISH_TO:-}"
 
 # Boolean secret availability flags
-HAS_GPG_PRIV="${HAS_GPG_PRIV:-false}"
-HAS_GPG_PASS="${HAS_GPG_PASS:-false}"
-HAS_RELEASE_BOT_TOKEN="${HAS_RELEASE_BOT_TOKEN:-false}"
-HAS_GPG_PUB="${HAS_GPG_PUB:-false}"
-HAS_MAVENCENTRAL_USERNAME="${HAS_MAVENCENTRAL_USERNAME:-false}"
-HAS_MAVENCENTRAL_PASSWORD="${HAS_MAVENCENTRAL_PASSWORD:-false}"
+HAS_RELEASE_GPG_PRIVATE_KEY="${HAS_RELEASE_GPG_PRIVATE_KEY:-false}"
+HAS_RELEASE_GPG_PASSPHRASE="${HAS_RELEASE_GPG_PASSPHRASE:-false}"
+HAS_RELEASE_TOKEN="${HAS_RELEASE_TOKEN:-false}"
+HAS_RELEASE_GPG_PUBLIC_KEY="${HAS_RELEASE_GPG_PUBLIC_KEY:-false}"
+HAS_MAVEN_CENTRAL_USERNAME="${HAS_MAVEN_CENTRAL_USERNAME:-false}"
+HAS_MAVEN_CENTRAL_PASSWORD="${HAS_MAVEN_CENTRAL_PASSWORD:-false}"
 HAS_NPM_TOKEN="${HAS_NPM_TOKEN:-false}"
 
 summary() {
@@ -160,20 +160,20 @@ generate_secrets_status() {
   summary "|--------|---------|--------|"
 
   if [[ "$SIGN_ARTIFACTS" = "true" ]]; then
-    secret_row "OSPO_BOT_GPG_PRIV" "Sign commits/artifacts" "$HAS_GPG_PRIV"
-    secret_row "OSPO_BOT_GPG_PASS" "GPG passphrase" "$HAS_GPG_PASS"
+    secret_row "RELEASE_GPG_PRIVATE_KEY" "Sign commits/artifacts" "$HAS_RELEASE_GPG_PRIVATE_KEY"
+    secret_row "RELEASE_GPG_PASSPHRASE" "GPG passphrase" "$HAS_RELEASE_GPG_PASSPHRASE"
   fi
 
-  secret_row "RELEASE_BOT_TOKEN" "Push commits & releases" "$HAS_RELEASE_BOT_TOKEN"
+  secret_row "RELEASE_TOKEN" "Push commits & releases" "$HAS_RELEASE_TOKEN"
 
   if [[ "$SIGN_ARTIFACTS" = "true" ]]; then
-    secret_row "OSPO_BOT_GPG_PUB" "GPG verification" "$HAS_GPG_PUB"
+    secret_row "RELEASE_GPG_PUBLIC_KEY" "GPG verification" "$HAS_RELEASE_GPG_PUBLIC_KEY"
   fi
 
   if [[ -n "$PUBLISH_TO" ]]; then
     if printf "%s" "$PUBLISH_TO" | grep -q "maven-central"; then
-      secret_row "MAVENCENTRAL_USERNAME" "Maven Central auth" "$HAS_MAVENCENTRAL_USERNAME"
-      secret_row "MAVENCENTRAL_PASSWORD" "Maven Central auth" "$HAS_MAVENCENTRAL_PASSWORD"
+      secret_row "MAVEN_CENTRAL_USERNAME" "Maven Central auth" "$HAS_MAVEN_CENTRAL_USERNAME"
+      secret_row "MAVEN_CENTRAL_PASSWORD" "Maven Central auth" "$HAS_MAVEN_CENTRAL_PASSWORD"
     fi
 
     if printf "%s" "$PUBLISH_TO" | grep -q "npmjs"; then
@@ -223,15 +223,15 @@ generate_validation_results() {
     validation_row "User Authorization" "− Skip" "SNAPSHOT release"
   fi
 
-  if [[ "$HAS_RELEASE_BOT_TOKEN" == "true" ]]; then
+  if [[ "$HAS_RELEASE_TOKEN" == "true" ]]; then
     validation_row "Release Bot Token" "✓ Pass" "Valid GitHub token"
   else
-    validation_row "Release Bot Token" "✗ Fail" "Missing RELEASE_BOT_TOKEN"
+    validation_row "Release Bot Token" "✗ Fail" "Missing RELEASE_TOKEN"
   fi
 
   if [[ -n "$PUBLISH_TO" ]]; then
     if printf "%s" "$PUBLISH_TO" | grep -q "maven-central"; then
-      if [[ "$HAS_MAVENCENTRAL_USERNAME" == "true" ]]; then
+      if [[ "$HAS_MAVEN_CENTRAL_USERNAME" == "true" ]]; then
         validation_row "Maven Central" "✓ Pass" "Credentials configured"
       else
         validation_row "Maven Central" "✗ Fail" "Missing credentials"

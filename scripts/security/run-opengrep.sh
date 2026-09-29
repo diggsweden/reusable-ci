@@ -63,9 +63,8 @@ build_config_args() {
   fi
 }
 
-# Count findings in the OpenGrep JSON output, optionally filtered by severity.
-# Findings suppressed with nosemgrep are kept in the output (is_ignored: true)
-# when SARIF output is also requested, so they are skipped here.
+# SARIF output keeps nosemgrep-suppressed findings in the shared JSON results.
+# Count only active findings for summaries and the failure threshold.
 count_findings() {
   local file="$1"
   local severity="${2:-}"
@@ -73,10 +72,10 @@ count_findings() {
 
   if [[ -f "$file" ]]; then
     # shellcheck disable=SC2016 # $severity is a jq variable, not shell
-    count="$(jq --arg severity "$severity" \
+    count="$(jq -e --arg severity "$severity" \
       '[.results[]? | select(.extra.is_ignored != true)
         | select($severity == "" or .extra.severity == $severity)] | length' \
-      "$file")"
+      "$file")" || return 1
   fi
 
   printf '%s' "${count:-0}"
@@ -108,7 +107,7 @@ has_findings_meeting_threshold() {
 code_scanning_label() {
   case "${CI_PLATFORM:-local}" in
   github)
-    if [[ "${HAS_SARIF_UPLOAD_TOKEN:-false}" == "true" || -n "${SARIF_UPLOAD_TOKEN:-}" ]]; then
+    if [[ "${HAS_CODE_SCANNING_TOKEN:-false}" == "true" || -n "${CODE_SCANNING_TOKEN:-}" ]]; then
       printf 'SARIF generated, upload configured'
     else
       printf 'SARIF generated, upload not configured'
@@ -138,10 +137,10 @@ artifacts_label() {
 code_scanning_note() {
   case "${CI_PLATFORM:-local}" in
   github)
-    if [[ "${HAS_SARIF_UPLOAD_TOKEN:-false}" == "true" || -n "${SARIF_UPLOAD_TOKEN:-}" ]]; then
+    if [[ "${HAS_CODE_SCANNING_TOKEN:-false}" == "true" || -n "${CODE_SCANNING_TOKEN:-}" ]]; then
       printf 'SARIF will be uploaded to Security / Code Scanning after the scan step completes.'
     else
-      printf 'SARIF is still generated and saved as a workflow artifact. Configure SARIF_UPLOAD_TOKEN to publish results in Security / Code Scanning.'
+      printf 'SARIF is still generated and saved as a workflow artifact. Configure CODE_SCANNING_TOKEN to publish results in Security / Code Scanning.'
     fi
     ;;
   gitlab)

@@ -41,13 +41,13 @@ name: Bump Version
 on:
   workflow_call: # yamllint disable-line rule:truthy
     secrets:
-      OSPO_BOT_GPG_PASS:
-        description: "Passphrase for OSPO_BOT_GPG_PRIV"
+      RELEASE_GPG_PASSPHRASE:
+        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
         required: false
-      OSPO_BOT_GPG_PRIV:
+      RELEASE_GPG_PRIVATE_KEY:
         description: "GPG private key used to sign tags, commits and release artifacts"
         required: false
-      RELEASE_BOT_TOKEN:
+      RELEASE_TOKEN:
         description: "Token used to create GitHub releases and push release commits"
         required: false
     outputs:
@@ -158,7 +158,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.branch }}
-          token: ${{ secrets.RELEASE_BOT_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN }}
       - name: Checkout .github repository for scripts
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -170,8 +170,8 @@ jobs:
         id: import-gpg
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
         with:
-          gpg_private_key: ${{ secrets.OSPO_BOT_GPG_PRIV }}
-          passphrase: ${{ secrets.OSPO_BOT_GPG_PASS }}
+          gpg_private_key: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
           git_user_signingkey: true
           git_commit_gpgsign: true
           git_config_global: true

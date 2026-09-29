@@ -20,8 +20,8 @@ teardown() {
 }
 
 @test "validate-mavencentral-credentials succeeds when both secrets are set" {
-  export MAVENCENTRAL_USERNAME="user"
-  export MAVENCENTRAL_PASSWORD="pass"
+  export MAVEN_CENTRAL_USERNAME="user"
+  export MAVEN_CENTRAL_PASSWORD="pass"
 
   run_script "validate/mavencentral-credentials.sh"
 
@@ -30,21 +30,32 @@ teardown() {
 }
 
 @test "validate-mavencentral-credentials fails when username is missing" {
-  export MAVENCENTRAL_USERNAME=""
-  export MAVENCENTRAL_PASSWORD="pass"
+  export MAVEN_CENTRAL_USERNAME=""
+  export MAVEN_CENTRAL_PASSWORD="pass"
 
   run_script "validate/mavencentral-credentials.sh"
 
   assert_failure
-  assert_output --partial "Missing MAVENCENTRAL_USERNAME secret"
+  assert_output --partial "Missing MAVEN_CENTRAL_USERNAME secret"
 }
 
 @test "validate-mavencentral-credentials fails when password is missing" {
-  export MAVENCENTRAL_USERNAME="user"
-  export MAVENCENTRAL_PASSWORD=""
+  export MAVEN_CENTRAL_USERNAME="user"
+  export MAVEN_CENTRAL_PASSWORD=""
 
   run_script "validate/mavencentral-credentials.sh"
 
   assert_failure
-  assert_output --partial "Missing MAVENCENTRAL_PASSWORD secret"
+  assert_output --partial "Missing MAVEN_CENTRAL_PASSWORD secret"
+}
+
+@test "validate-mavencentral-credentials does not fall back to retired names" {
+  unset MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD
+  export MAVENCENTRAL_USERNAME="legacy-user"
+  export MAVENCENTRAL_PASSWORD="legacy-password"
+
+  run_script "validate/mavencentral-credentials.sh"
+
+  assert_failure
+  assert_output --partial "Missing MAVEN_CENTRAL_USERNAME secret"
 }

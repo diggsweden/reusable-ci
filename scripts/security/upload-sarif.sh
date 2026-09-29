@@ -16,7 +16,7 @@
 #
 # Environment variables (required):
 #   SARIF_FILE            Path to the SARIF file to upload
-#   SARIF_UPLOAD_TOKEN    Token with code_scanning_alerts:write (skips gracefully if empty)
+#   CODE_SCANNING_TOKEN  Token with code_scanning_alerts:write (skips gracefully if empty)
 #   GITHUB_REPOSITORY     owner/repo (set automatically by GitHub Actions)
 #   GITHUB_SHA            Commit SHA (set automatically by GitHub Actions)
 #   GITHUB_REF            Full git ref, e.g. refs/heads/main (set automatically by GitHub Actions)
@@ -51,8 +51,8 @@ _log_error() {
 # Validation
 # =============================================================================
 
-if [[ -z "${SARIF_UPLOAD_TOKEN:-}" ]]; then
-  _log_notice "SARIF upload to Code Scanning skipped — SARIF_UPLOAD_TOKEN secret is not configured"
+if [[ -z "${CODE_SCANNING_TOKEN:-}" ]]; then
+  _log_notice "SARIF upload to Code Scanning skipped — CODE_SCANNING_TOKEN secret is not configured"
   exit 0
 fi
 
@@ -109,7 +109,7 @@ response="$(gzip -c "$SARIF_FILE" | base64 | tr -d '\n' |
     ${SARIF_CATEGORY:+--arg tool "$SARIF_CATEGORY"} \
     '. as $sarif | '"$jq_filter" |
   curl -s -w "\n%{http_code}" -X POST \
-    -H "Authorization: token ${SARIF_UPLOAD_TOKEN}" \
+    -H "Authorization: token ${CODE_SCANNING_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
     "${API_URL}/repos/${GITHUB_REPOSITORY}/code-scanning/sarifs" \
     -d @-)"

@@ -1,5 +1,20 @@
 # TODO
 
+## Secret mapping migration release pins
+
+Before publishing, repin the migration examples and their helper-script refs to a
+published revision containing both secret declarations and the OpenGrep counting
+fix. The current declaration pin predates the counting fix. Follow
+[release preparation](docs/DEVELOPMENT.md#secret-mapping-migration-release-preparation).
+
+## Gradle Maven Central publishing example
+
+The Gradle example requests `build publish`, but the Gradle builder does not
+receive Maven Central credentials. The separate Maven Central publisher is gated
+on the Maven build result and downloads Maven artifacts. Resolve and exercise the
+Gradle publishing path before describing that example as a complete Maven Central
+release setup; explicit caller secret mappings alone do not fix it.
+
 ## Multi-artifact version-bump race condition
 
 The `execute-version-bump` job in `release-prepare-stage.yml` uses a matrix strategy.

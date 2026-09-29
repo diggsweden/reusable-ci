@@ -12,7 +12,7 @@ main() {
   printf "Validating bot token permissions...\n"
 
   if ! gh api user --silent 2>/dev/null; then
-    ci_log_error "RELEASE_BOT_TOKEN is invalid or expired"
+    ci_log_error "RELEASE_TOKEN is invalid or expired"
     exit 1
   fi
 

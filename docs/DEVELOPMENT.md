@@ -101,3 +101,16 @@ When changing workflows or workflow helper scripts:
 4. Parse workflow YAML and check reusable-workflow input compatibility.
 5. Run `bash -n` for touched helper scripts.
 6. Add or update Bats tests when helper scripts are added or changed.
+
+## Secret Mapping Migration Release Preparation
+
+The supported caller contract requires new integrations to use explicit secret mappings. Existing `secrets: inherit` callers remain supported during the current major version; support ends with the next major release.
+
+Before publishing the migration release:
+
+1. Commit and make available a revision containing both the callable secret declarations and the OpenGrep suppression-counting fix.
+2. Update the migration examples in `README.md`, `examples/`, and the reference/publishing guides so `uses:` and `reusable-ci-ref` select that same revision. The current `73d5d61ddca95f965193ce7a57bdeb7a3ae10899` pin contains the declarations only, so it is not a complete upgrade target for consumers using temporary suppressions.
+3. Update [Passing Secrets](reference.md#passing-secrets) with that upgrade target, keeping the next-major deadline and the temporary suppression instructions together.
+4. Validate the pinned examples against the called workflows' accepted inputs and secrets. Verify the scanner accepts explicit mappings and targeted suppressions while still reporting unsuppressed inheritance. Exercise secret forwarding with representative consumer PR and release runs, including optional secrets being absent.
+
+Before publishing the next major release, make explicit mappings a requirement in its breaking-change notes. GitHub's native `inherit` syntax is not disabled by named secret declarations; any additional enforcement must be explicit and must not be backported as a current-major compatibility break.

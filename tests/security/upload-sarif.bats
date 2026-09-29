@@ -52,8 +52,8 @@ run_upload_sarif() {
 # Tests: Token not set
 # =============================================================================
 
-@test "skips upload when SARIF_UPLOAD_TOKEN is empty" {
-  unset SARIF_UPLOAD_TOKEN
+@test "skips upload when CODE_SCANNING_TOKEN is unset" {
+  unset CODE_SCANNING_TOKEN
 
   run_upload_sarif
 
@@ -61,13 +61,25 @@ run_upload_sarif() {
   assert_output --partial "SARIF upload to Code Scanning skipped"
 }
 
-@test "skips upload when SARIF_UPLOAD_TOKEN is unset" {
-  export SARIF_UPLOAD_TOKEN=""
+@test "skips upload when CODE_SCANNING_TOKEN is empty" {
+  export CODE_SCANNING_TOKEN=""
 
   run_upload_sarif
 
   assert_success
   assert_output --partial "SARIF upload to Code Scanning skipped"
+}
+
+@test "does not upload using the retired token name" {
+  unset CODE_SCANNING_TOKEN
+  export SARIF_UPLOAD_TOKEN="legacy-token"
+  create_mock_binary "curl" 'exit 99'
+  use_mock_path
+
+  run_upload_sarif
+
+  assert_success
+  assert_output --partial "CODE_SCANNING_TOKEN secret is not configured"
 }
 
 # =============================================================================
@@ -75,7 +87,7 @@ run_upload_sarif() {
 # =============================================================================
 
 @test "fails when SARIF_FILE is empty" {
-  export SARIF_UPLOAD_TOKEN="test-token"
+  export CODE_SCANNING_TOKEN="test-token"
   export SARIF_FILE=""
 
   run_upload_sarif
@@ -85,7 +97,7 @@ run_upload_sarif() {
 }
 
 @test "skips when SARIF file does not exist" {
-  export SARIF_UPLOAD_TOKEN="test-token"
+  export CODE_SCANNING_TOKEN="test-token"
   export SARIF_FILE="$TEST_DIR/nonexistent.sarif"
 
   run_upload_sarif
@@ -95,7 +107,7 @@ run_upload_sarif() {
 }
 
 @test "fails when GITHUB_REPOSITORY is empty" {
-  export SARIF_UPLOAD_TOKEN="test-token"
+  export CODE_SCANNING_TOKEN="test-token"
   export GITHUB_REPOSITORY=""
 
   run_upload_sarif
@@ -105,7 +117,7 @@ run_upload_sarif() {
 }
 
 @test "fails when GITHUB_SHA is empty" {
-  export SARIF_UPLOAD_TOKEN="test-token"
+  export CODE_SCANNING_TOKEN="test-token"
   export GITHUB_SHA=""
 
   run_upload_sarif
@@ -115,7 +127,7 @@ run_upload_sarif() {
 }
 
 @test "fails when GITHUB_REF is empty" {
-  export SARIF_UPLOAD_TOKEN="test-token"
+  export CODE_SCANNING_TOKEN="test-token"
   export GITHUB_REF=""
 
   run_upload_sarif
@@ -129,11 +141,12 @@ run_upload_sarif() {
 # =============================================================================
 
 @test "uploads SARIF when token and file are present" {
-  export SARIF_UPLOAD_TOKEN="test-token"
+  export CODE_SCANNING_TOKEN="test-token"
   export GITHUB_API_URL="http://localhost:9999"
 
   # Stub curl to capture stdin payload and simulate 202 Accepted
   create_mock_binary "curl" '
+    [[ "$*" == *"Authorization: token test-token"* ]] || exit 1
     payload="$(cat)"
     printf "%s" "$payload" > '"$TEST_DIR"'/captured-payload.json
     printf "ok\n202"
@@ -159,7 +172,7 @@ run_upload_sarif() {
 }
 
 @test "includes tool_name when SARIF_CATEGORY is set" {
-  export SARIF_UPLOAD_TOKEN="test-token"
+  export CODE_SCANNING_TOKEN="test-token"
   export SARIF_CATEGORY="opengrep-sast"
   export GITHUB_API_URL="http://localhost:9999"
 
@@ -181,7 +194,7 @@ run_upload_sarif() {
 }
 
 @test "handles large SARIF files without ARG_MAX errors" {
-  export SARIF_UPLOAD_TOKEN="test-token"
+  export CODE_SCANNING_TOKEN="test-token"
   export GITHUB_API_URL="http://localhost:9999"
 
   # Generate a non-trivial SARIF to verify the stdin-piping approach works.
@@ -203,7 +216,7 @@ print(json.dumps({'version': '2.1.0', 'runs': runs}))
 }
 
 @test "fails on non-2xx response" {
-  export SARIF_UPLOAD_TOKEN="test-token"
+  export CODE_SCANNING_TOKEN="test-token"
   export GITHUB_API_URL="http://localhost:9999"
 
   # Stub curl to simulate 401 Unauthorized
@@ -221,7 +234,7 @@ print(json.dumps({'version': '2.1.0', 'runs': runs}))
 # =============================================================================
 
 @test "uses GitHub Actions annotation when GITHUB_ACTIONS is true" {
-  unset SARIF_UPLOAD_TOKEN
+  unset CODE_SCANNING_TOKEN
   export GITHUB_ACTIONS="true"
 
   run_upload_sarif
@@ -231,7 +244,7 @@ print(json.dumps({'version': '2.1.0', 'runs': runs}))
 }
 
 @test "uses plain text when not in GitHub Actions" {
-  unset SARIF_UPLOAD_TOKEN
+  unset CODE_SCANNING_TOKEN
   unset GITHUB_ACTIONS
 
   run_upload_sarif

@@ -32,7 +32,7 @@ on:
         default: "main"
         type: string
     secrets:
-      SARIF_UPLOAD_TOKEN:
+      CODE_SCANNING_TOKEN:
         description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
         required: false
 permissions:
@@ -103,7 +103,7 @@ jobs:
         if: hashFiles('trivy-dependency-results.sarif') != ''
         continue-on-error: true
         env:
-          SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+          CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
           SARIF_FILE: trivy-dependency-results.sarif
           SARIF_CATEGORY: dependency-review
         run: bash .github-shared/scripts/security/upload-sarif.sh

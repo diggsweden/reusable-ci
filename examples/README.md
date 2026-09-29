@@ -103,6 +103,15 @@ Complete working examples for different project types.
 
 ## Quick Start
 
+> [!WARNING]
+> New integrations must use explicit secret mappings. Existing `secrets: inherit` callers remain supported during the current major version; migrate before upgrading to the next major release. See [Passing Secrets](../docs/reference.md#passing-secrets) for compatibility and temporary suppression guidance. Bare inheritance can still fail scanning today.
+
+The updated workflow files pin `uses:` and `reusable-ci-ref` to the commit that introduces explicit secret declarations. Older releases may not accept these mappings. Move both refs together when adopting a release containing the change.
+
+Map only the secrets your chosen configuration needs. PR examples map the optional `CODE_SCANNING_TOKEN`; omit that block when uploads are not needed. Release examples map signing and publishing credentials for their ecosystem. `GITHUB_TOKEN` is automatic. The [canonical secret-name migration](../docs/reference.md#canonical-secret-names-breaking-change) is a breaking change with no aliases; update old caller names before adopting this revision.
+
+For an existing integration, migrate its secret block rather than replacing the entire workflow with an example. The Cargo PR example uses caller-configured Rust checks because the pinned orchestrator does not expose Rust-specific linter inputs. The custom-registry examples in the publishing guide demonstrate the standalone container publisher, not a replacement for a complete release chain.
+
 ### Using an Example
 
 1. **Navigate to example directory:**
@@ -162,8 +171,9 @@ artifacts:
 
 **Requirements:**
 - Sonatype account
-- MAVENCENTRAL_USERNAME secret
-- MAVENCENTRAL_PASSWORD secret
+- MAVEN_CENTRAL_USERNAME secret
+- MAVEN_CENTRAL_PASSWORD secret
+- Map `MAVEN_CENTRAL_USERNAME` and `MAVEN_CENTRAL_PASSWORD` in the caller's `secrets:` block, alongside the signing secrets (see the [monorepo release workflow](monorepo/release-workflow.yml)).
 
 See [Publishing Guide](../docs/publishing.md#maven-central) for setup.
 
@@ -183,6 +193,7 @@ artifacts:
 **Requirements:**
 - npmjs.org account
 - NPM_TOKEN secret
+- Map `NPM_TOKEN: ${{ secrets.NPM_TOKEN }}` in the caller's `secrets:` block when required by the publishing workflow.
 - Scoped package name: `@org/package`
 
 See [Publishing Guide](../docs/publishing.md#npm-registry-npmjsorg) for setup.
@@ -259,7 +270,7 @@ jobs:
     permissions:
       contents: write
       packages: write
-    secrets: inherit
+    # GHCR uses the automatic GITHUB_TOKEN; no custom secrets are needed.
 ```
 
 Push to test branch:

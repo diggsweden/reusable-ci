@@ -14,7 +14,7 @@ source "$SCRIPT_DIR/../ci/output.sh"
 main() {
   local TAG_NAME="${1:-}"
   local repository="${2:-}"
-  local OSPO_BOT_GPG_PUB="${3:-}"
+  local RELEASE_GPG_PUBLIC_KEY="${3:-}"
 
   if [[ -z "$TAG_NAME" ]]; then
     ci_log_error "Usage: tag-signature.sh <tag-name> <github-repository>"
@@ -73,8 +73,8 @@ main() {
   # Try to verify the signature (might fail if we don't have the key)
   if [[ "$HAS_GPG_SIG" == "true" ]]; then
     # Import GPG keys for verification (if available)
-    if [[ -n "$OSPO_BOT_GPG_PUB" ]]; then
-      printf "%s" "$OSPO_BOT_GPG_PUB" | gpg --import 2>/dev/null || true
+    if [[ -n "$RELEASE_GPG_PUBLIC_KEY" ]]; then
+      printf "%s" "$RELEASE_GPG_PUBLIC_KEY" | gpg --import 2>/dev/null || true
     fi
 
     if git tag -v "$TAG_NAME" 2>/dev/null; then

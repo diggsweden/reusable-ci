@@ -192,8 +192,8 @@ If you need custom repository configuration:
   <servers>
     <server>
       <id>central</id>
-      <username>${env.MAVENCENTRAL_USERNAME}</username>
-      <password>${env.MAVENCENTRAL_PASSWORD}</password>
+      <username>${env.MAVEN_CENTRAL_USERNAME}</username>
+      <password>${env.MAVEN_CENTRAL_PASSWORD}</password>
     </server>
   </servers>
 </settings>
@@ -429,20 +429,32 @@ podman pull ghcr.io/diggsweden/repo-name/my-app:v1.0.0
 
 1. Create Docker Hub account
 2. Generate access token
-3. Request secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`
+3. Configure repository variable `DOCKERHUB_USERNAME` and request secret `DOCKERHUB_TOKEN`.
+
+Call the container publisher directly for a custom registry. This example builds inside the Containerfile (`artifact-types: ""`). Map the registry credential explicitly; existing inheritance callers remain supported during the current major version as described in [Passing Secrets](reference.md#passing-secrets).
+
+This is a standalone container-publishing job, not a drop-in replacement for release orchestration: it does not bump versions or create a GitHub release. Existing consumers migrating secrets should keep their release jobs and change only the credential mappings. The username is a repository variable in this example because GitHub does not allow the `secrets` context in a reusable-workflow job's `with:` inputs.
 
 ```yaml
 # .github/workflows/release-workflow.yml
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      actions: read
     with:
-      reusable-ci-ref: v2.7.0
-      artifacts-config: .github/artifacts.yml
-      container.registry: docker.io
-      container.registry-username: ${{ secrets.DOCKERHUB_USERNAME }}
-      container.use-ci-token: false
-    secrets: inherit
+      reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
+      artifact-types: ""
+      registry: docker.io
+      registry-username: ${{ vars.DOCKERHUB_USERNAME }}
+      use-ci-token: false
+    secrets:
+      registry-password: ${{ secrets.DOCKERHUB_TOKEN }}
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }} # Optional Code Scanning upload
 ```
 
 **Image naming:**
@@ -453,18 +465,28 @@ docker.io/diggsweden/my-app:v1.0.0
 
 ### Custom Registry
 
+Configure repository variable `REGISTRY_USERNAME` and secret `REGISTRY_PASSWORD` for this example.
+
 ```yaml
 # .github/workflows/release-workflow.yml
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+    uses: diggsweden/reusable-ci/.github/workflows/publish-container.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      actions: read
     with:
-      reusable-ci-ref: v2.7.0
-      artifacts-config: .github/artifacts.yml
-      container.registry: registry.example.com
-      container.registry-username: ${{ secrets.REGISTRY_USERNAME }}
-      container.use-ci-token: false
-    secrets: inherit
+      reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
+      artifact-types: ""
+      registry: registry.example.com
+      registry-username: ${{ vars.REGISTRY_USERNAME }}
+      use-ci-token: false
+    secrets:
+      registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }} # Optional Code Scanning upload
 ```
 
 ---

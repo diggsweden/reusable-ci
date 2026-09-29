@@ -496,7 +496,7 @@ The v2.x `enable-sbom: bool` field on the container block is removed in v3. Cont
 - **Type:** `boolean`
 - **Description:** Run Trivy vulnerability scan
 - **Default:** `true`
-- **Requires:** `SARIF_UPLOAD_TOKEN` org secret for results to appear in Code Scanning
+- **Requires:** `CODE_SCANNING_TOKEN` org secret for results to appear in Code Scanning
 - **Example:** `enable-scan: true`
 
 #### `target`
@@ -590,8 +590,8 @@ containers:
 
 - **Description:** Maven Central (Sonatype OSSRH)
 - **Requirements:**
-  - `MAVENCENTRAL_USERNAME` secret
-  - `MAVENCENTRAL_PASSWORD` secret
+  - `MAVEN_CENTRAL_USERNAME` secret
+  - `MAVEN_CENTRAL_PASSWORD` secret
   - `build-type: library` (required)
 - **Applies to:** Maven only
 - **Note:** Requires Sonatype account and approved groupId
@@ -931,16 +931,21 @@ permissions:
 
 jobs:
   release:
-    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+    uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
     permissions:
       contents: write
       packages: write
       id-token: write
       actions: read
       attestations: write
-    secrets: inherit
+    secrets:
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+      RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }} # Optional Code Scanning upload
     with:
-      reusable-ci-ref: v2.7.0
+      reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
       artifacts-config: .github/artifacts.yml
       changelog-creator: git-cliff
       release-publisher: github-cli

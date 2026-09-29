@@ -116,6 +116,11 @@ jobs:
 
 ### For New Projects
 
+> [!WARNING]
+> New integrations must map only the secrets they need. Existing `secrets: inherit` callers remain supported during the current major version. Migrate before upgrading to the next major release. Unsuppressed inheritance can still fail OpenGrep today; see [Passing Secrets](docs/reference.md#passing-secrets) for the transition and temporary suppression.
+
+The quick-start workflows below pin the commit introducing explicit secret declarations. Keep `uses:` and `reusable-ci-ref` aligned when moving to a release containing that commit.
+
 1. **Create artifacts configuration** - Define what to build:
    ```yaml
    # .github/artifacts.yml
@@ -138,26 +143,27 @@ jobs:
      contents: read
    jobs:
       pr-checks:
-        uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+        uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
         permissions:
           contents: read
           packages: read
-        secrets: inherit  # Pass SARIF_UPLOAD_TOKEN if you want Security / Code Scanning upload
+        secrets:
+          CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }} # Optional Code Scanning upload
         with:
-          reusable-ci-ref: v2.7.0
+          reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
           project-type: maven  # or npm, gradle, gradle-android, xcode-ios
           # Recommended: Use devbase-check (lightweight, just+mise-based)
-           linters.devbasecheck: true
-           linters.commitlint: false
-           linters.licenselint: false
-           linters.megalint: false
-           # Optional linters:
-           # linters.dependencyreview: true  # Dependency vulnerability scan
-           # security.sast-opengrep: false   # Opt out of OpenGrep SAST
-           # security.sast-opengrep-rules: p/default
-           # security.sast-opengrep-fail-on-severity: high
-           # linters.publiccodelint: false   # publiccode.yml validation
-           # linters.swiftlint: false        # Swift linting for iOS/macOS
+          linters.devbasecheck: true
+          linters.commitlint: false
+          linters.licenselint: false
+          linters.megalint: false
+          # Optional linters:
+          # linters.dependencyreview: true  # Dependency vulnerability scan
+          # security.sast-opengrep: false   # Opt out of OpenGrep SAST
+          # security.sast-opengrep-rules: p/default
+          # security.sast-opengrep-fail-on-severity: high
+          # linters.publiccodelint: false   # publiccode.yml validation
+          # linters.swiftlint: false        # Swift linting for iOS/macOS
     ```
 
 3. **Create release workflow** - Trigger builds on tags:
@@ -171,15 +177,21 @@ jobs:
      contents: read
    jobs:
      release:
-       uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+       uses: diggsweden/reusable-ci/.github/workflows/release-orchestrator.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
        permissions:
          contents: write
          packages: write
          id-token: write
          actions: read
          attestations: write
-       secrets: inherit
+       secrets:
+         RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+         RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+         RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+         RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
+         CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }} # Optional Code Scanning upload
        with:
+         reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
          artifacts-config: .github/artifacts.yml
    ```
 
@@ -192,15 +204,15 @@ jobs:
        branches: ['dev/**', 'feat/**']
    permissions:
      contents: read
-    jobs:
-      dev-release:
-        uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
+   jobs:
+     dev-release:
+        uses: diggsweden/reusable-ci/.github/workflows/release-dev-orchestrator.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
         permissions:
           contents: write
           packages: write
-        secrets: inherit
+        # GHCR uses the automatic GITHUB_TOKEN; no custom secrets are needed.
         with:
-          reusable-ci-ref: v2.7.0
+          reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
           project-type: maven  # or npm, gradle, gradle-android, xcode-ios
     ```
 

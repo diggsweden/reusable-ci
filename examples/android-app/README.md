@@ -76,12 +76,19 @@ jobs:
 
 ### With Signing
 
+Map the signing secrets explicitly. Existing `secrets: inherit` callers remain supported during the current major version; migrate before upgrading to the next major release. See [Passing Secrets](../../docs/reference.md#passing-secrets) for compatible versions and migration guidance.
+
 ```yaml
 jobs:
   build:
-    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
-    secrets: inherit  # Required for signing secrets
+    uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
+    secrets:
+      ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     with:
+      reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
       java-version: "25"
       build-module: "app"
       product-flavor: "prod"

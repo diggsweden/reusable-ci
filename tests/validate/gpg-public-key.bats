@@ -26,25 +26,25 @@ run_validate_gpg_public_key() {
 }
 
 @test "validate-gpg-public-key fails when secret is not set" {
-  unset OSPO_BOT_GPG_PUB
+  unset RELEASE_GPG_PUBLIC_KEY
 
   run_validate_gpg_public_key
 
   assert_failure
-  assert_output --partial "::error::Missing OSPO_BOT_GPG_PUB secret"
+  assert_output --partial "::error::Missing RELEASE_GPG_PUBLIC_KEY secret"
 }
 
 @test "validate-gpg-public-key fails when secret is empty" {
-  export OSPO_BOT_GPG_PUB=""
+  export RELEASE_GPG_PUBLIC_KEY=""
 
   run_validate_gpg_public_key
 
   assert_failure
-  assert_output --partial "Missing OSPO_BOT_GPG_PUB secret"
+  assert_output --partial "Missing RELEASE_GPG_PUBLIC_KEY secret"
 }
 
 @test "validate-gpg-public-key shows setup instructions on failure" {
-  unset OSPO_BOT_GPG_PUB
+  unset RELEASE_GPG_PUBLIC_KEY
 
   run_validate_gpg_public_key
 
@@ -54,10 +54,20 @@ run_validate_gpg_public_key() {
 }
 
 @test "validate-gpg-public-key succeeds when secret is configured" {
-  export OSPO_BOT_GPG_PUB="-----BEGIN PGP PUBLIC KEY BLOCK-----"
+  export RELEASE_GPG_PUBLIC_KEY="-----BEGIN PGP PUBLIC KEY BLOCK-----"
 
   run_validate_gpg_public_key
 
   assert_success
   assert_output --partial "GPG public key configured"
+}
+
+@test "validate-gpg-public-key does not accept the retired secret name" {
+  unset RELEASE_GPG_PUBLIC_KEY
+  export OSPO_BOT_GPG_PUB="-----BEGIN PGP PUBLIC KEY BLOCK-----"
+
+  run_validate_gpg_public_key
+
+  assert_failure
+  assert_output --partial "Missing RELEASE_GPG_PUBLIC_KEY secret"
 }

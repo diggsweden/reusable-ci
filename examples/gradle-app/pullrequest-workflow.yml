@@ -19,13 +19,14 @@ concurrency:
 
 jobs:
   pr-checks:
-    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@72b9c326139080c9a9c91999ada2d62d19e7ee54 # v2.7.0
-    secrets: inherit
+    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
+    secrets:
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }} # Optional Code Scanning upload
     permissions:
       contents: read
       packages: read
     with:
-      reusable-ci-ref: v2.7.0
+      reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
       project-type: gradle
       # Recommended: Use devbase-check (lightweight, just+mise-based)
       linters.devbasecheck: true

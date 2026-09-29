@@ -19,25 +19,22 @@ concurrency:
 
 jobs:
   pr-checks:
-    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@v2.9.0
-    secrets: inherit
+    uses: diggsweden/reusable-ci/.github/workflows/pullrequest-orchestrator.yml@73d5d61ddca95f965193ce7a57bdeb7a3ae10899 # Explicit-secret contract
+    secrets:
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }} # Optional Code Scanning upload
     permissions:
       contents: read
       packages: read
       security-events: write
     with:
-      reusable-ci-ref: v2.9.0
+      reusable-ci-ref: 73d5d61ddca95f965193ce7a57bdeb7a3ae10899
       project-type: cargo
       linters.devbasecheck: true
       linters.commitlint: false
       linters.licenselint: false
       linters.megalint: false
-      # Rust quality gates. clippy compiles, so any native-dep crate
-      # (rdkafka, openssl-sys, libsasl, ...) needs apt packages below.
-      linters.clippy: true
-      linters.rustfmt: true
-      linters.cargoaudit: true
-      cargo.apt-packages: "cmake libsasl2-dev libzstd-dev libssl-dev pkg-config zlib1g-dev"
+      # Configure clippy, rustfmt and cargo-audit in the project's devbase-check
+      # setup or a caller-owned test job; they are not orchestrator inputs.
 
   # Workspace-level tests (testcontainers, workspace features) live in the
   # caller. sbom-cargo.yml does not run cargo test — that path is per-artefact

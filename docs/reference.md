@@ -3,12 +3,12 @@
 | Variable/Secret | Required For | When Checked | Expected Value | Notes |
 |-----------------|--------------|--------------|----------------|--------|
 | **GITHUB_TOKEN** | All workflows | Always | Valid GitHub token | Provided by GitHub Actions |
-| **RELEASE_BOT_TOKEN** | Release workflows | During release | GitHub PAT | Bot token for pushing commits, tags, and creating releases |
-| **OSPO_BOT_GPG_PUB** | GPG signing | During signing | GPG public key | Public key for verification |
-| **OSPO_BOT_GPG_PRIV** | GPG signing | During signing | Base64 GPG private key | Private key for signing |
-| **OSPO_BOT_GPG_PASS** | GPG signing | During signing | GPG key passphrase | Passphrase for GPG key |
-| **MAVENCENTRAL_USERNAME** | Maven Central publishing | During publish | Sonatype username | Maven Central auth |
-| **MAVENCENTRAL_PASSWORD** | Maven Central publishing | During publish | Sonatype password | Maven Central auth |
+| **RELEASE_TOKEN** | Release workflows | During release | GitHub PAT | Bot token for pushing commits, tags, and creating releases |
+| **RELEASE_GPG_PUBLIC_KEY** | GPG signing | During signing | GPG public key | Public key for verification |
+| **RELEASE_GPG_PRIVATE_KEY** | GPG signing | During signing | Base64 GPG private key | Private key for signing |
+| **RELEASE_GPG_PASSPHRASE** | GPG signing | During signing | GPG key passphrase | Passphrase for GPG key |
+| **MAVEN_CENTRAL_USERNAME** | Maven Central publishing | During publish | Sonatype username | Maven Central auth |
+| **MAVEN_CENTRAL_PASSWORD** | Maven Central publishing | During publish | Sonatype password | Maven Central auth |
 | **NPM_TOKEN** | NPM publishing to npmjs.org | During publish | npmjs.org auth token | NPM public registry auth (not GitHub Packages) |
 | **AUTHORIZED_RELEASE_DEVELOPERS** | Production releases | Pre-release check | Comma-separated usernames | Who can release |
 
@@ -33,7 +33,6 @@
 |----------|------------|------------|------------|
 | **PR Workflow** | `contents: read` | Read code | Cannot checkout |
 | | `packages: read` | Read private packages | Cannot fetch dependencies |
-| | `secrets: inherit` | Pass `SARIF_UPLOAD_TOKEN` | Code Scanning won't show results |
 | **Release Workflow** | `contents: write` | Create tags/releases | Cannot create release |
 | | `packages: write` | Push packages | Cannot publish artifacts |
 | | `id-token: write` | OIDC for SLSA | No attestation |
@@ -42,6 +41,73 @@
 | | `issues: write` | Update issues | Cannot add labels/comments |
 | **Dev Workflow** | `contents: read` | Read code | Cannot checkout |
 | | `packages: write` | Push images | Cannot push to ghcr.io |
+
+## Passing Secrets
+
+> [!WARNING]
+> New integrations must map the secrets they need explicitly. Existing `secrets: inherit` callers remain supported during the current major version. Support ends with the next major release: migrate before upgrading to it. This does not disable OpenGrep's `secrets-inherit` rule; an unsuppressed finding can still fail the configured scan threshold today.
+
+For PR checks, replace the caller's `secrets: inherit` line with:
+
+```yaml
+secrets:
+  CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
+```
+
+The upload token is optional. Omit this block when you do not need Code Scanning uploads; scans and report artifacts still work. `GITHUB_TOKEN` is provided automatically and does not need to be mapped.
+
+For releases, map the signing and publishing secrets needed by your configuration using the canonical names below. See the [ecosystem examples](../examples/README.md). Reusable workflows declare their accepted secrets under `on.workflow_call.secrets` and forward them explicitly to the jobs that need them. Optional declarations do not remove credential requirements for features such as signing or publishing.
+
+### Canonical Secret Names (Breaking Change)
+
+This revision aligns with `main-golang`. The previous secret names are not accepted as workflow parameters or read as runtime environment fallbacks.
+
+| Previous name | Required canonical name |
+|---------------|-------------------------|
+| `RELEASE_BOT_TOKEN` | `RELEASE_TOKEN` |
+| `OSPO_BOT_GPG_PRIV` | `RELEASE_GPG_PRIVATE_KEY` |
+| `OSPO_BOT_GPG_PASS` | `RELEASE_GPG_PASSPHRASE` |
+| `OSPO_BOT_GPG_PUB` | `RELEASE_GPG_PUBLIC_KEY` |
+| `MAVENCENTRAL_USERNAME` | `MAVEN_CENTRAL_USERNAME` |
+| `MAVENCENTRAL_PASSWORD` | `MAVEN_CENTRAL_PASSWORD` |
+| `SARIF_UPLOAD_TOKEN` | `CODE_SCANNING_TOKEN` |
+
+Update caller mappings and repository/organization secret configuration before adopting this revision. Ensure each consuming repository has access to the new names and that its GPG key, passphrase, and public key match. Custom Maven settings must use `${env.MAVEN_CENTRAL_USERNAME}` and `${env.MAVEN_CENTRAL_PASSWORD}`. Direct script users must update their environment variables too.
+
+The current-major grace period applies only to the `secrets: inherit` syntax, not to these retired names. Inherited callers must supply the canonical secrets as well. No aliases or automatic fallback to previous credentials are provided.
+
+### Compatible Workflow Versions
+
+Explicit mappings require a called workflow that declares those secrets. The updated examples pin both `uses:` and `reusable-ci-ref` to `73d5d61ddca95f965193ce7a57bdeb7a3ae10899`, the commit introducing these declarations. Use that commit or a release containing it; do not copy the new mappings onto an older workflow that does not accept them. Keep the workflow ref and helper-script ref aligned when upgrading.
+
+Once callers use the canonical names, moving from inheritance to explicit mappings only changes the `secrets:` block. No new workflow inputs are required.
+
+### Migration Before The Next Major Release
+
+| Caller | Current major version | Next major version |
+|--------|-----------------------|--------------------|
+| New integration | Explicit mappings required by the supported setup | Explicit mappings required |
+| Existing explicit mappings | Supported | Supported |
+| Existing `secrets: inherit` | Supported temporarily; scanner findings still apply | Unsupported; migrate before upgrading |
+
+1. Choose a compatible workflow version and keep `uses:` and `reusable-ci-ref` pinned to the same revision. Consumers using the temporary suppression below need a revision containing both the declarations and the counting fix.
+2. Replace `secrets: inherit` at each call site with the canonical secrets needed by that workflow. Omit the block when no custom secrets are needed. Keep workflow inputs and build/publish configuration; update any previous secret names as described above.
+3. Check the relevant PR, signing, and publishing paths with your existing credentials before adopting the next major release. Remove any temporary inheritance suppression when replacing the line.
+
+Consumers already using explicit mappings with the canonical names do not need another secrets-related migration for the inheritance deadline. Consumers staying on a pinned current-major release are not automatically upgraded when the next major is published. Pin the helper-script ref too: a `reusable-ci-ref` of `main` follows newer implementation changes independently of the workflow pin.
+
+This deadline concerns the supported caller contract. `inherit` is a GitHub Actions feature; declaring named secrets in a reusable workflow does not make GitHub reject inherited calls. Scan enforcement is separate from workflow-call compatibility.
+
+### Temporary Suppression For Existing Callers
+
+During the current major version, if inheritance is intentional while you migrate, suppress only this rule on the caller's own line:
+
+```yaml
+# Compatibility: replace inheritance before upgrading to the next major release.
+secrets: inherit # nosemgrep: yaml.github-actions.security.secrets-inherit.secrets-inherit
+```
+
+This requires the OpenGrep suppression-counting fix listed under **Unreleased** in the [changelog](../CHANGELOG.md). The declaration commit above alone does not include that fix: `reusable-ci-ref` must select a commit or release containing it. Correctly suppressed findings do not contribute to the summary counts or failure threshold; original JSON/SARIF reports can still retain them for auditing. Other active findings continue to be checked normally.
 
 ## Getting Access to Secrets
 
@@ -52,16 +118,16 @@
 1. **Don't need to create secrets** - They already exist at DiggSweden org level
 2. **Request access** - Contact your DiggSweden GitHub org owner/admin
 3. **Specify which ones** - Tell them which secrets your repo needs:
-   - Release bot token → Request `RELEASE_BOT_TOKEN`
-   - GPG signing → Request `OSPO_BOT_GPG_PRIV`, `OSPO_BOT_GPG_PASS`, and `OSPO_BOT_GPG_PUB`
-   - Maven Central → Request `MAVENCENTRAL_USERNAME` and `MAVENCENTRAL_PASSWORD`
+   - Release bot token → Request `RELEASE_TOKEN`
+   - GPG signing → Request `RELEASE_GPG_PRIVATE_KEY`, `RELEASE_GPG_PASSPHRASE`, and `RELEASE_GPG_PUBLIC_KEY`
+   - Maven Central → Request `MAVEN_CENTRAL_USERNAME` and `MAVEN_CENTRAL_PASSWORD`
    - NPM public registry → Request `NPM_TOKEN` (only if publishing to npmjs.org)
-   - Code Scanning upload → Request `SARIF_UPLOAD_TOKEN`
+   - Code Scanning upload → Request `CODE_SCANNING_TOKEN`
 4. **Get enabled** - DiggSweden admin grants your repository access to the secrets
 
 - **No manual configuration** - Developers never touch secret values
 
-### RELEASE_BOT_TOKEN
+### RELEASE_TOKEN
 
 Used for pushing commits, moving tags, and creating GitHub releases.
 
@@ -69,21 +135,21 @@ Used for pushing commits, moving tags, and creating GitHub releases.
 
 Note: GitHub Packages uploads use `GITHUB_TOKEN` (automatic, no configuration needed).
 
-### SARIF_UPLOAD_TOKEN
+### CODE_SCANNING_TOKEN
 
 Used for uploading security scan results (SARIF) to GitHub Security / Code Scanning. Without this token, scans still run, SARIF is still generated, and SARIF files are still saved as workflow artifacts, but results won't appear in Security / Code Scanning.
 
 **Option A — GitHub App (recommended):**
 - Create a GitHub App with `code_scanning_alerts: write` repository permission
 - Install on target repositories
-- Generate installation token and store as org secret `SARIF_UPLOAD_TOKEN`
+- Generate installation token and store as org secret `CODE_SCANNING_TOKEN`
 
 **Option B — Fine-grained PAT:**
 - Create a fine-grained PAT with "Code scanning alerts" set to **Write**
 - Scope to the target repositories
-- Store as org secret `SARIF_UPLOAD_TOKEN`
+- Store as org secret `CODE_SCANNING_TOKEN`
 
-The token is passed to reusable workflows via `secrets: inherit`.
+Pass the token explicitly as shown in [Passing Secrets](#passing-secrets).
 
 **Code Scanning categories:**
 

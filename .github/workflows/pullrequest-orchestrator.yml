@@ -19,11 +19,11 @@
 # - Dependency vulnerability scanning
 # - License compliance validation
 # - SAST (Static Application Security Testing)
-# - Results uploaded to GitHub Code Scanning (requires SARIF_UPLOAD_TOKEN secret)
+# - Results uploaded to GitHub Code Scanning (requires CODE_SCANNING_TOKEN secret)
 #
 # Required Secrets:
 #   None required - uses GITHUB_TOKEN for operations
-#   Optional: SARIF_UPLOAD_TOKEN for uploading scan results to Code Scanning
+#   Optional: CODE_SCANNING_TOKEN for uploading scan results to Code Scanning
 #             (requires code_scanning_alerts:write — GitHub App or fine-grained PAT)
 #   Optional: Organization secrets for private package access
 #
@@ -116,7 +116,7 @@ on:
         default: "main"
         type: string
     secrets:
-      SARIF_UPLOAD_TOKEN:
+      CODE_SCANNING_TOKEN:
         description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
         required: false
 permissions:
@@ -165,7 +165,7 @@ jobs:
     permissions:
       contents: read
     secrets:
-      SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN }}
+      CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
     uses: ./.github/workflows/pullrequest-quality-stage.yml
     with:
       pr-context-json: ${{ needs.compose-pr-interface.outputs.pr-context-json }}
@@ -198,5 +198,5 @@ jobs:
         env:
           PROJECT_TYPE: ${{ inputs['project-type'] }}
           QUALITY_STAGE_RESULT_PATH: .ci-results/pr-quality-result.json
-          HAS_SARIF_UPLOAD_TOKEN: ${{ secrets.SARIF_UPLOAD_TOKEN != '' }}
+          HAS_CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN != '' }}
         run: bash .github-shared/scripts/summary/write-pr-summary.sh

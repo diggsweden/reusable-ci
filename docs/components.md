@@ -32,7 +32,7 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 | Component | Purpose | Output | Required Secrets | Use When |
 |-----------|---------|--------|------------------|----------|
 | **publish-github** | Publishes Maven/NPM/Gradle to GitHub Packages | Artifacts in GitHub Packages | GITHUB_TOKEN | Default publishing target |
-| **publish-maven-central** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVENCENTRAL_USERNAME, MAVENCENTRAL_PASSWORD | Public libraries (requires build-type: library) |
+| **publish-maven-central** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVEN_CENTRAL_USERNAME, MAVEN_CENTRAL_PASSWORD | Public libraries (requires build-type: library) |
 
 #### Container Builders
 
@@ -45,8 +45,8 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 
 | Component | Purpose | Creates/Updates | Required Secrets | Use When |
 |-----------|---------|----------------|------------------|----------|
-| **release-github** | GitHub release creation | GitHub release, changelog, signatures | RELEASE_BOT_TOKEN, GPG keys | Any production release |
-| **version-bump** | Version management | Updated version files | GITHUB_TOKEN, RELEASE_BOT_TOKEN | Before releases |
+| **release-github** | GitHub release creation | GitHub release, changelog, signatures | RELEASE_TOKEN, GPG keys | Any production release |
+| **version-bump** | Version management | Updated version files | GITHUB_TOKEN, RELEASE_TOKEN | Before releases |
 | **generate-changelog** | Changelog generation | Formatted changelog | GITHUB_TOKEN | Before releases |
 
 #### Validators
@@ -292,7 +292,14 @@ with:
 
 The workflow runs directly on the GitHub runner in this branch. The runtime container path is introduced later on the GitLab prep branch.
 
-SARIF is always generated and saved as a workflow artifact. To publish results into GitHub Security / Code Scanning, configure the org or repo secret `SARIF_UPLOAD_TOKEN` and pass secrets with `secrets: inherit`.
+SARIF is always generated and saved as a workflow artifact. To publish results into GitHub Security / Code Scanning, configure the org or repo secret `CODE_SCANNING_TOKEN` and map it explicitly:
+
+```yaml
+secrets:
+  CODE_SCANNING_TOKEN: ${{ secrets.CODE_SCANNING_TOKEN }}
+```
+
+Existing `secrets: inherit` callers remain supported during the current major version; migrate before upgrading to the next major release. See [Passing Secrets](reference.md#passing-secrets) for compatible versions, scanner behavior, and migration guidance.
 
 #### `security-openssf-scorecard.yml`
 Generates OpenSSF security scorecard for the repository.
