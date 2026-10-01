@@ -65,7 +65,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates libsasl2-2 libssl3 libzstd1 \
  && rm -rf /var/lib/apt/lists/* \
  && useradd -r -u 10001 -m app
-USER app
+USER 10001
 COPY --from=builder /out/hsm-worker /usr/local/bin/hsm-worker
 COPY --from=builder /out/digg-hsm-keytool /usr/local/bin/digg-hsm-keytool
 ENTRYPOINT ["/usr/local/bin/hsm-worker"]

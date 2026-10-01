@@ -20,6 +20,12 @@ path = "renovate.json"
 SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
 SPDX-License-Identifier = "CC0-1.0"
 
+# Keep licensing metadata outside the generated lockfile.
+[[annotations]]
+path = "mise.lock"
+SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
+SPDX-License-Identifier = "CC0-1.0"
+
 [[annotations]]
 path = ".github/workflows/generate-changelog.yml"
 SPDX-FileCopyrightText = "2025 Digg - Agency for Digital Government"
