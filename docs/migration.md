@@ -68,4 +68,12 @@ Map only what the called workflow needs. Add Maven Central, Android, or Apple cr
 
 **Required for v3.0.0:** replace `secrets: inherit` before adopting this release. There is no grace period for inheritance or old secret names in v3. A `nosemgrep` suppression is not a substitute for migrating the caller. See [Passing Secrets](reference.md#passing-secrets).
 
+## 4. Create Release Tags On The Updated Branch Tip
+
+Merge the PR, update your local release branch (normally `main`), and create the signed version tag on that branch's HEAD. A tag on the PR commit before a merge, or on any older commit, is rejected before version changes are pushed. The workflow sets the project version from the tag name.
+
+The tag-handling fix preserves full checkout history and uses the triggering tag explicitly. Workflow and helper refs must both include this fix: the helper now requires the recorded base commit and tag object from the updated workflow. Direct script callers must use the [documented arguments](scripts.md#move-tagsh).
+
+If an earlier run already pushed a release commit but failed before moving its tag, inspect and update your local release branch before starting another release with a new version tag. This fix does not silently recover such partially completed releases. A no-change tag step can succeed without recreating the tag, but that does not make every publishing step in the full release pipeline rerunnable.
+
 Before upgrading production, run the PR and release paths using the new mappings, including changelog generation in a private repo when applicable. Consumers staying on older pinned workflows are unaffected by the new permission requirement. Private repositories should also review the [remaining release conditions](private-repositories.md), particularly SLSA container provenance and private package dependencies.

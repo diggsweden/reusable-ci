@@ -21,6 +21,7 @@ Upcoming release: **3.0.0**.
 
 ### Fixed
 
+- Preserve full Git history through version bumping by disabling git-auto-commit's shallow fetch. Validate the triggering tag at the release branch tip before writes, move that exact tag using recorded state and an object-specific lease, and preserve the original tag when no new commit is created. This corrects a failure also present in v2.8.3.
 - Grant the automatic `GITHUB_TOKEN` PR read access through both nested changelog paths, fixing git-cliff's 403 when reading pull requests in private repositories.
 - OpenGrep summary counts and failure thresholds exclude `nosemgrep`-suppressed findings, including when SARIF output retains them in JSON. Active findings are counted structurally rather than by matching JSON text, incorporating Erik Eriksson's original fix from [#121](https://github.com/diggsweden/reusable-ci/pull/121).
 

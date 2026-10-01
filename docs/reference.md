@@ -16,7 +16,7 @@
 
 | Check | When Performed | What It Validates | Fails If | How to Fix |
 |-------|----------------|-------------------|----------|------------|
-| **Version Match** | Release workflow | Tag matches project version | `v1.0.0` tag but pom.xml has `1.0.1` | Ensure tag matches version exactly |
+| **Release Source** | Prerequisites and immediately before version bump | Triggering tag points to the selected release branch HEAD | Tag is on an older commit or a pre-merge PR commit | Merge first, update the release branch locally, then create a new signed tag on its tip |
 | **GPG Key** | When `signatures: true` | GPG key is valid and accessible | Key expired or malformed | Generate new GPG key, export as base64 |
 | **Maven Central Creds** | Maven Central publishing | Can authenticate to Sonatype | Invalid username/password | Verify Sonatype account credentials |
 | **NPM Registry** | NPM publishing to npmjs.org | Can authenticate to registry | Token expired or invalid scope | Generate new NPM token with publish scope |

@@ -70,6 +70,7 @@ push_to_remote() {
 
   run_validate_tag_commit "v1.0.0" "main"
 
+  assert_success
   assert_output --partial "$expected_commit"
   assert_output --partial "points to commit"
 }
@@ -81,6 +82,7 @@ push_to_remote() {
 
   run_validate_tag_commit "v1.0.0" "main"
 
+  assert_success
   assert_output --partial "$short_commit"
 }
 
@@ -94,6 +96,7 @@ push_to_remote() {
 
   run_validate_tag_commit "v1.0.0" "main"
 
+  assert_success
   assert_output --partial "points to commit"
 }
 
@@ -102,6 +105,7 @@ push_to_remote() {
 
   run_validate_tag_commit "v1.0.0"
 
+  assert_success
   assert_output --partial "main"
 }
 
@@ -110,6 +114,7 @@ push_to_remote() {
 
   run_validate_tag_commit "v1.0.0" "main"
 
+  assert_success
   assert_output --partial "Branch"
   assert_output --partial "HEAD"
 }
@@ -126,6 +131,7 @@ push_to_remote() {
 
   run_validate_tag_commit "v1.0.0" "develop"
 
+  assert_success
   assert_output --partial "develop"
   assert_output --partial "points to commit"
 }
@@ -135,8 +141,10 @@ push_to_remote() {
   add_commit "Release commit"
   git tag -a v1.0.0 -m "Release"
 
+  git push -q origin release/1.0
   run_validate_tag_commit "v1.0.0" "release/1.0"
 
+  assert_success
   assert_output --partial "points to commit"
 }
 
@@ -149,6 +157,7 @@ push_to_remote() {
 
   run_validate_tag_commit "v1.0.0" "main"
 
+  assert_success
   assert_output --partial "points to commit"
 }
 
@@ -157,6 +166,7 @@ push_to_remote() {
 
   run_validate_tag_commit "v1.0.0" "main"
 
+  assert_success
   assert_output --partial "points to commit"
 }
 
@@ -164,14 +174,17 @@ push_to_remote() {
 # Edge Case Tests
 # =============================================================================
 
-@test "validate-tag-commit handles tag not on HEAD" {
+@test "validate-tag-commit rejects an older tag before version changes" {
   git tag -a v1.0.0 -m "Release"
   add_commit "After tag"
+  push_to_remote
 
   run_validate_tag_commit "v1.0.0" "main"
 
-  # Should still show tag info even if not on HEAD
-  assert_output --partial "points to commit"
+  assert_failure
+  assert_output --partial "must point to the HEAD of 'main'"
+  run get_github_output "release-base-sha"
+  assert_output ""
 }
 
 @test "validate-tag-commit shows tag commit when HEAD is different" {
@@ -184,7 +197,79 @@ push_to_remote() {
   run_validate_tag_commit "v1.0.0" "main"
 
   # Output should include the tag commit
+  assert_failure
   assert_output --partial "$tag_commit"
+}
+
+@test "validate-tag-commit captures the base and annotated tag object" {
+  git tag -a v1.0.0 -m "Release"
+  local head tag_object
+  head="$(git rev-parse HEAD)"
+  tag_object="$(git rev-parse refs/tags/v1.0.0)"
+
+  run_validate_tag_commit v1.0.0 main "$head"
+
+  assert_success
+  run get_github_output "release-base-sha"
+  assert_output "$head"
+  run get_github_output "release-tag-object"
+  assert_output "$tag_object"
+  assert [ "$tag_object" != "$head" ]
+}
+
+@test "validate-tag-commit rejects a pre-merge PR tag without changing the repository" {
+  git switch -q -c feature
+  add_commit "PR change"
+  git tag -a v0.0.3 -m "Release request"
+  git switch -q main
+  git merge -q --no-ff feature -m "Merge PR"
+  push_to_remote
+  local head tag_object
+  head="$(git rev-parse HEAD)"
+  tag_object="$(git rev-parse refs/tags/v0.0.3)"
+
+  run_validate_tag_commit v0.0.3 main "$head"
+
+  assert_failure
+  assert_output --partial "pre-merge PR commit"
+  assert_equal "$(git rev-parse HEAD)" "$head"
+  assert_equal "$(git rev-parse refs/tags/v0.0.3)" "$tag_object"
+  run get_github_output "release-base-sha"
+  assert_output ""
+}
+
+@test "validate-tag-commit rejects a checkout different from the validated branch" {
+  local old_head
+  old_head="$(git rev-parse HEAD)"
+  add_commit "New branch tip"
+  git tag -a v1.0.0 -m "Release"
+  push_to_remote
+
+  run_validate_tag_commit v1.0.0 main "$old_head"
+
+  assert_failure
+  assert_output --partial "Checkout commit does not match"
+  run get_github_output "release-base-sha"
+  assert_output ""
+}
+
+@test "validate-tag-commit fails clearly when the requested tag is absent" {
+  run_validate_tag_commit v-missing main
+  assert_failure
+  assert_output --partial "Release tag 'v-missing' is missing"
+}
+
+@test "validate-tag-commit uses the exact tag ref when a branch has the same name" {
+  git branch v1.0.0
+  add_commit "New tip"
+  git tag -a v1.0.0 -m "Release"
+  push_to_remote
+
+  run_validate_tag_commit v1.0.0 main "$(git rev-parse HEAD)"
+
+  assert_success
+  run get_github_output "release-base-sha"
+  assert_output "$(git rev-parse HEAD)"
 }
 
 @test "validate-tag-commit handles multiple tags with remote" {
@@ -196,5 +281,6 @@ push_to_remote() {
 
   run_validate_tag_commit "v1.0.0" "main"
 
+  assert_success
   assert_output --partial "points to commit"
 }

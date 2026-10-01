@@ -156,6 +156,7 @@ jobs:
         with:
           egress-policy: ${{ inputs.egress-policy }}
       - name: Checkout repository
+        id: checkout-release
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
@@ -168,6 +169,13 @@ jobs:
           ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
           sparse-checkout: scripts
+      - name: Validate release tag before version changes
+        id: release-base
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          TARGET_BRANCH: ${{ inputs.branch }}
+          CHECKOUT_SHA: ${{ steps.checkout-release.outputs.commit }}
+        run: bash .github-shared/scripts/validate/tag-commit.sh "$TAG_NAME" "$TARGET_BRANCH" "$CHECKOUT_SHA"
       - name: Import GPG key
         id: import-gpg
         uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
@@ -323,6 +331,10 @@ jobs:
       - name: Commit and Push Changes
         uses: stefanzweifel/git-auto-commit-action@04702edda442b2e678b25b537cec683a1493fcb9 # v7.1.0
         with:
+          # Checkout already selected the release branch with full history.
+          # The action's default git fetch --depth=1 would sever tag ancestry.
+          skip_fetch: true
+          skip_checkout: true
           commit_message: |
             chore(release): ${{ github.ref_name }}
 
@@ -336,4 +348,8 @@ jobs:
           commit_options: " --signoff"
       - name: Move tag to current commit
         id: move-tag
-        run: bash .github-shared/scripts/version/move-tag.sh
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+          RELEASE_BASE_SHA: ${{ steps.release-base.outputs.release-base-sha }}
+          RELEASE_TAG_OBJECT: ${{ steps.release-base.outputs.release-tag-object }}
+        run: bash .github-shared/scripts/version/move-tag.sh "$TAG_NAME" "$RELEASE_BASE_SHA" "$RELEASE_TAG_OBJECT"

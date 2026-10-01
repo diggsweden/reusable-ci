@@ -2,7 +2,6 @@
 
 # shellcheck disable=SC1090,SC2016,SC2030,SC2031,SC2119,SC2120,SC2155
 # SPDX-FileCopyrightText: 2025 Digg - Agency for Digital Government
-#
 # SPDX-License-Identifier: CC0-1.0
 
 bats_require_minimum_version 1.13.0
@@ -12,23 +11,24 @@ load "${BATS_TEST_DIRNAME}/../libs/bats-assert/load.bash"
 load "${BATS_TEST_DIRNAME}/../libs/bats-file/load.bash"
 load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 
-# =============================================================================
-# Setup / Teardown
-# =============================================================================
-
 setup() {
   common_setup_with_isolated_git
   setup_github_env
-  # Create a git wrapper that strips -s from tag commands (no GPG in tests)
-  # while passing all other git commands through unchanged.
+  init_remote_repo
+  # Signing is tested through the real workflow; use annotated tags here.
+  # Every push in these tests is confined to the temporary local bare repo.
   local real_git
   real_git="$(command -v git)"
   create_mock_binary "git" "
+if [[ \"\${1:-}\" == push ]]; then
+  [[ \"\$(\"$real_git\" remote get-url origin)\" == \"\$REMOTE_DIR\" ]] || exit 99
+  [[ \"\${MOCK_PUSH_FAIL:-false}\" != true ]] || exit 1
+fi
 args=()
 strip_s=false
 for arg in \"\$@\"; do
-  if [[ \"\$arg\" == \"tag\" ]]; then strip_s=true; fi
-  if \$strip_s && [[ \"\$arg\" == \"-s\" ]]; then continue; fi
+  if [[ \"\$arg\" == tag ]]; then strip_s=true; fi
+  if \$strip_s && [[ \"\$arg\" == -s ]]; then continue; fi
   args+=(\"\$arg\")
 done
 exec \"$real_git\" \"\${args[@]}\"
@@ -41,333 +41,235 @@ teardown() {
   common_teardown
 }
 
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-# Run move-tag with debug output
-run_move_tag() {
-  run_script "version/move-tag.sh" "$@"
+prepare_release() {
+  TAG_NAME="${1:-v1.0.0}"
+  git tag -a "$TAG_NAME" -m "Release request"
+  git push -q origin "refs/tags/$TAG_NAME"
+  BASE_SHA="$(git rev-parse HEAD)"
+  TAG_OBJECT="$(git rev-parse "refs/tags/$TAG_NAME")"
 }
 
-# =============================================================================
-# Tag Position Validation Tests
-# =============================================================================
-
-@test "move-tag fails when tag not at HEAD~1" {
-  # Create tag on initial commit
-  git tag -a v1.0.0 -m "Release"
-
-  # Add TWO commits (so tag is at HEAD~2, not HEAD~1)
-  echo "change1" >> file.txt
-  git add file.txt
-  git commit -q -m "First change"
-
-  echo "change2" >> file.txt
-  git add file.txt
-  git commit -q -m "Second change"
-
-  run_move_tag
-
-  assert_failure
-  assert_output --partial "points to unexpected commit"
-}
-
-@test "move-tag shows expected vs found commits on failure" {
-  git tag -a v1.0.0 -m "Release"
-
-  echo "change1" >> file.txt
-  git add file.txt
-  git commit -q -m "First"
-
-  echo "change2" >> file.txt
-  git add file.txt
-  git commit -q -m "Second"
-
-  run_move_tag
-
-  assert_failure
-  assert_output --partial "Expected:"
-  assert_output --partial "Found:"
-}
-
-@test "move-tag fails when no tags exist" {
-  # No tags created, git describe will fail
-  run_move_tag
-
-  assert_failure
-}
-
-@test "move-tag identifies correct tag name" {
-  git tag -a v2.5.0 -m "Release v2.5.0"
-
-  # Add commits to make tag not at HEAD~1
-  echo "change1" >> file.txt
-  git add file.txt
-  git commit -q -m "First"
-
-  echo "change2" >> file.txt
-  git add file.txt
-  git commit -q -m "Second"
-
-  run_move_tag
-
-  assert_failure
-  assert_output --partial "v2.5.0"
-}
-
-@test "move-tag handles prerelease tag names" {
-  git tag -a v1.0.0-rc.1 -m "Release candidate"
-
-  echo "change1" >> file.txt
-  git add file.txt
-  git commit -q -m "First"
-
-  echo "change2" >> file.txt
-  git add file.txt
-  git commit -q -m "Second"
-
-  run_move_tag
-
-  assert_failure
-  assert_output --partial "v1.0.0-rc.1"
-}
-
-# =============================================================================
-# Script Logic Tests (using mocked git wrapper)
-# =============================================================================
-
-@test "move-tag detects tag at correct position" {
-  # Create a wrapper script that simulates the move-tag logic
-  # without actually pushing
-
-  git tag -a v1.0.0 -m "Release"
-
-  # Add one commit (tag now at HEAD~1)
-  echo "change" >> file.txt
-  git add file.txt
-  git commit -q -m "Version bump"
-
-  # Verify the tag IS at HEAD~1 (the correct position)
-  local tag_sha prev_sha
-  tag_sha=$(git rev-list -n 1 v1.0.0)
-  prev_sha=$(git rev-parse HEAD~1)
-
-  # This should be equal - meaning move-tag would succeed
-  assert_equal "$tag_sha" "$prev_sha"
-}
-
-@test "move-tag correctly computes HEAD~1" {
-  git tag -a v1.0.0 -m "Release"
-  local initial_commit
-  initial_commit=$(git rev-parse HEAD)
-
-  echo "change" >> file.txt
-  git add file.txt
-  git commit -q -m "Second commit"
-
-  local head_minus_1
-  head_minus_1=$(git rev-parse HEAD~1)
-
-  assert_equal "$initial_commit" "$head_minus_1"
-}
-
-@test "move-tag uses git describe to find latest tag" {
-  # Create multiple tags
-  git tag -a v1.0.0 -m "First"
-
-  echo "change" >> file.txt
-  git add file.txt
-  git commit -q -m "Change"
-
-  git tag -a v2.0.0 -m "Second"
-
-  # git describe should return v2.0.0
-  local latest
-  latest=$(git describe --tags --abbrev=0)
-
-  assert_equal "$latest" "v2.0.0"
-}
-
-# =============================================================================
-# Success Path Tests (with remote)
-# =============================================================================
-
-@test "move-tag succeeds when tag is at HEAD~1 with remote" {
-  init_remote_repo
-
-  git tag -a v1.0.0 -m "Release v1.0.0"
-  git push -q origin v1.0.0
-
-  add_commit "chore(release): v1.0.0"
+bump_release() {
+  add_commit "chore(release): $TAG_NAME"
   git push -q origin main
+}
+
+run_move_tag() {
+  run_script "version/move-tag.sh" "$TAG_NAME" "$BASE_SHA" "$TAG_OBJECT"
+}
+
+assert_no_release_output() {
+  run get_github_output "release-sha"
+  assert_output ""
+}
+
+@test "move-tag requires an explicit tag and recorded validation state" {
+  run_script "version/move-tag.sh"
+  assert_failure
+  assert_output --partial "Usage:"
+  assert_no_release_output
+}
+
+@test "move-tag rejects missing tags" {
+  local head
+  head="$(git rev-parse HEAD)"
+  run_script "version/move-tag.sh" v1.0.0 "$head" "$head"
+  assert_failure
+  assert_output --partial "Release tag 'v1.0.0' is missing"
+  assert_no_release_output
+}
+
+@test "move-tag rejects invalid tag names before any update" {
+  prepare_release
+  TAG_NAME="bad..tag"
+  run_move_tag
+  assert_failure
+  assert_output --partial "Invalid release tag name"
+  assert_no_release_output
+}
+
+@test "move-tag rejects an unknown base commit" {
+  prepare_release
+  BASE_SHA="0000000000000000000000000000000000000000"
+  run_move_tag
+  assert_failure
+  assert_output --partial "recorded release base or tag object is missing"
+  assert_equal "$(git rev-parse "refs/tags/$TAG_NAME")" "$TAG_OBJECT"
+  assert_no_release_output
+}
+
+@test "move-tag moves only the requested tag and outputs the release commit" {
+  prepare_release
+  bump_release
+  local head unrelated_tag
+  head="$(git rev-parse HEAD)"
+  # git describe would choose this HEAD tag instead of the triggering tag.
+  git tag -a v9.9.9 -m "Unrelated tag"
+  unrelated_tag="$(git rev-parse refs/tags/v9.9.9)"
 
   run_move_tag
 
   assert_success
   assert_output --partial "Moving tag v1.0.0"
+  assert_equal "$(git rev-parse "refs/tags/$TAG_NAME^{commit}")" "$head"
+  assert_equal "$(git --git-dir="$REMOTE_DIR" rev-parse "refs/tags/$TAG_NAME^{commit}")" "$head"
+  assert_equal "$(git rev-parse refs/tags/v9.9.9)" "$unrelated_tag"
+  run get_github_output "release-sha"
+  assert_output "$head"
+  run git --git-dir="$REMOTE_DIR" show-ref --verify refs/tags/v9.9.9
+  assert_failure # No unrelated tag was pushed.
 }
 
-@test "move-tag moves tag to HEAD after version bump" {
-  init_remote_repo
-
-  git tag -a v1.0.0 -m "Release v1.0.0"
-  git push -q origin v1.0.0
-
-  local original_tag_sha
-  original_tag_sha=$(git rev-list -n 1 v1.0.0)
-
-  add_commit "chore(release): v1.0.0"
-  git push -q origin main
-
-  local head_sha
-  head_sha=$(git rev-parse HEAD)
+@test "move-tag preserves the signed tag when no release commit was created" {
+  prepare_release
+  export MOCK_PUSH_FAIL=true # A no-change run must not push.
 
   run_move_tag
 
   assert_success
-
-  # After move, the tag should point to HEAD (the version-bump commit)
-  local new_tag_sha
-  new_tag_sha=$(git rev-list -n 1 v1.0.0)
-
-  assert_equal "$new_tag_sha" "$head_sha"
-  # And it must differ from the original
-  assert [ "$new_tag_sha" != "$original_tag_sha" ]
+  assert_output --partial "no tag update needed"
+  assert_equal "$(git rev-parse "refs/tags/$TAG_NAME")" "$TAG_OBJECT"
+  assert_equal "$(git --git-dir="$REMOTE_DIR" rev-parse "refs/tags/$TAG_NAME")" "$TAG_OBJECT"
+  run get_github_output "release-sha"
+  assert_output "$BASE_SHA"
 }
 
-@test "move-tag updates remote tag" {
-  init_remote_repo
-
-  git tag -a v1.0.0 -m "Release v1.0.0"
-  git push -q origin v1.0.0
-
-  add_commit "chore(release): v1.0.0"
-  git push -q origin main
-
-  local head_sha
-  head_sha=$(git rev-parse HEAD)
+@test "move-tag handles a rerun validated at the already released commit" {
+  prepare_release
+  bump_release
+  run_move_tag
+  assert_success
+  BASE_SHA="$(git rev-parse HEAD)"
+  TAG_OBJECT="$(git rev-parse "refs/tags/$TAG_NAME")"
+  export MOCK_PUSH_FAIL=true
 
   run_move_tag
 
   assert_success
-
-  # Verify the remote tag was updated too
-  local remote_tag_sha
-  remote_tag_sha=$(git ls-remote --tags origin v1.0.0 | head -1 | cut -f1)
-
-  # The remote should point to HEAD (might be annotated tag object, resolve it)
-  local resolved_remote_sha
-  resolved_remote_sha=$(git rev-parse "$remote_tag_sha^{commit}" 2>/dev/null || echo "$remote_tag_sha")
-
-  assert_equal "$resolved_remote_sha" "$head_sha"
+  assert_output --partial "no tag update needed"
+  assert_equal "$(git rev-parse "refs/tags/$TAG_NAME")" "$TAG_OBJECT"
 }
 
-@test "move-tag tag SHA changes after move — demonstrates checkout v6 issue" {
-  # This test demonstrates the core issue: after move-tag runs,
-  # the tag SHA differs from the original SHA that triggered the workflow.
-  # actions/checkout@v6 compares these and fails.
-  init_remote_repo
-
-  git tag -a v2.7.2 -m "Release v2.7.2"
-  git push -q origin v2.7.2
-
-  # This is what github.sha would be (the commit that triggered the workflow)
-  local trigger_sha
-  trigger_sha=$(git rev-list -n 1 v2.7.2)
-
-  # Simulate version-bump adding a commit
-  add_commit "chore(release): v2.7.2"
-  git push -q origin main
-
-  run_move_tag
-
-  assert_success
-
-  # After move-tag, the tag points to a DIFFERENT commit than trigger_sha.
-  # This is why actions/checkout@v6 fails when using the tag name —
-  # it expects trigger_sha but finds the new commit.
-  local new_tag_sha
-  new_tag_sha=$(git rev-list -n 1 v2.7.2)
-
-  assert [ "$new_tag_sha" != "$trigger_sha" ]
-
-  # The fix: using trigger_sha directly (a commit SHA) as the checkout ref
-  # bypasses tag validation entirely, since there's no named ref to verify.
-}
-
-@test "move-tag outputs release-sha to GITHUB_OUTPUT" {
-  init_remote_repo
-
-  git tag -a v1.0.0 -m "Release v1.0.0"
-  git push -q origin v1.0.0
-
-  add_commit "chore(release): v1.0.0"
-  git push -q origin main
-
-  local head_sha
-  head_sha=$(git rev-parse HEAD)
-
-  run_move_tag
-
-  assert_success
-
-  # The script should write the release commit SHA to GITHUB_OUTPUT
-  local output_sha
-  output_sha=$(get_github_output "release-sha")
-  assert_equal "$output_sha" "$head_sha"
-}
-
-@test "move-tag does not output release-sha on failure" {
-  init_remote_repo
-
-  git tag -a v1.0.0 -m "Release v1.0.0"
-  git push -q origin v1.0.0
-
-  # Add TWO commits so tag is at HEAD~2 (not HEAD~1) — will fail
-  add_commit "first"
-  add_commit "second"
-  git push -q origin main
+@test "move-tag rejects extra commits after the validated base" {
+  prepare_release
+  add_commit "Unrelated change"
+  bump_release
 
   run_move_tag
 
   assert_failure
-
-  # GITHUB_OUTPUT should NOT contain release-sha
-  local output_sha
-  output_sha=$(get_github_output "release-sha")
-  assert_equal "$output_sha" ""
+  assert_output --partial "single commit directly after the validated base"
+  assert_equal "$(git rev-parse "refs/tags/$TAG_NAME")" "$TAG_OBJECT"
+  assert_no_release_output
 }
 
-@test "move-tag works without GITHUB_OUTPUT set" {
-  init_remote_repo
+@test "move-tag rejects a merge instead of a version-bump commit" {
+  prepare_release
+  git switch -q -c feature
+  add_commit "Feature change"
+  git switch -q main
+  git merge -q --no-ff feature -m "Merge feature"
 
-  git tag -a v1.0.0 -m "Release v1.0.0"
-  git push -q origin v1.0.0
+  run_move_tag
 
-  add_commit "chore(release): v1.0.0"
-  git push -q origin main
+  assert_failure
+  assert_output --partial "single commit directly after the validated base"
+  assert_equal "$(git rev-parse "refs/tags/$TAG_NAME")" "$TAG_OBJECT"
+  assert_no_release_output
+}
 
-  # Unset GITHUB_OUTPUT — script should still succeed (writes to /dev/null)
+@test "move-tag rejects a local tag changed after validation" {
+  prepare_release
+  bump_release
+  git tag -f -a "$TAG_NAME" -m "Changed tag" HEAD
+
+  run_move_tag
+
+  assert_failure
+  assert_output --partial "changed since validation"
+  assert_equal "$(git --git-dir="$REMOTE_DIR" rev-parse "refs/tags/$TAG_NAME")" "$TAG_OBJECT"
+  assert_no_release_output
+}
+
+@test "move-tag rejects a changed tag object even if its commit is unchanged" {
+  prepare_release
+  git tag -f -a "$TAG_NAME" -m "New annotation" "$BASE_SHA"
+
+  run_move_tag
+
+  assert_failure
+  assert_output --partial "changed since validation"
+  assert_no_release_output
+}
+
+@test "move-tag lease preserves a concurrently changed remote tag" {
+  prepare_release
+  bump_release
+  # Another actor replaces the annotated tag with a lightweight tag at the
+  # same commit. A commit-only comparison would miss this change.
+  git --git-dir="$REMOTE_DIR" update-ref "refs/tags/$TAG_NAME" "$BASE_SHA"
+
+  run_move_tag
+
+  assert_failure
+  assert_equal "$(git --git-dir="$REMOTE_DIR" rev-parse "refs/tags/$TAG_NAME")" "$BASE_SHA"
+  assert_no_release_output
+}
+
+@test "move-tag rejects a remote tag deleted during a no-change run" {
+  prepare_release
+  git --git-dir="$REMOTE_DIR" update-ref -d "refs/tags/$TAG_NAME"
+
+  run_move_tag
+
+  assert_failure
+  assert_equal "$(git rev-parse "refs/tags/$TAG_NAME")" "$TAG_OBJECT"
+  assert_no_release_output
+}
+
+@test "move-tag rejects a changed remote tag during a no-change run" {
+  prepare_release
+  git --git-dir="$REMOTE_DIR" update-ref "refs/tags/$TAG_NAME" "$BASE_SHA"
+
+  run_move_tag
+
+  assert_failure
+  assert_output --partial "Remote release tag 'v1.0.0' changed"
+  assert_no_release_output
+}
+
+@test "move-tag does not emit success when the tag push fails" {
+  prepare_release
+  bump_release
+  export MOCK_PUSH_FAIL=true
+
+  run_move_tag
+
+  assert_failure
+  assert_equal "$(git --git-dir="$REMOTE_DIR" rev-parse "refs/tags/$TAG_NAME")" "$TAG_OBJECT"
+  assert_no_release_output
+}
+
+@test "move-tag handles prerelease names and an explicit tag in a shallow checkout" {
+  prepare_release v3.0.0-rc.1
+  git fetch -q --depth=1 origin
+  assert_equal "$(git rev-parse --is-shallow-repository)" "true"
+  bump_release
+
+  run_move_tag
+
+  assert_success
+  assert_output --partial "Moving tag v3.0.0-rc.1"
+  assert_equal "$(git --git-dir="$REMOTE_DIR" rev-parse "refs/tags/$TAG_NAME^{commit}")" "$(git rev-parse HEAD)"
+}
+
+@test "move-tag works without a GitHub output file" {
+  prepare_release
+  bump_release
   unset GITHUB_OUTPUT
 
   run_move_tag
 
   assert_success
-  assert_output --partial "Moving tag v1.0.0"
-}
-
-@test "move-tag works with prerelease tags and remote" {
-  init_remote_repo
-
-  git tag -a v3.0.0-beta.1 -m "Beta release"
-  git push -q origin v3.0.0-beta.1
-
-  add_commit "chore(release): v3.0.0-beta.1"
-  git push -q origin main
-
-  run_move_tag
-
-  assert_success
-  assert_output --partial "Moving tag v3.0.0-beta.1"
+  assert_equal "$(git --git-dir="$REMOTE_DIR" rev-parse "refs/tags/$TAG_NAME^{commit}")" "$(git rev-parse HEAD)"
 }

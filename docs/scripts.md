@@ -88,7 +88,7 @@ scripts/
 │   ├── workflow-input-defaults.sh            # Validate workflow input defaults
 │   ├── github-token.sh                      # Validate GitHub token type and permissions
 │   ├── mavencentral-credentials.sh          # Validate Maven Central credentials are set
-│   ├── tag-commit.sh                        # Verify tag commit in branch history
+│   ├── tag-commit.sh                        # Require tag at release branch HEAD
 │   ├── tag-format.sh                        # Verify semantic version format
 │   ├── tag-signature.sh                     # Verify GPG/SSH tag signature
 │   └── tag-uniqueness.sh                    # Verify tag is unique across remotes
@@ -305,10 +305,18 @@ Scripts for release prerequisite validation.
 | `workflow-input-defaults.sh` | Validates workflow input defaults match documentation |
 | `github-token.sh` | Validates GitHub token type and permissions |
 | `mavencentral-credentials.sh` | Validates Maven Central credentials are set |
-| `tag-commit.sh` | Verifies tag commit exists in target branch history |
+| `tag-commit.sh` | Requires the tag to point to the target branch HEAD and records the release base and tag object |
 | `tag-format.sh` | Verifies tag follows semantic versioning (`vX.Y.Z[-prerelease]`) |
 | `tag-signature.sh` | Verifies tag is annotated and GPG/SSH signed |
 | `tag-uniqueness.sh` | Verifies tag is unique across remotes |
+
+### tag-commit.sh
+
+```bash
+bash scripts/validate/tag-commit.sh <tag-name> [branch-name] [checkout-sha]
+```
+
+The branch defaults to `main`. The exact `refs/tags/<tag-name>` commit must equal `refs/remotes/origin/<branch-name>`, not merely be an ancestor. When supplied, `checkout-sha` must match that branch tip too. Successful validation emits `release-base-sha` and `release-tag-object` via the CI output file. The latter is the tag object's ID, not its peeled commit.
 
 ---
 
@@ -320,9 +328,21 @@ Scripts for version management.
 |--------|---------|
 | `bump-version.sh` | Updates version in pom.xml / package.json / gradle.properties / xcconfig |
 | `generate-dev-version.sh` | Generates dev version string from branch name and short SHA |
-| `move-tag.sh` | Moves existing git tag to current HEAD |
+| `move-tag.sh` | Moves the explicit triggering tag from its recorded base to the release commit using an object-specific lease |
 | `read-minimal-changelog.sh` | Reads the latest entry from CHANGELOG.md |
 | `validate-full-changelog.sh` | Validates CHANGELOG.md exists and has content |
+
+### move-tag.sh
+
+```bash
+bash scripts/version/move-tag.sh <tag-name> <release-base-sha> <release-tag-object>
+```
+
+Pass the triggering tag and the outputs captured by `tag-commit.sh` before version changes.
+The script never chooses a tag with `git describe`.
+HEAD must either equal the captured base (no new commit) or be a single non-merge commit directly after it.
+A no-change run preserves the signed tag and emits `release-sha`; otherwise the script signs the updated tag and pushes only that ref with a lease on the original tag object.
+A changed or deleted remote tag is not overwritten, and a rejected push does not emit a successful release SHA.
 
 ### bump-version.sh
 
