@@ -27,7 +27,9 @@ env:
   # renovate: datasource=github-releases depName=casey/just
   JUST_VERSION: "1.47.0"
   # renovate: datasource=github-releases depName=jdx/mise
-  MISE_VERSION: "2026.6.1"
+  MISE_VERSION: "2026.9.18"
+  # Tool updates can require verification metadata newer than mise's bundled registry.
+  MISE_AQUA_BAKED_REGISTRY: "false"
 on:
   workflow_call: # yamllint disable-line rule:truthy
     inputs:
@@ -80,9 +82,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.local/share/mise
-          key: mise-${{ env.MISE_VERSION }}-${{ runner.os }}-${{ hashFiles('.mise.toml') }}
-          restore-keys: |
-            mise-${{ env.MISE_VERSION }}-${{ runner.os }}-
+          key: mise-${{ env.MISE_VERSION }}-${{ runner.os }}-${{ hashFiles('.mise.toml', 'mise.lock') }}
       - name: Install devbase-check
         env:
           VERSION: ${{ inputs.devbase-check-version || env.DEVBASE_CHECK_VERSION }}

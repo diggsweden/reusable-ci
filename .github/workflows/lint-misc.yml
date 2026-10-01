@@ -2,6 +2,9 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 name: Verify Mise And Just
+env:
+  # Tool updates can require verification metadata newer than mise's bundled registry.
+  MISE_AQUA_BAKED_REGISTRY: "false"
 on: [workflow_call]
 permissions:
   contents: read
@@ -18,6 +21,8 @@ jobs:
       - name: Setup mise
         uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
         with:
+          # renovate: datasource=github-releases depName=jdx/mise
+          version: "2026.9.18"
           install: true
           cache: true
           experimental: true # Required for go backend tools

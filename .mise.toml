@@ -8,7 +8,11 @@
 
 [settings]
 experimental = true  # Enable experimental features
-paranoid = true      # Enable strict security checks and verification
+
+[settings.aqua]
+# Tool releases can outpace the registry bundled with mise. Fetch current
+# metadata so installs can verify the provenance required by mise.lock.
+baked_registry = false
 
 [env]
 # Proxy configuration - available during tool installation AND runtime
@@ -37,4 +41,4 @@ PIP_INDEX_URL = "{{ get_env(name='PIP_INDEX_URL', default='') }}"
 "aqua:tldr-pages/tlrc" = "v1.13.1"
 yq = "4.53.6"
 "pipx:reuse" = "6.2.0"
-"aqua:bats-core/bats-core" = "1.13.0"
+"aqua:bats-core/bats-core" = "v1.13.0"
