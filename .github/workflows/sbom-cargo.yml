@@ -64,11 +64,11 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ inputs.branch }}
       - name: Checkout reusable-ci scripts
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-ref'] }}
@@ -83,7 +83,7 @@ jobs:
       # Caches ~/.cargo (registry, git, installed bins) + target/. Keyed by
       # Cargo.lock so cache invalidates when dependencies change.
       - name: Cache cargo
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: ${{ inputs['working-directory'] }}
       - name: Generate Build SBOM

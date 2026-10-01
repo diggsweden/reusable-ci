@@ -62,13 +62,13 @@ jobs:
       pull-requests: read # git-cliff reads PR metadata, including in private repos
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ inputs.branch }}
           fetch-depth: 0 # Need full history for git-cliff
       - name: Fetch git-cliff templates
         if: ${{ startsWith(inputs['changelog-config'], '.github-templates/') }}
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: diggsweden/reusable-ci
           path: .github-templates
@@ -76,7 +76,7 @@ jobs:
           sparse-checkout: |
             templates/
       - name: Generate Changelog with git-cliff
-        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5 # v4.8.0
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
         with:
           config: ${{ inputs['changelog-config'] }}
           args: ${{ inputs['git-cliff-args'] }}
@@ -84,7 +84,7 @@ jobs:
           OUTPUT: ${{ inputs['output-file'] }}
           GITHUB_REPO: ${{ github.repository }}
       - name: Checkout .github repository for scripts
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-ref'] }}
