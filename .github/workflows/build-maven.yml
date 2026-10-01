@@ -126,7 +126,7 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         env:
           # renovate: datasource=maven depName=org.cyclonedx:cyclonedx-maven-plugin
-          CYCLONEDX_MAVEN_VERSION: "2.9.1"
+          CYCLONEDX_MAVEN_VERSION: "2.9.3"
         run: |
           # shellcheck disable=SC2086
           mvn $MAVEN_CLI_OPTS "org.cyclonedx:cyclonedx-maven-plugin:${CYCLONEDX_MAVEN_VERSION}:makeAggregateBom"
