@@ -5,32 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.0.0] - 2026-10-01
 
-Upcoming release: **3.0.0**.
+### Added
+
+- Add codeowners
 
 ### Changed
 
-- Release callers must grant `pull-requests: read` for changelog generation, including callers in public repositories. Follow the short [Migration Guide](docs/migration.md) for this permission, canonical secret names, and explicit secret mappings.
-- **Breaking:** align secret names with `main-golang`: `RELEASE_TOKEN`, `RELEASE_GPG_PRIVATE_KEY`, `RELEASE_GPG_PASSPHRASE`, `RELEASE_GPG_PUBLIC_KEY`, `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, and `CODE_SCANNING_TOKEN`. Previous names have no aliases or runtime fallbacks. Update caller mappings, secret configuration, and direct-script environments before upgrading; see [Canonical Secret Names](docs/reference.md#canonical-secret-names-breaking-change).
-- All v3 consumers must use explicit secret mappings; updated examples pin a workflow revision that declares the accepted secrets. See [Passing Secrets](docs/reference.md#passing-secrets) for compatible versions and migration guidance.
-
-### Removed
-
-- **Breaking:** support for caller-side `secrets: inherit` ends in v3.0.0. All consumers upgrading to v3 must use explicit mappings with the canonical secret names. Consumers remaining on pinned v2 workflows retain those workflows' behavior.
+- Bump further deps
+- Consolidate v3 migration guide and example refs
+- Standardize secret names
+- Declare callable secrets and pass them explicitly
+- Update opengrep to v1.27.1
+- Update dependency jdx/mise to v2026.6.1 (#117)
+- Update mise tools (#116)
+- Update github actions (#115)
+- Update mise tools (#113)
+- Update github actions (#112)
+- Update dependency jdx/mise to v2026.4.28 (#111)
+- Update dependency itiquette/gommitlint to v0.9.11 (#110)
 
 ### Fixed
 
-- Preserve explicit `false` for container `enable-slsa` and `enable-scan` flags. GitHub Actions' loose `false == null` comparison previously re-enabled disabled features; missing/null flags still default to `true`.
-- Preserve full Git history through version bumping by disabling git-auto-commit's shallow fetch. Validate the triggering tag at the release branch tip before writes, move that exact tag using recorded state and an object-specific lease, and preserve the original tag when no new commit is created. This corrects a failure also present in v2.8.3.
-- Grant the automatic `GITHUB_TOKEN` PR read access through both nested changelog paths, fixing git-cliff's 403 when reading pull requests in private repositories.
-- OpenGrep summary counts and failure thresholds exclude `nosemgrep`-suppressed findings, including when SARIF output retains them in JSON. Active findings are counted structurally rather than by matching JSON text, incorporating Erik Eriksson's original fix from [#121](https://github.com/diggsweden/reusable-ci/pull/121).
+- Improve lint pass
+- Improve version from aqua
+- Preserve disabled container security flags
+- Preserve history and move the triggering tag
+- Allow changelog PR reads in private repositories
+- Skip nosemgrep-suppressed findings in opengrep threshold
 
 ## [2.8.3] - 2026-05-06
 
 ### Fixed
 
 - Android workflow refactor repair
+
 
 ## [2.8.2] - 2026-05-05
 
@@ -511,6 +521,7 @@ Upcoming release: **3.0.0**.
 
 - Initial commit
 
+[3.0.0]: https://github.com/diggsweden/reusable-ci/compare/v2.8.3..v3.0.0
 [2.8.3]: https://github.com/diggsweden/reusable-ci/compare/v2.8.2..v2.8.3
 [2.8.2]: https://github.com/diggsweden/reusable-ci/compare/v2.8.1..v2.8.2
 [2.8.1]: https://github.com/diggsweden/reusable-ci/compare/v2.8.0..v2.8.1
