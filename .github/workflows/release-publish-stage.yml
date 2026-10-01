@@ -191,12 +191,14 @@ jobs:
       container-file: ${{ matrix.container['container-file'] }}
       context: ${{ matrix.container.context || '.' }}
       platforms: ${{ matrix.container.platforms || 'linux/amd64' }}
-      enable-slsa: ${{ matrix.container['enable-slsa'] == true || matrix.container['enable-slsa'] == null }}
+      # GitHub uses loose equality: false == null is true. Compare the JSON
+      # representation for absence so an explicit false is never defaulted on.
+      enable-slsa: ${{ matrix.container['enable-slsa'] == true || toJSON(matrix.container['enable-slsa']) == 'null' }}
       # `enable-analyzed-container-sbom` is derived in parse-artifacts-config.sh
       # from each source artefact's effective-sboms — true if any source includes
       # 'analyzed-container'. Replaces the v2.x user-facing `enable-sbom` flag.
       enable-analyzed-container-sbom: ${{ matrix.container['enable-analyzed-container-sbom'] }}
-      enable-scan: ${{ matrix.container['enable-scan'] == true || matrix.container['enable-scan'] == null }}
+      enable-scan: ${{ matrix.container['enable-scan'] == true || toJSON(matrix.container['enable-scan']) == 'null' }}
       registry: ghcr.io
       artifact-types: ${{ join(matrix.container['artifact-types'], ',') }}
       # Only gradle builds honour `artifact-name` today, so the thread-through

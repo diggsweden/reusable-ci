@@ -25,6 +25,8 @@ The upstream private-repository opt-in publishes the repository name to the publ
 
 The currently available configuration is to set `enable-slsa: false` on the relevant **existing container entries** in `artifacts.yml`:
 
+Use a workflow revision containing the container-flag fix: older forwarding expressions treated `false` as equal to `null` and incorrectly re-enabled SLSA. Both `uses:` and `reusable-ci-ref` should select the fixed revision.
+
 ```yaml
 containers:
   - name: my-app
