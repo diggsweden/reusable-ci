@@ -12,7 +12,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate publiccode metadata
         uses: italia/publiccode-parser-action@0deab88c3f094aa12c5826e52ac2c4f176446821 # v1.6.0
         with:
