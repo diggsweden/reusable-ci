@@ -192,6 +192,12 @@ url = "https://github.com/hadolint/hadolint/releases/download/v2.15.1/hadolint-m
 url_api = "https://api.github.com/repos/hadolint/hadolint/releases/assets/496546509"
 provenance = "github-attestations"
 
+[tools."aqua:hadolint/hadolint"."platforms.windows-x64"]
+checksum = "sha256:01d927294962b5387f9ead4f18679158452be4f17c765ad0bdffe5264b9c7b0a"
+url = "https://github.com/hadolint/hadolint/releases/download/v2.15.1/hadolint-windows-x86_64.exe"
+url_api = "https://api.github.com/repos/hadolint/hadolint/releases/assets/496546508"
+provenance = "github-attestations"
+
 [[tools."aqua:koalaman/shellcheck"]]
 version = "v0.11.0"
 backend = "aqua:koalaman/shellcheck"
@@ -446,6 +452,41 @@ version = "v8.30.1"
 backend = "aqua:zricethezav/gitleaks"
 specifiers = ["v8.30.1"]
 
+[tools."aqua:zricethezav/gitleaks"."platforms.linux-arm64"]
+checksum = "sha256:e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080"
+url = "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/378332057"
+
+[tools."aqua:zricethezav/gitleaks"."platforms.linux-arm64-musl"]
+checksum = "sha256:e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080"
+url = "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_arm64.tar.gz"
+url_api = "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/378332057"
+
+[tools."aqua:zricethezav/gitleaks"."platforms.linux-x64"]
+checksum = "sha256:551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+url = "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+url_api = "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/378332058"
+
+[tools."aqua:zricethezav/gitleaks"."platforms.linux-x64-musl"]
+checksum = "sha256:551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+url = "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+url_api = "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/378332058"
+
+[tools."aqua:zricethezav/gitleaks"."platforms.macos-arm64"]
+checksum = "sha256:b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5"
+url = "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/378332059"
+
+[tools."aqua:zricethezav/gitleaks"."platforms.macos-x64"]
+checksum = "sha256:dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709"
+url = "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_darwin_x64.tar.gz"
+url_api = "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/378332053"
+
+[tools."aqua:zricethezav/gitleaks"."platforms.windows-x64"]
+checksum = "sha256:d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e"
+url = "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_windows_x64.zip"
+url_api = "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/378333178"
+
 [[tools."forgejo:itiquette/gommitlint"]]
 version = "0.9.12"
 backend = "forgejo:itiquette/gommitlint"
@@ -530,4 +571,10 @@ provenance = "cosign"
 checksum = "sha256:caa513cb04f3804b34d4752f0e0d7904fecb9e7cf1d34081289f83259319a7f6"
 url = "https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_darwin_amd64"
 url_api = "https://api.github.com/repos/mikefarah/yq/releases/assets/522028031"
+provenance = "cosign"
+
+[tools.yq."platforms.windows-x64"]
+checksum = "sha256:ece3dd8bb50d39f93610506273ea262feb91e5c486bbddbb10abf91b2a6c0f14"
+url = "https://github.com/mikefarah/yq/releases/download/v4.53.6/yq_windows_amd64.exe"
+url_api = "https://api.github.com/repos/mikefarah/yq/releases/assets/522027974"
 provenance = "cosign"
