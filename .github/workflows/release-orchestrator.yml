@@ -289,12 +289,12 @@ jobs:
       reusable-ci-ref: ${{ steps.checkout-ci.outputs.commit }}
     steps:
       - name: Checkout caller repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ inputs.branch }}
       - name: Checkout reusable-ci helper scripts
         id: checkout-ci
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-ref'] }}
@@ -503,12 +503,12 @@ jobs:
       packages: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
           fetch-depth: 1
       - name: Checkout reusable-ci helper scripts
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: diggsweden/reusable-ci
           ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
