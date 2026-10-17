@@ -1,13 +1,5 @@
 # TODO
 
-## Private repository container provenance
-
-The pinned SLSA generator requires an explicit `private-repository: true` opt-in,
-but `publish-container.yml` does not expose or forward it. Design a consumer-facing
-option for private releases that makes the public Rekor disclosure explicit, and
-thread it through container configuration and the publish stage. Keep the default
-non-opted-in behavior. See [Private Repository Release Notes](docs/private-repositories.md).
-
 ## Private package dependency authentication
 
 Maven/NPM build jobs currently have only Contents read and do not configure tokens

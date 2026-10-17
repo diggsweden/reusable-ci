@@ -147,6 +147,7 @@ with:
   context: "."
   platforms: "linux/amd64,linux/arm64"
   enable-slsa: true
+  slsa-private-repository: false         # true publishes a private repo's name to the public Rekor log
   enable-analyzed-container-sbom: true   # was `enable-sbom: true` in v2; rename
   enable-scan: true
   registry: "ghcr.io"

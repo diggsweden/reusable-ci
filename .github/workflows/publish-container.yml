@@ -112,6 +112,11 @@ on:
         required: false
         default: true
         type: boolean
+      slsa-private-repository:
+        description: "Allow the SLSA L3 provenance job to run for a private repository. The upstream generator signs with keyless cosign, which always records the repository name in the public Rekor transparency log. Private repositories therefore skip the provenance job unless this is explicitly true. Public repositories ignore this input."
+        required: false
+        default: false
+        type: boolean
       enable-analyzed-container-sbom:
         description: "Run syft on the pushed image and produce the analyzed-container SBOM. Sibling of enable-slsa/enable-scan. When called from release-publish-stage this is derived from source artefacts' sboms; direct callers default to true."
         required: false
@@ -445,6 +450,12 @@ jobs:
           printf "::notice::Current registry: %s\n" "$TARGET_REGISTRY"
           printf "::notice::SLSA provenance attestation will be skipped\n"
           printf "::notice::To enable SLSA: Use registry: ghcr.io or set enable-slsa: false\n"
+      - name: Check SLSA private repository opt-in
+        if: ${{ inputs['push-image'] && inputs['enable-slsa'] && startsWith(github.ref, 'refs/tags/') && inputs.registry == 'ghcr.io' && github.event.repository.private && !inputs['slsa-private-repository'] }}
+        run: |
+          printf "::notice::Repository is private; SLSA L3 provenance attestation will be skipped\n"
+          printf "::notice::The SLSA generator publishes the repository name to the public Rekor transparency log\n"
+          printf "::notice::To opt in: set slsa-private-repository: true on the container entry, or set enable-slsa: false to silence this notice\n"
       - name: Export digest
         if: *if_push_image
         env:
@@ -686,9 +697,15 @@ jobs:
   # Stays as a separate workflow_call to slsa-framework/slsa-github-generator;
   # the per-platform buildkit provenance attached by build-push-action covers
   # platform-level attestation.
+  #
+  # Private repositories are skipped unless `slsa-private-repository` is true:
+  # the generator's keyless cosign signing always writes the repository name
+  # to the public Rekor log and has no option to skip that upload, so the
+  # generator halts on private repos by default. Opting in is a deliberate
+  # consumer choice and is never inferred from visibility alone.
   provenance:
     needs: merge
-    if: ${{ inputs['push-image'] && inputs['enable-slsa'] && startsWith(github.ref, 'refs/tags/') && inputs.registry == 'ghcr.io' }}
+    if: ${{ inputs['push-image'] && inputs['enable-slsa'] && startsWith(github.ref, 'refs/tags/') && inputs.registry == 'ghcr.io' && (!github.event.repository.private || inputs['slsa-private-repository']) }}
     permissions:
       actions: read
       id-token: write
@@ -698,5 +715,6 @@ jobs:
       image: ${{ needs.merge.outputs.image }}
       digest: ${{ needs.merge.outputs.digest }}
       registry-username: ${{ github.actor }}
+      private-repository: ${{ inputs['slsa-private-repository'] }}
     secrets:
       registry-password: ${{ secrets.GITHUB_TOKEN }}

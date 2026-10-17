@@ -194,6 +194,8 @@ jobs:
       # GitHub uses loose equality: false == null is true. Compare the JSON
       # representation for absence so an explicit false is never defaulted on.
       enable-slsa: ${{ matrix.container['enable-slsa'] == true || toJSON(matrix.container['enable-slsa']) == 'null' }}
+      # Opt-in only: absence means false, so a strict comparison is enough here.
+      slsa-private-repository: ${{ matrix.container['slsa-private-repository'] == true }}
       # `enable-analyzed-container-sbom` is derived in parse-artifacts-config.sh
       # from each source artefact's effective-sboms — true if any source includes
       # 'analyzed-container'. Replaces the v2.x user-facing `enable-sbom` flag.

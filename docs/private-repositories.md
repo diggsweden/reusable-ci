@@ -17,15 +17,25 @@ The changelog permission fix resolves the missing PR-read permission; it does no
 | GitHub Packages / GHCR publish | The package already exists with restricted Actions access | The publishing jobs have Packages write, but the package must also allow the consuming repository's workflow to access it. Check the package's Manage Actions access settings. |
 | Container SARIF upload | `CODE_SCANNING_TOKEN` is mapped but Code Scanning is unavailable for the private repo | GitHub requires Code Security to be enabled for private/internal SARIF uploads. This upload step is blocking in `publish-container.yml`. If uploads are not used, omit this optional secret mapping; scan results still remain in workflow artifacts. |
 | Container SBOM attestation | GitHub artifact attestations are unavailable on the repository's plan | The pinned `actions/attest-sbom` documents Enterprise Cloud as required for private/internal repositories. This step is blocking when analyzed-container SBOMs and SLSA are enabled. |
-| Container SLSA provenance | Tagged GHCR release from a private repo with `enable-slsa: true` (the default) | The pinned SLSA generator rejects private repos without an explicit `private-repository: true` opt-in. Our wrapper does not currently expose or forward that input. This is a confirmed integration limitation. |
+| Container SLSA provenance | Tagged GHCR release from a private repo with `enable-slsa: true` (the default) | The provenance job is skipped with a notice. The pinned SLSA generator publishes the repository name to the public Rekor log and cannot skip that upload. Set `slsa-private-repository: true` on the container entry to opt in deliberately. |
 
 ### SLSA For Private Containers
 
-The upstream private-repository opt-in publishes the repository name to the public Rekor transparency log. It must be a deliberate consumer choice; it should not be inferred automatically from repository visibility.
+The upstream private-repository opt-in publishes the repository name to the public Rekor transparency log. The generator signs with keyless cosign and has no option to skip that upload, so there is no way to get L3 provenance for a private repository without the public log entry. Opting in must be a deliberate consumer choice; it is never inferred from repository visibility.
 
-The currently available configuration is to set `enable-slsa: false` on the relevant **existing container entries** in `artifacts.yml`:
+By default a private repository therefore **skips** the external provenance job and prints a notice in the build job. The release still succeeds. BuildKit's own per-platform provenance is still attached to the image, since it does not touch Rekor.
 
-Use a workflow revision containing the container-flag fix: older forwarding expressions treated `false` as equal to `null` and incorrectly re-enabled SLSA. Both `uses:` and `reusable-ci-ref` should select the fixed revision.
+To opt in, set `slsa-private-repository: true` on the relevant **existing container entries** in `artifacts.yml`:
+
+```yaml
+containers:
+  - name: my-app
+    from: [my-app]
+    container-file: Containerfile
+    slsa-private-repository: true
+```
+
+To turn off all provenance, including BuildKit provenance and the GitHub SBOM attestation step, set `enable-slsa: false` instead:
 
 ```yaml
 containers:
@@ -35,7 +45,9 @@ containers:
     enable-slsa: false
 ```
 
-Retain your own container names, source artifacts, and other settings. This disables the external SLSA provenance job, BuildKit provenance, and the GitHub SBOM attestation step. SBOM file generation and container scanning remain separately configured. If attestations are required, the private-repository support needs a follow-up implementation instead of disabling them.
+Use a workflow revision containing the container-flag fix: older forwarding expressions treated `false` as equal to `null` and incorrectly re-enabled SLSA. Both `uses:` and `reusable-ci-ref` should select the fixed revision.
+
+Retain your own container names, source artifacts, and other settings. SBOM file generation and container scanning remain separately configured.
 
 ### What Is Already Wired
 

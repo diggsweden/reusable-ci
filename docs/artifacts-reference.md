@@ -487,6 +487,14 @@ Containers reference artifacts via the `from:` field and are built after all art
 - **Requires:** `id-token: write`, `actions: read` permissions
 - **Example:** `enable-slsa: true`
 
+#### `slsa-private-repository`
+
+- **Type:** `boolean`
+- **Description:** Allow SLSA L3 provenance for a **private** repository. The upstream generator signs with keyless cosign, which always records the repository name in the public Rekor transparency log and has no option to skip that upload. Private repositories therefore skip the provenance job by default and print a notice. Set this to `true` only if exposing the repository name in a public log is acceptable. Ignored for public repositories.
+- **Default:** `false`
+- **Requires:** `enable-slsa: true` (the default) and a `ghcr.io` tag release
+- **Example:** `slsa-private-repository: true`
+
 #### Container `enable-sbom` (removed in v3)
 
 The v2.x `enable-sbom: bool` field on the container block is removed in v3. Container scanning is now derived from each source artefact's `sboms` field — the container is scanned if any source artefact has `analyzed-container` in its effective sboms (the default for buildable types). To skip the scan, exclude `analyzed-container` from the source artefact's `sboms` (e.g. `sboms: build,analyzed-artifact`). Hard cutover — the old field is silently ignored.

@@ -234,6 +234,8 @@ containers:
 containers:
   - enable-slsa: false  # Disable SLSA provenance
   - enable-scan: false  # Disable Trivy scanning
+  - slsa-private-repository: true  # Private repo only: opt in to SLSA provenance
+                                   # (publishes the repo name to the public Rekor log)
 # Container SBOM (analyzed-container) scan is now derived from each source
 # artefact's `sboms`. To skip the scan, set the source artefact's sboms to
 # exclude `analyzed-container`, e.g. `sboms: build,analyzed-artifact`.
