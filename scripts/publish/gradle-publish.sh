@@ -13,8 +13,9 @@
 #   waits for validation. A release cannot be undone, so it is AUTOMATIC only
 #   when the caller says the release passed the authorized-releasers check;
 #   otherwise USER_MANAGED, released by a person in the Portal. A -SNAPSHOT
-#   tag deploys to the Portal's snapshot repository instead, which keeps
-#   snapshots for a limited time (the namespace must enable snapshots).
+#   project version deploys to the Portal's snapshot repository instead,
+#   which keeps snapshots for a limited time (the namespace must enable
+#   snapshots).
 # PUBLISH_TASKS replaces either default with the project's own tasks, for
 #   example a third-party plugin that uploads by itself.
 #
@@ -32,9 +33,9 @@
 #   GPG_FINGERPRINT         maven-central: fingerprint of the imported key
 #   GPG_KEY_ID              maven-central: key id of the imported key
 #   CENTRAL_PUBLISHING_TYPE Optional, AUTOMATIC or USER_MANAGED (default)
-#   RELEASE_TAG             Optional, the release tag; -SNAPSHOT selects the
-#                           Central snapshot repository
-#   CENTRAL_WAIT_SECONDS    Optional, how long to wait for validation (900)
+#   RELEASE_TAG             Optional, the release tag; a SNAPSHOT tag may only
+#                           publish a -SNAPSHOT version
+#   CENTRAL_WAIT_SECONDS    Optional, how long to wait for the deployment (1800)
 #   CENTRAL_POLL_INTERVAL   Optional, seconds between status checks (10)
 
 set -euo pipefail
@@ -170,15 +171,17 @@ build_central_bundle() {
   fi
 }
 
-# Waits until the Portal has validated the deployment. A failed status
-# request is retried until the deadline, because the upload already worked
-# and a re-run would upload a second deployment. FAILED or the deadline
-# stops the job, so a release is never reported for an unvalidated bundle.
-wait_for_validation() {
-  local deployment_id="$1"
-  local wait_seconds="${CENTRAL_WAIT_SECONDS:-900}"
+# Waits for the deployment: until VALIDATED for USER_MANAGED, until PUBLISHED
+# for AUTOMATIC, since the Portal can still fail it while publishing. A failed
+# status request is retried until the deadline, because the upload already
+# worked and a re-run would upload a second deployment. FAILED stops the job.
+# At the deadline an unvalidated deployment fails the job; a validated
+# AUTOMATIC one that is still publishing only warns, as it is on its way.
+wait_for_deployment() {
+  local deployment_id="$1" publishing_type="$2"
+  local wait_seconds="${CENTRAL_WAIT_SECONDS:-1800}"
   local interval="${CENTRAL_POLL_INTERVAL:-10}"
-  local deadline=$((SECONDS + wait_seconds)) status state
+  local deadline=$((SECONDS + wait_seconds)) status state done_states
 
   while true; do
     state=""
@@ -187,11 +190,16 @@ wait_for_validation() {
     else
       ci_log_warning "Status request for deployment ${deployment_id} failed, retrying: ${status}"
     fi
-    case "$state" in
-    VALIDATED | PUBLISHING | PUBLISHED)
+    if [[ "$publishing_type" == "AUTOMATIC" ]]; then
+      done_states="PUBLISHED"
+    else
+      done_states="VALIDATED PUBLISHING PUBLISHED"
+    fi
+    if [[ -n "$state" && " $done_states " == *" $state "* ]]; then
       printf "Deployment %s is %s\n" "$deployment_id" "$state"
       return 0
-      ;;
+    fi
+    case "$state" in
     FAILED)
       ci_log_error "Central Portal rejected deployment ${deployment_id}: $(jq -c '.errors // {}' <<<"$status")"
       exit 1
@@ -204,8 +212,17 @@ wait_for_validation() {
     sleep "$interval"
   done
 
+  if [[ "$state" == "VALIDATED" || "$state" == "PUBLISHING" ]]; then
+    ci_log_warning "Deployment ${deployment_id} is validated but still ${state} after ${wait_seconds}s. Follow it in the Central Portal."
+    return 0
+  fi
   ci_log_error "Deployment ${deployment_id} was not validated within ${wait_seconds}s. Check it in the Central Portal before re-running, since a re-run uploads a new deployment."
   exit 1
+}
+
+# The project version decides snapshot or release, as in the Maven publisher.
+project_version() {
+  run_gradle -q properties | sed -n 's/^version: //p' | head -n 1
 }
 
 write_summary() {
@@ -251,12 +268,11 @@ publish_maven_central() {
     ci_log_error "Unexpected Central Portal upload response: ${deployment_id}"
     exit 1
   fi
-  ci_output "deployment-id" "$deployment_id"
 
-  wait_for_validation "$deployment_id"
+  wait_for_deployment "$deployment_id" "$publishing_type"
 
   if [[ "$publishing_type" == "AUTOMATIC" ]]; then
-    write_summary maven-central "deployment \`${deployment_id}\` validated; the Portal releases it automatically"
+    write_summary maven-central "deployment \`${deployment_id}\` released to Maven Central"
   else
     write_summary maven-central "deployment \`${deployment_id}\` validated; release it under [Deployments](https://central.sonatype.com/publishing/deployments)"
   fi
@@ -301,10 +317,23 @@ main() {
     printf "Tasks: publishAllPublicationsToGitHubPackagesRepository\n"
     run_gradle publishAllPublicationsToGitHubPackagesRepository
     write_summary github-packages ""
-  elif ci_is_snapshot "${RELEASE_TAG:-}"; then
-    publish_maven_central_snapshot
   else
-    publish_maven_central
+    local version
+    version="$(project_version)"
+    if [[ -z "$version" || "$version" == "unspecified" ]]; then
+      ci_log_error "Could not read the project version from Gradle"
+      exit 1
+    fi
+    if [[ "$version" == *-SNAPSHOT ]]; then
+      publish_maven_central_snapshot
+    elif ci_is_snapshot "${RELEASE_TAG:-}"; then
+      # A SNAPSHOT tag skips the authorized-releasers check, so it must not
+      # be able to start a permanent release.
+      ci_log_error "SNAPSHOT tag ${RELEASE_TAG} has release version ${version}; a release needs a production tag"
+      exit 1
+    else
+      publish_maven_central
+    fi
   fi
 
   printf "✓ Published to %s\n" "$PUBLISH_TARGET"

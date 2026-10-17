@@ -433,7 +433,7 @@ jobs:
   # stage's sibling jobs, not before them.
   execute-publish-stage:
     name: Publish
-    needs: [parse-config, execute-prepare-stage, execute-build-stage]
+    needs: [parse-config, validate-prerequisites, execute-prepare-stage, execute-build-stage]
     if: ${{ !failure() && !cancelled() }}
     permissions:
       contents: write
@@ -461,7 +461,9 @@ jobs:
       mavencentral-artifacts: ${{ needs.parse-config.outputs.mavencentral-artifacts }}
       googleplay-artifacts: ${{ needs.parse-config.outputs.googleplay-artifacts }}
       gradlepublish-artifacts: ${{ needs.parse-config.outputs.gradlepublish-artifacts }}
-      authorized-release: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).check_authorization }}
+      # The check's result, not the plan: true only when the releaser matched
+      # the AUTHORIZED_RELEASE_DEVELOPERS list.
+      authorized-release: ${{ needs.validate-prerequisites.outputs.authorized == 'true' }}
       containers: ${{ needs.parse-config.outputs.containers }}
       cargo-artifacts: ${{ needs.parse-config.outputs.cargo-artifacts }}
       build-result-json: ${{ needs.execute-build-stage.outputs.result-json }}

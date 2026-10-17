@@ -169,28 +169,30 @@ validate_maven_publish() {
 }
 
 # config.publish-tasks is a string or a map from Maven target to a string.
-# A string with both targets would run the same task in both jobs, and a
-# misspelled map key would silently fall back to the default publishing.
+# A string with both targets would run the same task in both jobs, and a map
+# key that is misspelled or not in publish-to would silently fall back to the
+# default publishing.
 validate_gradle_publish_tasks() {
   local invalid
   invalid=$(printf "%s" "$ARTIFACTS" | jq -r "$JQ_PUBLISH_DEFS"'
     .[] | select(.["project-type"] == "gradle") | (.config["publish-tasks"] // "") as $tasks
+    | maven_targets as $targets
     | select(
-        (($tasks | type) == "string" and $tasks != "" and (maven_targets | length > 1)) or
+        (($tasks | type) == "string" and $tasks != "" and ($targets | length > 1)) or
         (($tasks | type) == "object" and
-          ($tasks | to_entries | any((.key | maven_target | not) or (.value | type) != "string"))) or
+          ($tasks | to_entries | any((.key as $key | $targets | index($key) | not) or (.value | type) != "string"))) or
         (($tasks | type) | IN("string", "object") | not)
       ) | .name
   ')
 
   [[ -z "$invalid" ]] ||
-    die "config.publish-tasks must be a string for one target, or map github-packages / maven-central to a string: $invalid"
+    die "config.publish-tasks must be a string for one target, or map targets from publish-to (github-packages, maven-central) to a string: $invalid"
 
   local publishing_build
   publishing_build=$(printf "%s" "$ARTIFACTS" | jq -r "$JQ_PUBLISH_DEFS"'
     .[] | select(
       .["project-type"] == "gradle" and (maven_targets | length > 0) and
-      ((.config["gradle-tasks"] // "") | test("(^|[\\s:])publish"))
+      ((.config["gradle-tasks"] // "") | test("(^|[\\s:])publish(\\s|$|\\S*Repository|\\S*MavenCentral)"))
     ) | .name
   ')
 

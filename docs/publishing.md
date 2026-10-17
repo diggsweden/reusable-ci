@@ -378,8 +378,9 @@ A release on Maven Central cannot be undone, so it is gated by the [authorizatio
 
 | Release | Central deployment |
 |---------|--------------------|
-| Production tag | Requires the releaser in the `AUTHORIZED_RELEASE_DEVELOPERS` secret; the release fails when the secret is empty. The deployment is then `AUTOMATIC`: released as soon as the Portal has validated it. The signed tag from an authorized developer is the approval. |
-| `-SNAPSHOT` tag | No authorization check. Deployed to the [Central snapshot repository](https://central.sonatype.org/publish/publish-portal-snapshots/), which keeps snapshots for a limited time (currently 90 days). Enable snapshots for the namespace in the Portal first. |
+| Release version, production tag | Requires the releaser in the `AUTHORIZED_RELEASE_DEVELOPERS` secret; the release fails when the secret is empty. When the releaser matched the list, the deployment is `AUTOMATIC`: the job waits until the Portal has published it to Maven Central. The signed tag from an authorized developer is the approval. |
+| `-SNAPSHOT` version | Deployed to the [Central snapshot repository](https://central.sonatype.org/publish/publish-portal-snapshots/), which keeps snapshots for a limited time (currently 90 days). Enable snapshots for the namespace in the Portal first. A `-SNAPSHOT` tag needs no authorization check. |
+| Release version, `-SNAPSHOT` tag | Fails: a snapshot tag skips the authorization check, so it cannot start a permanent release. |
 
 Called directly, without the release orchestrator, `publish-gradle.yml` leaves a production deployment `USER_MANAGED` unless `authorized-release` is true: open [Deployments](https://central.sonatype.com/publishing/deployments) in the Portal and publish it.
 

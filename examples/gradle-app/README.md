@@ -32,7 +32,7 @@ See [artifacts.yml](artifacts.yml) in this directory.
 Key points:
 - `project-type: gradle` → routes to `build-gradle-app.yml` (JVM-only; no Android SDK, no APK/AAB).
 - `build-type: library` → library publishing contract (adds sources/javadoc artifacts if the consumer's Gradle script is configured for them).
-- `publish-to: [maven-central]` → the publish stage runs `publish-gradle.yml`, which uploads a signed bundle to the Central Portal for you to release there.
+- `publish-to: [maven-central]` → the publish stage runs `publish-gradle.yml`, which uploads a signed bundle to the Central Portal. A production release by an authorized releaser is published to Maven Central automatically once validated; a `-SNAPSHOT` version goes to the Central snapshot repository.
 
 ### `.github/workflows/release-workflow.yml`
 

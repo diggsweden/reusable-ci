@@ -110,6 +110,10 @@ on:
       CODE_SCANNING_TOKEN:
         description: "Token with code_scanning_alerts:write for uploading SARIF to Code Scanning"
         required: false
+    outputs:
+      authorized:
+        description: "true only when the actor matched a configured AUTHORIZED_RELEASE_DEVELOPERS list"
+        value: ${{ jobs.validate.outputs.authorized }}
   workflow_dispatch: # Allow manual validation
     inputs:
       project-type:
@@ -126,6 +130,8 @@ jobs:
     name: Validate Prerequisites
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      authorized: ${{ steps.authorization.outputs.authorized == 'true' }}
     # ============================================================================
     # This job validates all prerequisites required for a successful release:
     #   1. Tag Validation - Format, signature, uniqueness, commit availability
@@ -197,6 +203,7 @@ jobs:
       # Checks if user is authorized for non-SNAPSHOT releases
       # ============================================================================
       - name: Check Release Authorization
+        id: authorization
         if: ${{ inputs['check-authorization'] }}
         env:
           REF_NAME: ${{ github.ref_name }}

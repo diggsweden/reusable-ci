@@ -32,6 +32,9 @@ main() {
 
   if printf ",%s," "$AUTHORIZED_DEVS" | grep -q ",$ACTOR,"; then
     printf "✓ User '%s' is authorized to create production releases\n" "$ACTOR"
+    # Only a match against a configured list counts as authorized; it lets
+    # publishers release irreversibly without a manual step.
+    ci_output "authorized" "true"
   else
     ci_log_error "User '$ACTOR' is not authorized to create non-SNAPSHOT releases"
     printf "Only the following users can create production releases:\n"

@@ -23,6 +23,10 @@ setup() {
   # signature and FAKE_EMPTY publishes nothing.
   cat >"$TEST_DIR/gradlew" <<'SCRIPT'
 #!/usr/bin/env bash
+if [[ "$*" == "-q properties --no-daemon" ]]; then
+  printf 'group: se.digg\nversion: %s\n' "${FAKE_VERSION:-1.0.0}"
+  exit 0
+fi
 printf '%s\n' "$*" >"$TEST_DIR/gradlew.args"
 env | grep '^ORG_GRADLE_PROJECT_' | sort >"$TEST_DIR/gradlew.env" || true
 env | grep '^CENTRAL_REPOSITORY_' | sort >"$TEST_DIR/gradlew.repo" || true
@@ -76,7 +80,12 @@ case "$url" in
       printf 'Bad Gateway'
       exit 22
     fi
-    printf '{"deploymentState":"%s","errors":{"pom":["missing license"]}}' "${FAKE_STATE:-VALIDATED}"
+    # FAKE_STATES steps through one state per call and then stays on the last.
+    read -ra states <<<"${FAKE_STATES:-${FAKE_STATE:-VALIDATED}}"
+    calls="$(cat "$TEST_DIR/status.calls" 2>/dev/null || printf 0)"
+    printf '%s' "$((calls + 1))" >"$TEST_DIR/status.calls"
+    index=$((calls < ${#states[@]} ? calls : ${#states[@]} - 1))
+    printf '{"deploymentState":"%s","errors":{"pom":["missing license"]}}' "${states[$index]}"
     ;;
   *) exit 22 ;;
 esac
@@ -87,6 +96,8 @@ SCRIPT
   unset PUBLISH_TASKS GITHUB_ACTOR GITHUB_TOKEN MAVEN_CENTRAL_USERNAME \
     MAVEN_CENTRAL_PASSWORD RELEASE_GPG_PASSPHRASE GPG_FINGERPRINT GPG_KEY_ID
   export CENTRAL_POLL_INTERVAL=0
+  # Keeps a test that never reaches its end state from hanging the suite.
+  export CENTRAL_WAIT_SECONDS=5
 }
 
 teardown() {
@@ -149,7 +160,41 @@ ORG_GRADLE_PROJECT_signingPassword=s3cret"
   run unzip -Z1 "$TEST_DIR/bundle.zip"
   assert_output --partial "se/digg/lib/1.0.0/lib-1.0.0.jar.asc"
   refute_output --partial "maven-metadata.xml"
-  assert_github_output "deployment-id" "$DEPLOYMENT_ID"
+}
+
+@test "gradle-publish waits for an AUTOMATIC deployment to be published" {
+  set_central_env
+  export CENTRAL_PUBLISHING_TYPE="AUTOMATIC"
+  export FAKE_STATES="VALIDATING VALIDATED PUBLISHING PUBLISHED"
+
+  run_script "publish/gradle-publish.sh"
+
+  assert_success
+  assert_output --partial "Deployment ${DEPLOYMENT_ID} is PUBLISHING, waiting"
+  assert_output --partial "Deployment ${DEPLOYMENT_ID} is PUBLISHED"
+}
+
+@test "gradle-publish fails when an AUTOMATIC deployment fails while publishing" {
+  set_central_env
+  export CENTRAL_PUBLISHING_TYPE="AUTOMATIC"
+  export FAKE_STATES="VALIDATED PUBLISHING FAILED"
+
+  run_script "publish/gradle-publish.sh"
+
+  assert_failure
+  assert_output --partial "Central Portal rejected deployment ${DEPLOYMENT_ID}"
+}
+
+@test "gradle-publish warns when a validated AUTOMATIC deployment is still publishing at the deadline" {
+  set_central_env
+  export CENTRAL_PUBLISHING_TYPE="AUTOMATIC"
+  export FAKE_STATE="PUBLISHING"
+  export CENTRAL_WAIT_SECONDS=0
+
+  run_script "publish/gradle-publish.sh"
+
+  assert_success
+  assert_output --partial "is validated but still PUBLISHING"
 }
 
 @test "gradle-publish fails when the Portal rejects the deployment" {
@@ -200,6 +245,7 @@ ORG_GRADLE_PROJECT_signingPassword=s3cret"
 @test "gradle-publish uploads as AUTOMATIC when asked" {
   set_central_env
   export CENTRAL_PUBLISHING_TYPE="AUTOMATIC"
+  export FAKE_STATE="PUBLISHED"
 
   run_script "publish/gradle-publish.sh"
 
@@ -218,9 +264,10 @@ ORG_GRADLE_PROJECT_signingPassword=s3cret"
   assert_file_not_exists "$TEST_DIR/curl.calls"
 }
 
-@test "gradle-publish deploys a SNAPSHOT tag to the Central snapshot repository" {
+@test "gradle-publish deploys a SNAPSHOT version to the Central snapshot repository" {
   set_central_env
   export RELEASE_TAG="v1.2.0-SNAPSHOT"
+  export FAKE_VERSION="1.2.0-SNAPSHOT"
 
   run_script "publish/gradle-publish.sh"
 
@@ -232,6 +279,41 @@ CENTRAL_REPOSITORY_PASSWORD=central-pass
 CENTRAL_REPOSITORY_URL=https://central.sonatype.com/repository/maven-snapshots/
 CENTRAL_REPOSITORY_USERNAME=central-user"
   assert_file_not_exists "$TEST_DIR/curl.calls"
+}
+
+@test "gradle-publish refuses a SNAPSHOT tag with a release version" {
+  set_central_env
+  export RELEASE_TAG="v1.2.0-SNAPSHOT"
+  export FAKE_VERSION="1.2.0"
+
+  run_script "publish/gradle-publish.sh"
+
+  assert_failure
+  assert_output --partial "SNAPSHOT tag v1.2.0-SNAPSHOT has release version 1.2.0"
+  assert_file_not_exists "$TEST_DIR/curl.calls"
+  assert_file_not_exists "$TEST_DIR/gradlew.args"
+}
+
+@test "gradle-publish sends a SNAPSHOT version under a production tag to the snapshot repository" {
+  set_central_env
+  export RELEASE_TAG="v1.2.0"
+  export FAKE_VERSION="1.2.0-SNAPSHOT"
+
+  run_script "publish/gradle-publish.sh"
+
+  assert_success
+  assert_file_contains "$TEST_DIR/gradlew.args" "publishAllPublicationsToCentralSnapshotsRepository"
+  assert_file_not_exists "$TEST_DIR/curl.calls"
+}
+
+@test "gradle-publish fails when the project version cannot be read" {
+  set_central_env
+  export FAKE_VERSION="unspecified"
+
+  run_script "publish/gradle-publish.sh"
+
+  assert_failure
+  assert_output --partial "Could not read the project version from Gradle"
 }
 
 @test "gradle-publish gives the bundle repository no credentials" {

@@ -89,6 +89,29 @@ run_validate_authorization() {
   assert_output --partial "Authorization check passed"
 }
 
+@test "validate-authorization outputs authorized only for a listed actor" {
+  run_validate_authorization "v1.0.0" "alice" "alice,bob"
+
+  assert_success
+  assert_github_output "authorized" "true"
+}
+
+@test "validate-authorization does not output authorized without a list" {
+  run_validate_authorization "v1.0.0" "alice" ""
+
+  assert_success
+  run get_github_output "authorized"
+  assert_output ""
+}
+
+@test "validate-authorization does not output authorized for a SNAPSHOT" {
+  run_validate_authorization "v1.0.0-SNAPSHOT" "alice" "alice,bob"
+
+  assert_success
+  run get_github_output "authorized"
+  assert_output ""
+}
+
 @test "validate-authorization requires authorized devs for production Maven Central releases" {
   export REQUIRE_AUTHORIZED_DEVELOPERS="true"
 

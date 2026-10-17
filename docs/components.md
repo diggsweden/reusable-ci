@@ -122,7 +122,7 @@ Publishes artifacts to GitHub Packages (Maven/NPM/Gradle).
 ```yaml
 uses: ./.github/workflows/publish-maven-github.yml
 with:
-  package-type: maven          # maven, npm, or gradle
+  package-type: maven          # maven or npm (Gradle uses publish-gradle.yml)
   artifact-source: maven-build-artifacts  # Name of workflow artifact
   working-directory: "."
 ```

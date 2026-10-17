@@ -437,6 +437,37 @@ EOF
   assert_output --partial "config.publish-tasks must be a string for one target"
 }
 
+@test "parse-artifacts-config rejects a publish-tasks key for a target not in publish-to" {
+  cat > "$TEST_DIR/artifacts.yml" << 'EOF'
+artifacts:
+  - name: gradle-lib
+    project-type: gradle
+    build-type: library
+    working-directory: .
+    publish-to:
+      - maven-central
+    config:
+      publish-tasks:
+        github-packages: publishAndReleaseToMavenCentral
+containers: []
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_failure
+  assert_output --partial "config.publish-tasks must be a string for one target"
+}
+
+@test "parse-artifacts-config does not warn about publishToMavenLocal in gradle-tasks" {
+  write_gradle_publish_tasks_config "      gradle-tasks: build publishToMavenLocal"
+
+  run_parse_artifacts_config
+
+  assert_success
+  refute_output --partial "config.gradle-tasks publishes during the build"
+}
+
 @test "parse-artifacts-config warns when gradle-tasks publishes during the build" {
   write_gradle_publish_tasks_config "      gradle-tasks: build publish"
 
