@@ -283,10 +283,10 @@ jobs:
       should-run-version-bump: ${{ steps.plan.outputs.should-run-version-bump }}
       should-create-draft-release: ${{ steps.plan.outputs.should-create-draft-release }}
 
-      # Commit SHA for reusable-ci-ref, resolved before any tag movement.
+      # Commit SHA of the reusable-ci-ref input, resolved before any tag movement.
       # Downstream stages use this instead of the original ref to avoid
       # actions/checkout v6 validation failures when version-bump moves the tag.
-      reusable-ci-ref: ${{ steps.checkout-ci.outputs.commit }}
+      reusable-ci-sha: ${{ steps.checkout-ci.outputs.commit }}
     steps:
       - name: Checkout caller repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -369,7 +369,7 @@ jobs:
       sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).sign_artifacts }}
       check-authorization: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).check_authorization }}
       branch: ${{ inputs.branch }}
-      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
+      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-sha }}
   # ===== Stage 2: Release Preparation =====
   # Release preparation now lives below this control-plane stage call.
   execute-prepare-stage:
@@ -387,7 +387,7 @@ jobs:
     uses: ./.github/workflows/release-prepare-stage.yml
     with:
       branch: ${{ inputs.branch }}
-      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
+      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-sha }}
       artifacts: ${{ needs.parse-config.outputs.artifacts }}
       should-run-version-bump: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).run_version_bump }}
       file-pattern: ${{ inputs['file-pattern'] }}
@@ -414,7 +414,7 @@ jobs:
     uses: ./.github/workflows/release-build-stage.yml
     with:
       branch: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
-      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
+      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-sha }}
       maven-artifacts: ${{ needs.parse-config.outputs.maven-artifacts }}
       npm-artifacts: ${{ needs.parse-config.outputs.npm-artifacts }}
       gradle-artifacts: ${{ needs.parse-config.outputs.gradle-artifacts }}
@@ -450,7 +450,7 @@ jobs:
     uses: ./.github/workflows/release-publish-stage.yml
     with:
       branch: ${{ needs.execute-prepare-stage.outputs.release-sha || inputs.branch }}
-      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
+      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-sha }}
       xcodeios-artifacts: ${{ needs.parse-config.outputs.xcodeios-artifacts }}
       githubpackages-artifacts: ${{ needs.parse-config.outputs.githubpackages-artifacts }}
       mavencentral-artifacts: ${{ needs.parse-config.outputs.mavencentral-artifacts }}
@@ -487,7 +487,7 @@ jobs:
       changelog-config: ${{ inputs['changelog.config'] }}
       make-latest: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).make_latest }}
       has-containers: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).has_containers }}
-      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
+      reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-sha }}
   # ===== Stage 6: Summary =====
   release-summary:
     name: Release Summary
@@ -512,7 +512,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: diggsweden/reusable-ci
-          ref: ${{ needs.parse-config.outputs.reusable-ci-ref }}
+          ref: ${{ needs.parse-config.outputs.reusable-ci-sha }}
           path: .github-shared
           sparse-checkout: scripts
       - name: Generate Release Summary
