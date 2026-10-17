@@ -486,6 +486,24 @@ EOF
   assert_github_output "has-githubpackages" "false"
 }
 
+@test "parse-artifacts-config sets publishes-maven-central for maven and gradle" {
+  create_gradle_publish_config
+
+  ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml" run_parse_artifacts_config
+
+  assert_success
+  assert_github_output "publishes-maven-central" "true"
+}
+
+@test "parse-artifacts-config sets publishes-maven-central false without Central targets" {
+  create_gradle_artifacts_config
+
+  ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml" run_parse_artifacts_config
+
+  assert_success
+  assert_github_output "publishes-maven-central" "false"
+}
+
 @test "parse-artifacts-config sets has-gradlepublish false without gradle publish targets" {
   create_gradle_artifacts_config
   export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"

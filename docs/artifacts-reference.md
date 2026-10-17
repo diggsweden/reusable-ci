@@ -74,6 +74,7 @@ containers:
 - **Use case:** Production libraries that need release approval
 - **Example:** `require-authorization: true`
 - **Requires:** `AUTHORIZED_RELEASE_DEVELOPERS` secret set
+- **Maven Central:** always on for production releases that publish to `maven-central` (Maven or Gradle), and the secret must not be empty. `-SNAPSHOT` tags are exempt.
 
 #### `publish-to`
 

@@ -49,6 +49,9 @@ podman pull ghcr.io/diggsweden/repo-name:v1.0.0
 2. **Maven Central Credentials**
    - Already configured at DiggSweden org level
 
+3. **Authorized Releasers**
+   - Set the `AUTHORIZED_RELEASE_DEVELOPERS` secret to the comma-separated GitHub users who may release. Production releases to Maven Central fail without it; `-SNAPSHOT` tags are exempt.
+
 ### Configuration
 
 ```yaml
@@ -58,7 +61,7 @@ artifacts:
     project-type: maven
     working-directory: .
     build-type: library              # Required for Maven Central
-    require-authorization: true      # Recommended for production libraries
+    require-authorization: true      # Implied by maven-central; needs AUTHORIZED_RELEASE_DEVELOPERS
     publish-to:
       - github-packages              # Also publish to GitHub
       - maven-central                # Publish to Maven Central
@@ -371,15 +374,14 @@ The job runs `publishAllPublicationsToGitHubPackagesRepository`, so the reposito
 
 The project declares no Central repository. The job adds a local bundle repository with an init script and runs `publishAllPublicationsToCentralBundleRepository`, which gives the artifacts with signatures and checksums in Maven repository layout. It then uploads the bundle with the [Central Portal Publisher API](https://central.sonatype.org/publish/publish-portal-api/) and waits until the Portal has validated it, so a rejected bundle fails the job. An unsigned bundle is refused before upload.
 
-A release on Maven Central cannot be undone, so how it is released follows the release's [authorization check](artifacts-reference.md#require-authorization):
+A release on Maven Central cannot be undone, so it is gated by the [authorization check](artifacts-reference.md#require-authorization):
 
 | Release | Central deployment |
 |---------|--------------------|
-| Authorized-releasers check on (`require-authorization: true` or `check-authorization: true`) | `AUTOMATIC`: released as soon as the Portal has validated it. The signed tag from an authorized developer is the approval. |
-| Check off | `USER_MANAGED`: open [Deployments](https://central.sonatype.com/publishing/deployments) in the Portal and publish it. |
-| `-SNAPSHOT` tag | Skipped with a notice. The Portal API does not accept snapshots, and snapshot tags bypass the authorization check. |
+| Production tag | Requires the releaser in the `AUTHORIZED_RELEASE_DEVELOPERS` secret; the release fails when the secret is empty. The deployment is then `AUTOMATIC`: released as soon as the Portal has validated it. The signed tag from an authorized developer is the approval. |
+| `-SNAPSHOT` tag | No authorization check. Deployed to the [Central snapshot repository](https://central.sonatype.org/publish/publish-portal-snapshots/), which keeps snapshots for a limited time (currently 90 days). Enable snapshots for the namespace in the Portal first. |
 
-With the check on, list the releasers in the `AUTHORIZED_RELEASE_DEVELOPERS` secret; without it, everyone with tag push access passes the check.
+Called directly, without the release orchestrator, `publish-gradle.yml` leaves a production deployment `USER_MANAGED` unless `authorized-release` is true: open [Deployments](https://central.sonatype.com/publishing/deployments) in the Portal and publish it.
 
 The signing key arrives as `signingKeyId`, `signingKey` and `signingPassword`. The job uses the `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `RELEASE_GPG_PRIVATE_KEY` and `RELEASE_GPG_PASSPHRASE` secrets and checks them before it starts.
 

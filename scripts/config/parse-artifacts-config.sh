@@ -251,6 +251,17 @@ output_gradle_publish_artifacts() {
   fi
 }
 
+# Any Maven or Gradle artifact publishing to Maven Central. A Central release
+# is permanent, so the release plan then requires authorized releasers.
+output_publishes_maven_central() {
+  local publishes
+  publishes=$(printf "%s" "$ARTIFACTS" | jq -r '
+    any(.[]; (.["project-type"] | IN("maven", "gradle")) and
+      ((.["publish-to"] // []) | index("maven-central")))
+  ')
+  output "publishes-maven-central=$publishes"
+}
+
 output_first_artifact_info() {
   local first_project_type first_build_type first_require_auth
 
@@ -370,6 +381,7 @@ main() {
   validate_gradle_publish_tasks
   output_artifacts_by_publish_target
   output_gradle_publish_artifacts
+  output_publishes_maven_central
   output_first_artifact_info
   generate_summary
 }

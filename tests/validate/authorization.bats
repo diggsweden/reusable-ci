@@ -89,6 +89,32 @@ run_validate_authorization() {
   assert_output --partial "Authorization check passed"
 }
 
+@test "validate-authorization requires authorized devs for production Maven Central releases" {
+  export REQUIRE_AUTHORIZED_DEVELOPERS="true"
+
+  run_validate_authorization "v1.0.0" "random-user" ""
+
+  assert_failure
+  assert_output --partial "required for production Maven Central releases"
+}
+
+@test "validate-authorization still exempts SNAPSHOT when authorized devs are required" {
+  export REQUIRE_AUTHORIZED_DEVELOPERS="true"
+
+  run_validate_authorization "v1.0.0-SNAPSHOT" "random-user" ""
+
+  assert_success
+}
+
+@test "validate-authorization checks the list when authorized devs are required" {
+  export REQUIRE_AUTHORIZED_DEVELOPERS="true"
+
+  run_validate_authorization "v1.0.0" "intruder" "alice,bob"
+
+  assert_failure
+  assert_output --partial "not authorized"
+}
+
 @test "validate-authorizationwarns about open access when no restrictions" {
   run_validate_authorization "v2.5.0" "some-developer" ""
 

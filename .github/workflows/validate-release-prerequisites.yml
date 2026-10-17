@@ -67,6 +67,11 @@ on:
         required: false
         default: false
         type: boolean
+      require-authorized-developers:
+        description: "Fail when AUTHORIZED_RELEASE_DEVELOPERS is empty instead of allowing everyone with tag push access (set for Maven Central releases)"
+        required: false
+        default: false
+        type: boolean
       branch:
         description: "Target branch for release (default: main)"
         required: false
@@ -197,6 +202,7 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
           ACTOR: ${{ github.actor }}
           AUTHORIZED_RELEASE_DEVELOPERS: ${{ secrets.AUTHORIZED_RELEASE_DEVELOPERS }}
+          REQUIRE_AUTHORIZED_DEVELOPERS: ${{ inputs['require-authorized-developers'] }}
         run: |
           bash .github-shared/scripts/validate/authorization.sh \
             "$REF_NAME" \

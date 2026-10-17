@@ -235,3 +235,29 @@ set_standard_plan_env() {
   run get_github_output should-create-draft-release
   assert_output "true"
 }
+
+@test "resolve-release-plan checks authorization when publishing to Maven Central" {
+  set_standard_plan_env
+  export FIRST_REQUIRE_AUTHORIZATION="false"
+  export RELEASE_CHECK_AUTHORIZATION="false"
+  export PUBLISHES_MAVEN_CENTRAL="true"
+
+  run_resolve_release_plan
+
+  assert_success
+  run get_github_output should-check-authorization
+  assert_output "true"
+}
+
+@test "resolve-release-plan leaves authorization off without Maven Central" {
+  set_standard_plan_env
+  export FIRST_REQUIRE_AUTHORIZATION="false"
+  export RELEASE_CHECK_AUTHORIZATION="false"
+  export PUBLISHES_MAVEN_CENTRAL="false"
+
+  run_resolve_release_plan
+
+  assert_success
+  run get_github_output should-check-authorization
+  assert_output "false"
+}

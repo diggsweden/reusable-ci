@@ -93,11 +93,14 @@ should_create_release() {
   fi
 }
 
+# A Maven Central release cannot be undone, so it always checks the releaser.
 should_check_authorization() {
   local require_authorization="$1"
   local release_check_authorization="$2"
+  local publishes_maven_central="$3"
 
-  if [[ "$require_authorization" = "true" ]] || [[ "$release_check_authorization" = "true" ]]; then
+  if [[ "$require_authorization" = "true" ]] || [[ "$release_check_authorization" = "true" ]] ||
+    [[ "$publishes_maven_central" = "true" ]]; then
     printf "true\n"
   else
     printf "false\n"
@@ -170,6 +173,7 @@ main() {
   readonly CI_REF_NAME="${CI_REF_NAME:?CI_REF_NAME is required}"
   readonly PIPELINE_SBOMS="${PIPELINE_SBOMS:-none}"
   readonly FIRST_REQUIRE_AUTHORIZATION="${FIRST_REQUIRE_AUTHORIZATION:-false}"
+  readonly PUBLISHES_MAVEN_CENTRAL="${PUBLISHES_MAVEN_CENTRAL:-false}"
   readonly CONTAINERS="${CONTAINERS:-[]}"
 
   local stable_release
@@ -187,7 +191,7 @@ main() {
   effective_sboms=$(compute_effective_sboms "$RELEASE_SBOMS" "$PIPELINE_SBOMS")
   sign_artifacts=$(should_sign_artifacts "$RELEASE_SIGN_ARTIFACTS")
   create_release=$(should_create_release "$RELEASE_PUBLISHER")
-  check_authorization=$(should_check_authorization "$FIRST_REQUIRE_AUTHORIZATION" "$RELEASE_CHECK_AUTHORIZATION")
+  check_authorization=$(should_check_authorization "$FIRST_REQUIRE_AUTHORIZATION" "$RELEASE_CHECK_AUTHORIZATION" "$PUBLISHES_MAVEN_CENTRAL")
   run_version_bump=$(should_run_version_bump "$CHANGELOG_SKIP_VERSION_BUMP" "$CHANGELOG_CREATOR")
   draft_release=$(is_draft_release "$CI_REF_NAME")
   create_draft_release=$(should_create_draft_release "$RELEASE_DRAFT" "$draft_release")

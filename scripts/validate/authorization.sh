@@ -16,6 +16,13 @@ main() {
     exit 0
   fi
 
+  # A release to Maven Central cannot be undone, so it needs a named list of
+  # releasers rather than everyone with tag push access.
+  if [[ -z "$AUTHORIZED_DEVS" && "${REQUIRE_AUTHORIZED_DEVELOPERS:-false}" == "true" ]]; then
+    ci_log_error "AUTHORIZED_RELEASE_DEVELOPERS secret not configured; it is required for production Maven Central releases"
+    exit 1
+  fi
+
   if [[ -z "$AUTHORIZED_DEVS" ]]; then
     ci_log_warning "AUTHORIZED_RELEASE_DEVELOPERS secret not configured"
     printf "All users with tag push access can create releases\n"

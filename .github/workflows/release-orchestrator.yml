@@ -263,6 +263,7 @@ jobs:
       githubpackages-artifacts: ${{ steps.parse.outputs.githubpackages-artifacts }}
       googleplay-artifacts: ${{ steps.parse.outputs.googleplay-artifacts }}
       gradlepublish-artifacts: ${{ steps.parse.outputs.gradlepublish-artifacts }}
+      publishes-maven-central: ${{ steps.parse.outputs.publishes-maven-central }}
       has-mavencentral: ${{ steps.parse.outputs.has-mavencentral }}
       has-githubpackages: ${{ steps.parse.outputs.has-githubpackages }}
       has-googleplay: ${{ steps.parse.outputs.has-googleplay }}
@@ -331,6 +332,7 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
           PIPELINE_SBOMS: ${{ steps.parse.outputs.pipeline-sboms }}
           FIRST_REQUIRE_AUTHORIZATION: ${{ steps.parse.outputs.first-require-authorization }}
+          PUBLISHES_MAVEN_CENTRAL: ${{ steps.parse.outputs.publishes-maven-central }}
           CONTAINERS: ${{ steps.parse.outputs.containers }}
         run: bash .github-shared/scripts/plan/resolve-release-plan.sh
 
@@ -370,6 +372,7 @@ jobs:
       container-registry: ghcr.io
       sign-artifacts: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).sign_artifacts }}
       check-authorization: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).check_authorization }}
+      require-authorized-developers: ${{ needs.parse-config.outputs.publishes-maven-central == 'true' }}
       branch: ${{ inputs.branch }}
       reusable-ci-ref: ${{ needs.parse-config.outputs.reusable-ci-sha }}
   # ===== Stage 2: Release Preparation =====
