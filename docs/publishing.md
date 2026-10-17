@@ -51,6 +51,7 @@ podman pull ghcr.io/diggsweden/repo-name:v1.0.0
 
 3. **Authorized Releasers**
    - Set the `AUTHORIZED_RELEASE_DEVELOPERS` secret to the comma-separated GitHub users who may release. Production releases to Maven Central fail without it; `-SNAPSHOT` tags are exempt.
+   - The Maven publisher refuses a release version unless the listed releaser started the run. A re-run by someone else, including a re-run of only the failed jobs, fails, because the project's Central plugin may publish on its own. A `-SNAPSHOT` tag cannot publish a release version. Only the root project's version is checked, so modules should inherit it.
 
 ### Configuration
 
@@ -378,9 +379,9 @@ A release on Maven Central cannot be undone, so it is gated by the [authorizatio
 
 | Release | Central deployment |
 |---------|--------------------|
-| Release version, production tag | Requires the releaser in the `AUTHORIZED_RELEASE_DEVELOPERS` secret; the release fails when the secret is empty. When the releaser matched the list, the deployment is `AUTOMATIC`: the job waits until the Portal has published it to Maven Central. The signed tag from an authorized developer is the approval. |
+| Release version, production tag | Requires the releaser in the `AUTHORIZED_RELEASE_DEVELOPERS` secret; the release fails when the secret is empty. When the releaser who pushed the tag matched the list, the deployment is `AUTOMATIC`: the job waits until the Portal has published it to Maven Central. A re-run by anyone else, including a re-run of only the failed jobs, makes it `USER_MANAGED`, waiting in the Portal. The tag must be signed, but the approval is the listed releaser, not the signing key. |
 | `-SNAPSHOT` version | Deployed to the [Central snapshot repository](https://central.sonatype.org/publish/publish-portal-snapshots/), which keeps snapshots for a limited time (currently 90 days). Enable snapshots for the namespace in the Portal first. A `-SNAPSHOT` tag needs no authorization check. |
-| Release version, `-SNAPSHOT` tag | Fails: a snapshot tag skips the authorization check, so it cannot start a permanent release. |
+| Release version, `-SNAPSHOT` tag | Fails, also with `publish-tasks`: a snapshot tag skips the authorization check, so it cannot start a permanent release. |
 
 Called directly, without the release orchestrator, `publish-gradle.yml` leaves a production deployment `USER_MANAGED` unless `authorized-release` is true: open [Deployments](https://central.sonatype.com/publishing/deployments) in the Portal and publish it.
 
@@ -396,7 +397,7 @@ The signing key arrives as `signingKeyId`, `signingKey` and `signingPassword`. T
         maven-central: publishAndReleaseToMavenCentral
 ```
 
-The job then runs only those tasks. Such plugins also get `mavenCentralUsername`, `mavenCentralPassword` and the `signingInMemoryKey*` properties.
+The job then runs only those tasks. Such plugins also get `mavenCentralUsername`, `mavenCentralPassword` and the `signingInMemoryKey*` properties. Because such a plugin decides by itself whether to release, a Maven Central release through `publish-tasks` runs only for a releaser listed in `AUTHORIZED_RELEASE_DEVELOPERS`; otherwise the job fails.
 
 ## NPM Registry (npmjs.org)
 

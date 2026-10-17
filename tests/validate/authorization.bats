@@ -96,6 +96,20 @@ run_validate_authorization() {
   assert_github_output "authorized" "true"
 }
 
+@test "validate-authorization matches a bot name literally" {
+  run_validate_authorization "v1.0.0" "release-bot[bot]" "alice,release-bot[bot]"
+
+  assert_success
+  assert_github_output "authorized" "true"
+}
+
+@test "validate-authorization does not treat a name as a pattern" {
+  run_validate_authorization "v1.0.0" "release-botb" "alice,release-bot[bot]"
+
+  assert_failure
+  assert_output --partial "not authorized"
+}
+
 @test "validate-authorization does not output authorized without a list" {
   run_validate_authorization "v1.0.0" "alice" ""
 

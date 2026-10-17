@@ -97,7 +97,8 @@ jobs:
         # Read access to GitHub Packages for private dependencies. Only the
         # credential is provided here; which scopes resolve from
         # npm.pkg.github.com stays in the project's own .npmrc. The token is
-        # referenced, never written to disk, and only this step sees it.
+        # referenced, never written to disk, and only this step sees it,
+        # including the install scripts that npm ci runs.
         run: |
           npmrc="$RUNNER_TEMP/github-packages.npmrc"
           # shellcheck disable=SC2016  # npm expands ${NODE_AUTH_TOKEN} itself

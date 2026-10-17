@@ -220,9 +220,54 @@ wait_for_deployment() {
   exit 1
 }
 
-# The project version decides snapshot or release, as in the Maven publisher.
-project_version() {
-  run_gradle -q properties | sed -n 's/^version: //p' | head -n 1
+# Sets RELEASE_KIND to snapshot or release from the versions of every project
+# that applies maven-publish (or the root project when none does); the version
+# decides, as in the Maven publisher.
+# Mixed or unreadable versions stop the job. It sets a variable instead of
+# printing, so its error annotations are not swallowed by a $(...) caller.
+resolve_release_kind() {
+  local init_script versions
+  init_script="$(mktemp --suffix=.init.gradle.kts)"
+  # Versions are collected once every project is configured and handed to
+  # the task as plain strings, which keeps it configuration cache compatible.
+  # A build without maven-publish, such as a publish-tasks plugin that uploads
+  # by other means, falls back to the root project's version.
+  cat >"$init_script" <<'EOF'
+gradle.projectsEvaluated {
+    val published = rootProject.allprojects
+        .filter { it.plugins.hasPlugin("maven-publish") }
+        .map { it.version.toString() }
+        .distinct()
+    val versions = published.ifEmpty { listOf(rootProject.version.toString()) }
+    rootProject.tasks.register("printPublishVersions") {
+        doLast { versions.forEach { println("publish-version: $it") } }
+    }
+}
+EOF
+  versions="$(run_gradle -q --init-script "$init_script" printPublishVersions | sed -n 's/^publish-version: //p')"
+  rm -f "$init_script"
+
+  if [[ -z "$versions" ]] || grep -qx 'unspecified' <<<"$versions"; then
+    ci_log_error "Could not read the version of the published projects from Gradle"
+    exit 1
+  fi
+  if ! grep -qv -- '-SNAPSHOT$' <<<"$versions"; then
+    RELEASE_KIND="snapshot"
+  elif ! grep -q -- '-SNAPSHOT$' <<<"$versions"; then
+    RELEASE_KIND="release"
+  else
+    ci_log_error "The published projects mix snapshot and release versions: $(tr '\n' ' ' <<<"$versions")"
+    exit 1
+  fi
+}
+
+# A SNAPSHOT tag skips the authorized-releasers check, so it must not be able
+# to start a permanent release, whoever does the publishing.
+refuse_release_from_snapshot_tag() {
+  if ci_is_snapshot "${RELEASE_TAG:-}"; then
+    ci_log_error "SNAPSHOT tag ${RELEASE_TAG} would publish a release version; a release needs a production tag"
+    exit 1
+  fi
 }
 
 write_summary() {
@@ -309,7 +354,21 @@ main() {
 
   printf "Publishing to %s via Gradle...\n" "$PUBLISH_TARGET"
 
+  RELEASE_KIND=""
+  if [[ "$PUBLISH_TARGET" == "maven-central" ]]; then
+    resolve_release_kind
+    if [[ "$RELEASE_KIND" == "release" ]]; then
+      refuse_release_from_snapshot_tag
+    fi
+  fi
+
   if has_override; then
+    # The plugin behind publish-tasks decides on its own whether to release,
+    # so it may make a Central release only for an authorized releaser.
+    if [[ "$RELEASE_KIND" == "release" && "${CENTRAL_PUBLISHING_TYPE:-USER_MANAGED}" != "AUTOMATIC" ]]; then
+      ci_log_error "publish-tasks may release to Maven Central only for an authorized releaser listed in AUTHORIZED_RELEASE_DEVELOPERS"
+      exit 1
+    fi
     run_override_tasks
   elif [[ "$PUBLISH_TARGET" == "github-packages" ]]; then
     # The named-repository task publishes to that destination only; the bare
@@ -317,23 +376,10 @@ main() {
     printf "Tasks: publishAllPublicationsToGitHubPackagesRepository\n"
     run_gradle publishAllPublicationsToGitHubPackagesRepository
     write_summary github-packages ""
+  elif [[ "$RELEASE_KIND" == "snapshot" ]]; then
+    publish_maven_central_snapshot
   else
-    local version
-    version="$(project_version)"
-    if [[ -z "$version" || "$version" == "unspecified" ]]; then
-      ci_log_error "Could not read the project version from Gradle"
-      exit 1
-    fi
-    if [[ "$version" == *-SNAPSHOT ]]; then
-      publish_maven_central_snapshot
-    elif ci_is_snapshot "${RELEASE_TAG:-}"; then
-      # A SNAPSHOT tag skips the authorized-releasers check, so it must not
-      # be able to start a permanent release.
-      ci_log_error "SNAPSHOT tag ${RELEASE_TAG} has release version ${version}; a release needs a production tag"
-      exit 1
-    else
-      publish_maven_central
-    fi
+    publish_maven_central
   fi
 
   printf "✓ Published to %s\n" "$PUBLISH_TARGET"

@@ -21,8 +21,9 @@
 #     local bundle repository with an init script, uploads the bundle with
 #     the Central Portal Publisher API and waits for validation. With
 #     authorized-release true the Portal releases it automatically;
-#     otherwise a person releases it in the Portal. A -SNAPSHOT tag deploys
-#     to the Central snapshot repository instead.
+#     otherwise a person releases it in the Portal. A -SNAPSHOT project
+#     version deploys to the Central snapshot repository instead; a
+#     -SNAPSHOT tag with a release version fails.
 #   - publish-tasks replaces the default task, for example for a
 #     third-party plugin that uploads by itself
 #
@@ -98,7 +99,8 @@ jobs:
   publish-gradle:
     name: Publish Gradle (${{ inputs.target }})
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Room for a cold build plus the up to 30 minute wait for Maven Central.
+    timeout-minutes: 75
     permissions:
       contents: read
       packages: write
@@ -182,6 +184,8 @@ jobs:
           RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
           GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
           GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}
-          CENTRAL_PUBLISHING_TYPE: ${{ inputs['authorized-release'] && 'AUTOMATIC' || 'USER_MANAGED' }}
+          # A re-run keeps github.actor, also on "Re-run failed jobs", which
+          # skips validation; a re-run by anyone else waits for a manual release.
+          CENTRAL_PUBLISHING_TYPE: ${{ inputs['authorized-release'] && github.triggering_actor == github.actor && 'AUTOMATIC' || 'USER_MANAGED' }}
           RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: bash "${{ github.workspace }}/.github-shared/scripts/publish/gradle-publish.sh"

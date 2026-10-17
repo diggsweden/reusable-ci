@@ -25,7 +25,7 @@ on:
         required: true
         type: string
       authorized-release:
-        description: "The release passed the authorized-releasers check; Maven Central deployments from publish-gradle are then released automatically"
+        description: "The releaser matched AUTHORIZED_RELEASE_DEVELOPERS. Gradle Central deployments are then released automatically; Maven Central refuses a release version without it."
         required: false
         default: false
         type: boolean
@@ -138,6 +138,7 @@ jobs:
       # mvn deploy rebuilds from source, so it must check out the release commit.
       branch: ${{ inputs.branch }}
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
+      authorized-release: ${{ inputs['authorized-release'] }}
   publish-gradle:
     name: Publish Gradle - ${{ matrix.artifact.name }} (${{ matrix.artifact['publish-target'] }})
     if: ${{ inputs.gradlepublish-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.gradle == 'success' }}

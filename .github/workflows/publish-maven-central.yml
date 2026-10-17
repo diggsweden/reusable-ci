@@ -60,6 +60,11 @@ on:
         required: false
         default: "main"
         type: string
+      authorized-release:
+        description: "The releaser matched AUTHORIZED_RELEASE_DEVELOPERS. False refuses a release version, since the project's Central plugin may publish it on its own. Direct callers without an authorization step keep the default."
+        required: false
+        default: true
+        type: boolean
     secrets:
       MAVEN_CENTRAL_PASSWORD:
         description: "Maven Central (Sonatype) password or token"
@@ -124,13 +129,31 @@ jobs:
       - name: Get version info
         id: version-info
         working-directory: ${{ inputs['working-directory'] }}
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          # A re-run keeps github.actor, also on "Re-run failed jobs", which
+          # skips validation, so a re-run by anyone else is not authorized.
+          AUTHORIZED: ${{ inputs['authorized-release'] && github.triggering_actor == github.actor }}
         run: |
+          source "${{ github.workspace }}/.github-shared/scripts/ci/output.sh"
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
           printf "VERSION=%s\n" "${VERSION}" >> "$GITHUB_OUTPUT"
 
           if [[ "${VERSION}" == *-SNAPSHOT ]]; then
             printf "IS_SNAPSHOT=true\n" >> "$GITHUB_OUTPUT"
           else
+            # A release is permanent and the project's Central plugin may
+            # publish it on its own, so it needs an authorized releaser. A
+            # SNAPSHOT tag skips that check and must not start a release.
+            # Only the root version is read; modules are expected to inherit it.
+            if ci_is_snapshot "$RELEASE_TAG"; then
+              printf "::error::SNAPSHOT tag %s would publish release version %s; a release needs a production tag\n" "$RELEASE_TAG" "$VERSION"
+              exit 1
+            fi
+            if [[ "$AUTHORIZED" != "true" ]]; then
+              printf "::error::Release %s needs a releaser listed in AUTHORIZED_RELEASE_DEVELOPERS, and a re-run by that releaser\n" "$VERSION"
+              exit 1
+            fi
             printf "IS_SNAPSHOT=false\n" >> "$GITHUB_OUTPUT"
           fi
 

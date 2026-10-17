@@ -6,6 +6,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/../ci/output.sh"
 
+# Matches a user against the comma-separated list literally, so names such
+# as release-bot[bot] are not read as a pattern.
+is_listed() {
+  printf ",%s," "$AUTHORIZED_DEVS" | grep -qF ",$1,"
+}
+
 main() {
   readonly TAG_NAME="${1:?Usage: $0 <tag-name> <actor> [authorized-devs]}"
   readonly ACTOR="${2:?Usage: $0 <tag-name> <actor> [authorized-devs]}"
@@ -30,10 +36,11 @@ main() {
     exit 0
   fi
 
-  if printf ",%s," "$AUTHORIZED_DEVS" | grep -q ",$ACTOR,"; then
+  if is_listed "$ACTOR"; then
     printf "✓ User '%s' is authorized to create production releases\n" "$ACTOR"
     # Only a match against a configured list counts as authorized; it lets
-    # publishers release irreversibly without a manual step.
+    # publishers release irreversibly. Re-runs are judged in the publish
+    # jobs, which also run on "Re-run failed jobs" while this step does not.
     ci_output "authorized" "true"
   else
     ci_log_error "User '$ACTOR' is not authorized to create non-SNAPSHOT releases"

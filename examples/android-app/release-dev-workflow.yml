@@ -37,6 +37,7 @@ jobs:
     uses: diggsweden/reusable-ci/.github/workflows/build-gradle-android.yml@747ac6d4ff82d409a48c125266939a15df9a3270 # Migration baseline
     permissions:
       contents: read
+      packages: read # Required by build-gradle-android.yml from v3.1.0 (private dependencies)
     secrets:
       ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}

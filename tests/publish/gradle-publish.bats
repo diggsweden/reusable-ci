@@ -23,8 +23,10 @@ setup() {
   # signature and FAKE_EMPTY publishes nothing.
   cat >"$TEST_DIR/gradlew" <<'SCRIPT'
 #!/usr/bin/env bash
-if [[ "$*" == "-q properties --no-daemon" ]]; then
-  printf 'group: se.digg\nversion: %s\n' "${FAKE_VERSION:-1.0.0}"
+if [[ "$*" == *printPublishVersions* ]]; then
+  for version in ${FAKE_VERSION:-1.0.0}; do
+    printf 'publish-version: %s\n' "$version"
+  done
   exit 0
 fi
 printf '%s\n' "$*" >"$TEST_DIR/gradlew.args"
@@ -289,7 +291,7 @@ CENTRAL_REPOSITORY_USERNAME=central-user"
   run_script "publish/gradle-publish.sh"
 
   assert_failure
-  assert_output --partial "SNAPSHOT tag v1.2.0-SNAPSHOT has release version 1.2.0"
+  assert_output --partial "SNAPSHOT tag v1.2.0-SNAPSHOT would publish a release version"
   assert_file_not_exists "$TEST_DIR/curl.calls"
   assert_file_not_exists "$TEST_DIR/gradlew.args"
 }
@@ -313,7 +315,55 @@ CENTRAL_REPOSITORY_USERNAME=central-user"
   run_script "publish/gradle-publish.sh"
 
   assert_failure
-  assert_output --partial "Could not read the project version from Gradle"
+  assert_output --partial "Could not read the version of the published projects"
+}
+
+@test "gradle-publish refuses mixed snapshot and release versions" {
+  set_central_env
+  export FAKE_VERSION="1.2.0 1.3.0-SNAPSHOT"
+
+  run_script "publish/gradle-publish.sh"
+
+  assert_failure
+  assert_output --partial "The published projects mix snapshot and release versions"
+  assert_file_not_exists "$TEST_DIR/gradlew.args"
+}
+
+@test "gradle-publish refuses a publish-tasks Central release without an authorized releaser" {
+  set_central_env
+  export PUBLISH_TASKS="publishAndReleaseToMavenCentral"
+
+  run_script "publish/gradle-publish.sh"
+
+  assert_failure
+  assert_output --partial "publish-tasks may release to Maven Central only for an authorized releaser"
+  assert_file_not_exists "$TEST_DIR/gradlew.args"
+}
+
+@test "gradle-publish refuses a publish-tasks release under a SNAPSHOT tag even when authorized" {
+  set_central_env
+  export CENTRAL_PUBLISHING_TYPE="AUTOMATIC"
+  export PUBLISH_TASKS="publishAndReleaseToMavenCentral"
+  export RELEASE_TAG="v1.2.0-SNAPSHOT"
+  export FAKE_VERSION="1.2.0"
+
+  run_script "publish/gradle-publish.sh"
+
+  assert_failure
+  assert_output --partial "SNAPSHOT tag v1.2.0-SNAPSHOT would publish a release version"
+  assert_file_not_exists "$TEST_DIR/gradlew.args"
+}
+
+@test "gradle-publish runs publish-tasks for a snapshot without authorization" {
+  set_central_env
+  export PUBLISH_TASKS="publishToMavenCentral"
+  export RELEASE_TAG="v1.2.0-SNAPSHOT"
+  export FAKE_VERSION="1.2.0-SNAPSHOT"
+
+  run_script "publish/gradle-publish.sh"
+
+  assert_success
+  assert_file_contains "$TEST_DIR/gradlew.args" "^publishToMavenCentral --no-daemon$"
 }
 
 @test "gradle-publish gives the bundle repository no credentials" {
@@ -370,6 +420,7 @@ CENTRAL_REPOSITORY_USERNAME=central-user"
 
 @test "gradle-publish runs publish-tasks instead of the Central upload" {
   set_central_env
+  export CENTRAL_PUBLISHING_TYPE="AUTOMATIC"
   export PUBLISH_TASKS="publishAndReleaseToMavenCentral  --stacktrace"
 
   run_script "publish/gradle-publish.sh"

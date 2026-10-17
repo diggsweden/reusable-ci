@@ -59,7 +59,7 @@ The Maven, NPM, Gradle and Gradle Android build jobs get `packages: read` and pa
 @diggsweden:registry=https://npm.pkg.github.com
 ```
 
-The token is available to `npm ci` only, not to tests, the build script or `npm pack`.
+The token is available only during `npm ci`, which includes the install scripts it runs (the project's `prepare` script and dependencies' install scripts). Tests, `npm run build` as a separate step and `npm pack` do not get it.
 
 **Maven.** `setup-java` writes a `settings.xml` server with id `github`. Declare a repository with that id in `pom.xml`:
 
@@ -94,7 +94,7 @@ Limitations:
 
 - Packages owned by another organization and registries other than GitHub Packages are not supported. The automatic token cannot reach them.
 - Container builds do not receive the token. A `Containerfile` that installs dependencies itself has to use public packages, or copy in the artifacts the build job produced.
-- The release and dev workflows need `packages: read` or broader from the caller. The documented `packages: write` covers this.
+- The release and dev workflows need `packages: read` or broader from the caller. The documented `packages: write` covers this. A workflow that calls `build-maven.yml`, `build-npm.yml`, `build-gradle-app.yml` or `build-gradle-android.yml` directly must grant `packages: read` to that job from v3.1.0, or GitHub rejects the run.
 
 ### What Is Already Wired
 
