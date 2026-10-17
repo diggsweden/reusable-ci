@@ -140,37 +140,76 @@ output_artifacts_by_type() {
   done
 }
 
+# Shared jq definitions for the publish routing below.
+#   maven_target: a target served by Maven repository publishers.
+#   jvm_app: a Maven or Gradle application; applications are not published
+#     to GitHub Packages, which is for libraries.
+readonly JQ_PUBLISH_DEFS='
+  def maven_target: . == "github-packages" or . == "maven-central";
+  def maven_targets: [(.["publish-to"] // [])[] | select(maven_target)];
+  def jvm_app: .["build-type"] == "application" and (.["project-type"] | IN("maven", "gradle"));
+'
+
 validate_maven_publish() {
-  local maven_apps_to_github
-  maven_apps_to_github=$(printf "%s" "$ARTIFACTS" | jq -r '
+  local apps_to_github
+  apps_to_github=$(printf "%s" "$ARTIFACTS" | jq -r "$JQ_PUBLISH_DEFS"'
+    .[] | select(jvm_app and (.["publish-to"] // [] | index("github-packages"))) | .name
+  ')
+
+  [[ -z "$apps_to_github" ]] ||
+    warn "Applications should not be published to GitHub Packages (use only for libraries). Skipping for: $apps_to_github"
+
+  local android_to_maven
+  android_to_maven=$(printf "%s" "$ARTIFACTS" | jq -r "$JQ_PUBLISH_DEFS"'
+    .[] | select(.["project-type"] == "gradle-android" and (maven_targets | length > 0)) | .name
+  ')
+
+  [[ -z "$android_to_maven" ]] ||
+    warn "gradle-android artifacts cannot be published to GitHub Packages or Maven Central yet. Skipping for: $android_to_maven"
+}
+
+# config.publish-tasks is a string or a map from Maven target to a string.
+# A string with both targets would run the same task in both jobs, and a
+# misspelled map key would silently fall back to the default publishing.
+validate_gradle_publish_tasks() {
+  local invalid
+  invalid=$(printf "%s" "$ARTIFACTS" | jq -r "$JQ_PUBLISH_DEFS"'
+    .[] | select(.["project-type"] == "gradle") | (.config["publish-tasks"] // "") as $tasks
+    | select(
+        (($tasks | type) == "string" and $tasks != "" and (maven_targets | length > 1)) or
+        (($tasks | type) == "object" and
+          ($tasks | to_entries | any((.key | maven_target | not) or (.value | type) != "string"))) or
+        (($tasks | type) | IN("string", "object") | not)
+      ) | .name
+  ')
+
+  [[ -z "$invalid" ]] ||
+    die "config.publish-tasks must be a string for one target, or map github-packages / maven-central to a string: $invalid"
+
+  local publishing_build
+  publishing_build=$(printf "%s" "$ARTIFACTS" | jq -r "$JQ_PUBLISH_DEFS"'
     .[] | select(
-      .["project-type"] == "maven" and
-      .["build-type"] == "application" and
-      (.["publish-to"] // [] | contains(["github-packages"]))
+      .["project-type"] == "gradle" and (maven_targets | length > 0) and
+      ((.config["gradle-tasks"] // "") | test("(^|[\\s:])publish"))
     ) | .name
   ')
 
-  [[ -z "$maven_apps_to_github" ]] ||
-    warn "Maven applications should not be published to GitHub Packages (use only for libraries). Skipping for: $maven_apps_to_github"
+  [[ -z "$publishing_build" ]] ||
+    warn "config.gradle-tasks publishes during the build, and the publish stage publishes again. Remove the publish task from gradle-tasks for: $publishing_build"
 }
 
+# Gradle and gradle-android artifacts never reach the Maven-based
+# github-packages and maven-central publishers: Gradle publishes from source
+# through publish-gradle.yml, and gradle-android has no Maven path yet.
 output_artifacts_by_publish_target() {
   local target filtered count target_name
 
   for target in $PUBLISH_TARGETS; do
-    if [[ "$target" = "github-packages" ]]; then
-      filtered=$(printf "%s" "$ARTIFACTS" | jq -c '
-        [.[] | select(
-          (.["publish-to"] // []) | contains(["'"${target}"'"])
-        ) | select(
-          .["project-type"] != "maven" or .["build-type"] != "application"
-        )]
-      ')
-    else
-      filtered=$(printf "%s" "$ARTIFACTS" | jq -c '
-        [.[] | select((.["publish-to"] // []) | contains(["'"${target}"'"]))]
-      ')
-    fi
+    filtered=$(printf "%s" "$ARTIFACTS" | jq -c --arg target "$target" "$JQ_PUBLISH_DEFS"'
+      [.[] | select((.["publish-to"] // []) | index($target))
+        | select(($target | maven_target | not) or (.["project-type"] | IN("gradle", "gradle-android") | not))
+        | select($target != "github-packages" or (jvm_app | not))]
+    ')
 
     count=$(printf "%s" "$filtered" | jq 'length')
     target_name=$(normalize_name "$target")
@@ -183,6 +222,33 @@ output_artifacts_by_publish_target() {
       output "has-${target_name}=false"
     fi
   done
+}
+
+# One entry per Gradle artifact and Maven target, so each target publishes
+# in its own job and a failed one can be re-run alone. Each entry carries
+# publish-target and the publish-tasks override resolved for that target.
+output_gradle_publish_artifacts() {
+  local filtered count
+
+  filtered=$(printf "%s" "$ARTIFACTS" | jq -c "$JQ_PUBLISH_DEFS"'
+    [.[] | select(.["project-type"] == "gradle") | . as $artifact
+      | maven_targets[]
+      | select(. != "github-packages" or ($artifact | jvm_app | not)) | . as $target
+      | ($artifact.config["publish-tasks"] // "") as $override
+      | $artifact + {
+          "publish-target": $target,
+          "publish-tasks": (if ($override | type) == "object" then ($override[$target] // "") else $override end)
+        }]
+  ')
+  count=$(printf "%s" "$filtered" | jq 'length')
+
+  output_multiline "gradlepublish-artifacts" "$filtered"
+
+  if [[ "$count" -gt 0 ]]; then
+    output "has-gradlepublish=true"
+  else
+    output "has-gradlepublish=false"
+  fi
 }
 
 output_first_artifact_info() {
@@ -301,7 +367,9 @@ main() {
 
   output_artifacts_by_type
   validate_maven_publish
+  validate_gradle_publish_tasks
   output_artifacts_by_publish_target
+  output_gradle_publish_artifacts
   output_first_artifact_info
   generate_summary
 }

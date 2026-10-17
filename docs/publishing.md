@@ -294,6 +294,107 @@ Then use snapshot version in your project:
 
 ---
 
+## Gradle Publishing
+
+Gradle JVM projects (`project-type: gradle`) publish to GitHub Packages and Maven Central through `publish-gradle.yml`, with Gradle's own `maven-publish` and `signing` plugins. No third-party plugin is needed. Each target publishes in its own job after the build stage succeeds, so a failed target can be re-run alone. Keep publishing out of `config.gradle-tasks`.
+
+```yaml
+artifacts:
+  - name: my-gradle-lib
+    project-type: gradle
+    build-type: library
+    publish-to:
+      - github-packages
+      - maven-central
+    config:
+      java-version: 25
+      gradle-tasks: build
+```
+
+The job publishes from source: it checks out and runs Gradle again, because `maven-publish` needs the project. The published JAR matches the build-stage artifact, which the release attaches and the SBOM describes, as far as the build is reproducible.
+
+### Build Script
+
+```kotlin
+plugins {
+    `java-library`
+    `maven-publish`
+    signing
+}
+
+java {
+    withSourcesJar()
+    withJavadocJar()
+}
+
+publishing {
+    publications {
+        create<MavenPublication>("maven") {
+            from(components["java"])
+            pom {
+                name.set("my-gradle-lib")
+                description.set("What the library does")
+                url.set("https://github.com/diggsweden/my-gradle-lib")
+                licenses { license { name.set("EUPL-1.2") } }
+                developers { developer { name.set("Digg") } }
+                scm { url.set("https://github.com/diggsweden/my-gradle-lib") }
+            }
+        }
+    }
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/diggsweden/my-gradle-lib")
+            credentials {
+                username = findProperty("githubActor") as String?
+                password = findProperty("githubToken") as String?
+            }
+        }
+    }
+}
+
+signing {
+    // Signs when CI provides the key; without one, for example locally,
+    // the signing tasks are skipped.
+    val signingKey = findProperty("signingKey") as String?
+    isRequired = signingKey != null
+    useInMemoryPgpKeys(findProperty("signingKeyId") as String?, signingKey, findProperty("signingPassword") as String?)
+    sign(publishing.publications)
+}
+```
+
+### GitHub Packages
+
+The job runs `publishAllPublicationsToGitHubPackagesRepository`, so the repository must be named `GitHubPackages`. The named task publishes to that repository only, unlike the bare `publish` task. The credentials arrive as `githubActor` and `githubToken`.
+
+### Maven Central
+
+The project declares no Central repository. The job adds a local bundle repository with an init script and runs `publishAllPublicationsToCentralBundleRepository`, which gives the artifacts with signatures and checksums in Maven repository layout. It then uploads the bundle with the [Central Portal Publisher API](https://central.sonatype.org/publish/publish-portal-api/) and waits until the Portal has validated it, so a rejected bundle fails the job. An unsigned bundle is refused before upload.
+
+A release on Maven Central cannot be undone, so how it is released follows the release's [authorization check](artifacts-reference.md#require-authorization):
+
+| Release | Central deployment |
+|---------|--------------------|
+| Authorized-releasers check on (`require-authorization: true` or `check-authorization: true`) | `AUTOMATIC`: released as soon as the Portal has validated it. The signed tag from an authorized developer is the approval. |
+| Check off | `USER_MANAGED`: open [Deployments](https://central.sonatype.com/publishing/deployments) in the Portal and publish it. |
+| `-SNAPSHOT` tag | Skipped with a notice. The Portal API does not accept snapshots, and snapshot tags bypass the authorization check. |
+
+With the check on, list the releasers in the `AUTHORIZED_RELEASE_DEVELOPERS` secret; without it, everyone with tag push access passes the check.
+
+The signing key arrives as `signingKeyId`, `signingKey` and `signingPassword`. The job uses the `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `RELEASE_GPG_PRIVATE_KEY` and `RELEASE_GPG_PASSPHRASE` secrets and checks them before it starts.
+
+### Own Publishing Tasks
+
+[`config.publish-tasks`](artifacts-reference.md#configpublish-tasks) replaces the default for a target, for example when a third-party plugin uploads by itself. With both targets, map each target to its tasks:
+
+```yaml
+    config:
+      publish-tasks:
+        maven-central: publishAndReleaseToMavenCentral
+```
+
+The job then runs only those tasks. Such plugins also get `mavenCentralUsername`, `mavenCentralPassword` and the `signingInMemoryKey*` properties.
+
 ## NPM Registry (npmjs.org)
 
 ### NPM Registry Overview

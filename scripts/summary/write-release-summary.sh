@@ -44,7 +44,7 @@ main() {
   local release_time
   local prepare_stage_result
   local build_maven_result build_npm_result build_gradle_result build_gradleandroid_result build_xcodeios_result
-  local publish_github_result publish_central_result publish_appstore_result publish_googleplay_result publish_containers_result
+  local publish_github_result publish_central_result publish_gradle_result publish_appstore_result publish_googleplay_result publish_containers_result
 
   release_time=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
   prepare_stage_result="$(ci_json_value "$PREPARE_STAGE_RESULT_JSON" version-bump)"
@@ -55,6 +55,7 @@ main() {
   build_xcodeios_result="$(ci_json_value "$BUILD_STAGE_RESULT_JSON" xcodeios)"
   publish_github_result="$(ci_json_value "$PUBLISH_STAGE_RESULT_JSON" githubpackages)"
   publish_central_result="$(ci_json_value "$PUBLISH_STAGE_RESULT_JSON" mavencentral)"
+  publish_gradle_result="$(ci_json_value "$PUBLISH_STAGE_RESULT_JSON" gradle)"
   publish_appstore_result="$(ci_json_value "$PUBLISH_STAGE_RESULT_JSON" appleappstore)"
   publish_googleplay_result="$(ci_json_value "$PUBLISH_STAGE_RESULT_JSON" googleplay)"
   publish_containers_result="$(ci_json_value "$PUBLISH_STAGE_RESULT_JSON" containers)"
@@ -68,6 +69,7 @@ main() {
   add_status_row "Build Xcode" "$build_xcodeios_result"
   add_status_row "Publish GitHub" "$publish_github_result"
   add_status_row "Publish Maven Central" "$publish_central_result"
+  add_status_row "Publish Gradle" "$publish_gradle_result"
   add_status_row "Publish Apple App Store" "$publish_appstore_result"
   add_status_row "Publish Google Play" "$publish_googleplay_result"
   add_status_row "Containers" "$publish_containers_result"

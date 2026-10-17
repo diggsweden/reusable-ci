@@ -1,0 +1,187 @@
+# SPDX-FileCopyrightText: 2026 Digg - Agency for Digital Government
+#
+# SPDX-License-Identifier: CC0-1.0
+# Gradle Publisher
+#
+# Purpose: Publishes a Gradle JVM project to GitHub Packages or Maven
+# Central with Gradle's own `maven-publish` and `signing` plugins. One call
+# publishes to one target, so a failed target can be re-run alone.
+#
+# This job publishes from SOURCE, not from the build stage's uploaded JAR.
+# maven-publish needs the project to produce its publications, so the job
+# checks out and runs Gradle again. The build-stage artifact is still what
+# the release attaches and what the Build SBOM describes; the published JAR
+# matches it only as far as the build is reproducible.
+#
+# Project requirements:
+#   - github-packages: a `maven-publish` repository named `GitHubPackages`
+#     (task publishAllPublicationsToGitHubPackagesRepository)
+#   - maven-central: a publication with sources and javadoc JARs and a
+#     complete POM, signed through useInMemoryPgpKeys(...). The job adds a
+#     local bundle repository with an init script, uploads the bundle with
+#     the Central Portal Publisher API and waits for validation. With
+#     authorized-release true the Portal releases it automatically;
+#     otherwise a person releases it in the Portal. A -SNAPSHOT tag deploys
+#     to the Central snapshot repository instead.
+#   - publish-tasks replaces the default task, for example for a
+#     third-party plugin that uploads by itself
+#
+# Credentials, as Gradle project properties (ORG_GRADLE_PROJECT_*):
+#   github-packages: githubActor, githubToken
+#   maven-central:   signingKeyId, signingKey, signingPassword; for
+#                    publish-tasks plugins also mavenCentralUsername,
+#                    mavenCentralPassword and signingInMemoryKey*
+#
+# Required Secrets (maven-central only):
+#   MAVEN_CENTRAL_USERNAME: Central Portal token username
+#   MAVEN_CENTRAL_PASSWORD: Central Portal token password
+#   RELEASE_GPG_PRIVATE_KEY: GPG private key for signing
+#   RELEASE_GPG_PASSPHRASE: GPG key passphrase
+#
+# Required Permissions:
+#   contents: read
+#   packages: write  # Publish to GitHub Packages, read private dependencies
+#
+name: Publish Gradle
+on:
+  workflow_call:
+    inputs:
+      target:
+        description: "Publish target: github-packages or maven-central"
+        required: true
+        type: string
+      java-version:
+        description: "Java version"
+        required: true
+        type: string
+      working-directory:
+        description: "Directory containing ./gradlew"
+        required: false
+        default: "."
+        type: string
+      publish-tasks:
+        description: "Gradle tasks that replace the target's default publishing. Empty uses publishAllPublicationsToGitHubPackagesRepository, or the Central Portal bundle upload for maven-central."
+        required: false
+        default: ""
+        type: string
+      authorized-release:
+        description: "The release passed the authorized-releasers check, so Maven Central releases the validated deployment automatically. False leaves it for a person to release in the Central Portal."
+        required: false
+        default: false
+        type: boolean
+      branch:
+        description: "Branch or commit to checkout"
+        required: false
+        default: "main"
+        type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
+        required: false
+        default: "main"
+        type: string
+    secrets:
+      MAVEN_CENTRAL_USERNAME:
+        description: "Central Portal token username"
+        required: false
+      MAVEN_CENTRAL_PASSWORD:
+        description: "Central Portal token password"
+        required: false
+      RELEASE_GPG_PRIVATE_KEY:
+        description: "Armored OpenPGP private key used to sign published artifacts"
+        required: false
+      RELEASE_GPG_PASSPHRASE:
+        description: "Passphrase for RELEASE_GPG_PRIVATE_KEY"
+        required: false
+permissions:
+  contents: read
+jobs:
+  publish-gradle:
+    name: Publish Gradle (${{ inputs.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    env:
+      # Same convention as build-gradle-app.yml: the project's repository
+      # block reads GITHUB_ACTOR / GITHUB_TOKEN for private dependencies.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      # Maven Central credentials and the signing key are in scope here and
+      # must never run with pull request code.
+      - name: Refuse pull request context
+        if: ${{ startsWith(github.event_name, 'pull_request') }}
+        run: |
+          printf "::error::Gradle publishing does not run in a pull request context\n"
+          exit 1
+      - name: Checkout repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.branch }}
+          # Matches build-gradle-app.yml: builds may derive versions from history.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout .github repository for scripts
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          repository: diggsweden/reusable-ci
+          ref: ${{ inputs['reusable-ci-ref'] }}
+          path: .github-shared
+          sparse-checkout: scripts
+          persist-credentials: false
+      - name: Set up JDK
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: 'temurin'
+          java-version: ${{ inputs['java-version'] }}
+          cache: 'gradle'
+      - name: Make gradlew executable
+        working-directory: ${{ inputs['working-directory'] }}
+        run: chmod +x ./gradlew
+      - name: Publish to GitHub Packages
+        if: ${{ inputs.target == 'github-packages' }}
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          PUBLISH_TARGET: github-packages
+          PUBLISH_TASKS: ${{ inputs['publish-tasks'] }}
+        run: bash "${{ github.workspace }}/.github-shared/scripts/publish/gradle-publish.sh"
+      # Checked before the GPG import, which would otherwise fail with an
+      # opaque key-parsing error when the key secret is missing.
+      - name: Check Maven Central secrets
+        if: ${{ inputs.target == 'maven-central' }}
+        env:
+          HAS_MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME != '' }}
+          HAS_MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD != '' }}
+          HAS_RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY != '' }}
+          HAS_RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE != '' }}
+        run: |
+          missing=0
+          for name in MAVEN_CENTRAL_USERNAME MAVEN_CENTRAL_PASSWORD RELEASE_GPG_PRIVATE_KEY RELEASE_GPG_PASSPHRASE; do
+            has="HAS_${name}"
+            if [ "${!has}" != "true" ]; then
+              printf "::error::Missing secret %s for Gradle publish to maven-central\n" "$name"
+              missing=1
+            fi
+          done
+          exit "$missing"
+      - name: Import GPG key
+        id: import-gpg
+        if: ${{ inputs.target == 'maven-central' }}
+        uses: crazy-max/ghaction-import-gpg@e89d40939c28e39f97cf32126055eeae86ba74ec # v6.3.0
+        with:
+          gpg_private_key: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+      - name: Publish to Maven Central
+        if: ${{ inputs.target == 'maven-central' }}
+        working-directory: ${{ inputs['working-directory'] }}
+        env:
+          PUBLISH_TARGET: maven-central
+          PUBLISH_TASKS: ${{ inputs['publish-tasks'] }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+          GPG_FINGERPRINT: ${{ steps.import-gpg.outputs.fingerprint }}
+          GPG_KEY_ID: ${{ steps.import-gpg.outputs.keyid }}
+          CENTRAL_PUBLISHING_TYPE: ${{ inputs['authorized-release'] && 'AUTOMATIC' || 'USER_MANAGED' }}
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: bash "${{ github.workspace }}/.github-shared/scripts/publish/gradle-publish.sh"

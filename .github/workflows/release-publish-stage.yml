@@ -24,6 +24,16 @@ on:
       googleplay-artifacts:
         required: true
         type: string
+      authorized-release:
+        description: "The release passed the authorized-releasers check; Maven Central deployments from publish-gradle are then released automatically"
+        required: false
+        default: false
+        type: boolean
+      gradlepublish-artifacts:
+        description: "JSON array with one entry per gradle artefact and Maven target, carrying publish-target and publish-tasks"
+        required: false
+        default: "[]"
+        type: string
       containers:
         required: true
         type: string
@@ -123,6 +133,30 @@ jobs:
       java-version: ${{ matrix.artifact.config['java-version'] }}
       settings-path: ${{ matrix.artifact.config['settings-path'] }}
       profile: ${{ matrix.artifact.config['profile'] || 'central-release' }}
+  publish-gradle:
+    name: Publish Gradle - ${{ matrix.artifact.name }} (${{ matrix.artifact['publish-target'] }})
+    if: ${{ inputs.gradlepublish-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.gradle == 'success' }}
+    strategy:
+      matrix:
+        artifact: ${{ fromJson(inputs.gradlepublish-artifacts) }}
+      fail-fast: false
+    permissions:
+      contents: read
+      packages: write
+    secrets:
+      MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+      MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+      RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+      RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+    uses: ./.github/workflows/publish-gradle.yml
+    with:
+      target: ${{ matrix.artifact['publish-target'] }}
+      java-version: ${{ matrix.artifact.config['java-version'] }}
+      working-directory: ${{ matrix.artifact['working-directory'] }}
+      publish-tasks: ${{ matrix.artifact['publish-tasks'] }}
+      authorized-release: ${{ inputs['authorized-release'] }}
+      branch: ${{ inputs.branch }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   publish-apple-appstore:
     name: Publish Apple App Store - ${{ matrix.artifact.name }}
     if: ${{ inputs.xcodeios-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.xcodeios == 'success' }}
@@ -253,7 +287,7 @@ jobs:
       reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   summarize-publish-stage:
     name: Summarize Publish Stage
-    needs: [publish-maven-github, publish-maven-central, publish-apple-appstore, publish-google-play, build-containers, sbom-cargo]
+    needs: [publish-maven-github, publish-maven-central, publish-gradle, publish-apple-appstore, publish-google-play, build-containers, sbom-cargo]
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -275,12 +309,14 @@ jobs:
         env:
           GITHUBPACKAGES_ARTIFACTS: ${{ inputs.githubpackages-artifacts }}
           MAVENCENTRAL_ARTIFACTS: ${{ inputs.mavencentral-artifacts }}
+          GRADLEPUBLISH_ARTIFACTS: ${{ inputs.gradlepublish-artifacts }}
           XCODEIOS_ARTIFACTS: ${{ inputs.xcodeios-artifacts }}
           GOOGLEPLAY_ARTIFACTS: ${{ inputs.googleplay-artifacts }}
           CONTAINERS: ${{ inputs.containers }}
           CARGO_ARTIFACTS: ${{ inputs.cargo-artifacts }}
           PUBLISH_MAVEN_REGISTRY_RESULT: ${{ needs.publish-maven-github.result }}
           PUBLISH_MAVEN_CENTRAL_RESULT: ${{ needs.publish-maven-central.result }}
+          PUBLISH_GRADLE_RESULT: ${{ needs.publish-gradle.result }}
           PUBLISH_APPLE_APPSTORE_RESULT: ${{ needs.publish-apple-appstore.result }}
           PUBLISH_GOOGLE_PLAY_RESULT: ${{ needs.publish-google-play.result }}
           BUILD_CONTAINERS_RESULT: ${{ needs.build-containers.result }}

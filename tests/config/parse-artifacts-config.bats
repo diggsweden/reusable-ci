@@ -253,6 +253,249 @@ run_parse_artifacts_config() {
   assert_output --partial "first-project-type=gradle-android"
 }
 
+# Value of a multiline GITHUB_OUTPUT entry (compact JSON on one line).
+multiline_output() {
+  grep -A1 "^$1<<" "$GITHUB_OUTPUT" | tail -n 1
+}
+
+# Gradle library publishing to both targets, with extra config lines.
+write_gradle_publish_tasks_config() {
+  cat > "$TEST_DIR/artifacts.yml" << EOF
+artifacts:
+  - name: gradle-lib
+    project-type: gradle
+    build-type: library
+    working-directory: .
+    publish-to:
+      - github-packages
+      - maven-central
+    config:
+$1
+containers: []
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+}
+
+create_gradle_publish_config() {
+  cat > "$TEST_DIR/artifacts.yml" << 'EOF'
+artifacts:
+  - name: gradle-lib
+    project-type: gradle
+    build-type: library
+    working-directory: lib
+    publish-to:
+      - github-packages
+      - maven-central
+  - name: maven-lib
+    project-type: maven
+    build-type: library
+    working-directory: maven
+    publish-to:
+      - github-packages
+      - maven-central
+  - name: gradle-app
+    project-type: gradle
+    build-type: application
+    working-directory: app
+containers: []
+EOF
+}
+
+@test "parse-artifacts-config emits one gradle publish entry per maven target" {
+  create_gradle_publish_config
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  assert_github_output "has-gradlepublish" "true"
+  run jq -c '[.[] | [.name, .["publish-target"], .["publish-tasks"]]]' <<<"$(multiline_output gradlepublish-artifacts)"
+  assert_output '[["gradle-lib","github-packages",""],["gradle-lib","maven-central",""]]'
+}
+
+@test "parse-artifacts-config keeps gradle out of the maven publisher lists" {
+  create_gradle_publish_config
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run jq -c '[.[].name]' <<<"$(multiline_output githubpackages-artifacts)"
+  assert_output '["maven-lib"]'
+  run jq -c '[.[].name]' <<<"$(multiline_output mavencentral-artifacts)"
+  assert_output '["maven-lib"]'
+}
+
+@test "parse-artifacts-config skips non-maven targets for gradle publishing" {
+  cat > "$TEST_DIR/artifacts.yml" << 'EOF'
+artifacts:
+  - name: gradle-lib
+    project-type: gradle
+    build-type: library
+    working-directory: .
+    publish-to:
+      - google-play
+      - maven-central
+containers: []
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run jq -c '[.[]["publish-target"]]' <<<"$(multiline_output gradlepublish-artifacts)"
+  assert_output '["maven-central"]'
+}
+
+@test "parse-artifacts-config resolves a publish-tasks map per target" {
+  cat > "$TEST_DIR/artifacts.yml" << 'EOF'
+artifacts:
+  - name: gradle-lib
+    project-type: gradle
+    build-type: library
+    working-directory: .
+    publish-to:
+      - github-packages
+      - maven-central
+    config:
+      publish-tasks:
+        maven-central: publishAndReleaseToMavenCentral
+containers: []
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run jq -c '[.[] | [.["publish-target"], .["publish-tasks"]]]' <<<"$(multiline_output gradlepublish-artifacts)"
+  assert_output '[["github-packages",""],["maven-central","publishAndReleaseToMavenCentral"]]'
+}
+
+@test "parse-artifacts-config accepts a publish-tasks string with one maven target" {
+  cat > "$TEST_DIR/artifacts.yml" << 'EOF'
+artifacts:
+  - name: gradle-lib
+    project-type: gradle
+    build-type: library
+    working-directory: .
+    publish-to:
+      - maven-central
+    config:
+      publish-tasks: publishAndReleaseToMavenCentral
+containers: []
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  run jq -c '[.[]["publish-tasks"]]' <<<"$(multiline_output gradlepublish-artifacts)"
+  assert_output '["publishAndReleaseToMavenCentral"]'
+}
+
+@test "parse-artifacts-config rejects a publish-tasks string with both maven targets" {
+  cat > "$TEST_DIR/artifacts.yml" << 'EOF'
+artifacts:
+  - name: gradle-lib
+    project-type: gradle
+    build-type: library
+    working-directory: .
+    publish-to:
+      - github-packages
+      - maven-central
+    config:
+      publish-tasks: publishAndReleaseToMavenCentral
+containers: []
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_failure
+  assert_output --partial "config.publish-tasks must be a string for one target"
+  assert_output --partial "gradle-lib"
+}
+
+@test "parse-artifacts-config rejects an unknown publish-tasks key" {
+  write_gradle_publish_tasks_config "      publish-tasks:
+        mavencentral: publishAndReleaseToMavenCentral"
+
+  run_parse_artifacts_config
+
+  assert_failure
+  assert_output --partial "config.publish-tasks must be a string for one target"
+}
+
+@test "parse-artifacts-config rejects a publish-tasks list" {
+  write_gradle_publish_tasks_config "      publish-tasks:
+        - publishA
+        - publishB"
+
+  run_parse_artifacts_config
+
+  assert_failure
+  assert_output --partial "config.publish-tasks must be a string for one target"
+}
+
+@test "parse-artifacts-config warns when gradle-tasks publishes during the build" {
+  write_gradle_publish_tasks_config "      gradle-tasks: build publish"
+
+  run_parse_artifacts_config
+
+  assert_success
+  assert_output --partial "config.gradle-tasks publishes during the build"
+}
+
+@test "parse-artifacts-config skips gradle applications for github-packages" {
+  cat > "$TEST_DIR/artifacts.yml" << 'EOF'
+artifacts:
+  - name: gradle-app
+    project-type: gradle
+    build-type: application
+    working-directory: .
+    publish-to:
+      - github-packages
+containers: []
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  assert_output --partial "Applications should not be published to GitHub Packages"
+  assert_github_output "has-gradlepublish" "false"
+}
+
+@test "parse-artifacts-config warns about and skips gradle-android maven targets" {
+  cat > "$TEST_DIR/artifacts.yml" << 'EOF'
+artifacts:
+  - name: android-lib
+    project-type: gradle-android
+    build-type: library
+    working-directory: .
+    publish-to:
+      - github-packages
+containers: []
+EOF
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  assert_output --partial "gradle-android artifacts cannot be published to GitHub Packages or Maven Central yet"
+  assert_github_output "has-githubpackages" "false"
+}
+
+@test "parse-artifacts-config sets has-gradlepublish false without gradle publish targets" {
+  create_gradle_artifacts_config
+  export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"
+
+  run_parse_artifacts_config
+
+  assert_success
+  assert_github_output "has-gradlepublish" "false"
+}
+
 @test "parse-artifacts-configsets has-googleplay for google-play publish" {
   create_gradle_artifacts_config
   export ARTIFACTS_CONFIG="$TEST_DIR/artifacts.yml"

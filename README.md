@@ -326,8 +326,9 @@ The quick-start workflows below pin the commit containing the canonical secret n
 - `build-xcode-ios` - Builds iOS/macOS apps (IPA)
 
 **Publish Stage** - Target-specific workflows publish artifacts:
-- `publish-github` - Publishes Maven/NPM/Gradle → GitHub Packages
+- `publish-github` - Publishes Maven/NPM → GitHub Packages
 - `publish-maven-central` - Publishes Maven libs → Maven Central
+- `publish-gradle` - Publishes Gradle JVM projects → GitHub Packages / Maven Central
 - `publish-apple-appstore` - Publishes iOS/macOS apps → TestFlight/Apple App Store
 
 **Container Stage** - Separate containers section references artifacts:

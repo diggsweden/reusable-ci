@@ -181,6 +181,20 @@ containers:
   - **`gradle-android`:** **not honored** on the orchestrator path. The orchestrator (`release-build-stage.yml`) derives tasks from `product-flavor` + `build-types` + `include-aab` and ignores this field. Configure those instead. The override input still exists on `build-gradle-android.yml` for direct callers (e.g., a hand-rolled `release-dev-workflow.yml`).
 - **Default:** `assemble` (JVM); derived (Android, ignored)
 - **Example (JVM):** `gradle-tasks: build test`
+- **Note:** keep publishing out of the build tasks. The publish stage runs it with the right credentials; see `config.publish-tasks`.
+
+#### `config.publish-tasks`
+
+- **Type:** `string`, or a map from publish target to `string`
+- **Applies to:** `gradle`
+- **Default:** empty. `github-packages` runs `publishAllPublicationsToGitHubPackagesRepository`; `maven-central` uploads a signed bundle with the Central Portal Publisher API. See [Gradle Publishing](publishing.md#gradle-publishing).
+- **Description:** Gradle tasks that replace the default publishing for a target, for example a third-party plugin that uploads by itself. A plain string is allowed with one Maven target. With both `github-packages` and `maven-central`, use a map; a target left out keeps its default.
+- **Example:**
+
+  ```yaml
+  publish-tasks:
+    maven-central: publishAndReleaseToMavenCentral
+  ```
 
 #### `config.gradle-version-file`
 

@@ -262,9 +262,11 @@ jobs:
       mavencentral-artifacts: ${{ steps.parse.outputs.mavencentral-artifacts }}
       githubpackages-artifacts: ${{ steps.parse.outputs.githubpackages-artifacts }}
       googleplay-artifacts: ${{ steps.parse.outputs.googleplay-artifacts }}
+      gradlepublish-artifacts: ${{ steps.parse.outputs.gradlepublish-artifacts }}
       has-mavencentral: ${{ steps.parse.outputs.has-mavencentral }}
       has-githubpackages: ${{ steps.parse.outputs.has-githubpackages }}
       has-googleplay: ${{ steps.parse.outputs.has-googleplay }}
+      has-gradlepublish: ${{ steps.parse.outputs.has-gradlepublish }}
 
       # Parsed SBOM settings.
       pipeline-sboms: ${{ steps.parse.outputs.pipeline-sboms }}
@@ -455,6 +457,8 @@ jobs:
       githubpackages-artifacts: ${{ needs.parse-config.outputs.githubpackages-artifacts }}
       mavencentral-artifacts: ${{ needs.parse-config.outputs.mavencentral-artifacts }}
       googleplay-artifacts: ${{ needs.parse-config.outputs.googleplay-artifacts }}
+      gradlepublish-artifacts: ${{ needs.parse-config.outputs.gradlepublish-artifacts }}
+      authorized-release: ${{ fromJson(needs.parse-config.outputs['release-policy-json']).check_authorization }}
       containers: ${{ needs.parse-config.outputs.containers }}
       cargo-artifacts: ${{ needs.parse-config.outputs.cargo-artifacts }}
       build-result-json: ${{ needs.execute-build-stage.outputs.result-json }}

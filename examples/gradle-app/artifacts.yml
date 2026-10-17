@@ -15,4 +15,8 @@ artifacts:
       - maven-central
     config:
       java-version: 25
-      gradle-tasks: build publish
+      gradle-tasks: build
+      # Publishing runs in the publish stage through publish-gradle.yml with
+      # Gradle's maven-publish and signing plugins, not in the build. Maven
+      # Central gets a signed bundle through the Central Portal API; see
+      # docs/publishing.md#gradle-publishing for the build script.

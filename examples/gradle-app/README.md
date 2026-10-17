@@ -32,7 +32,7 @@ See [artifacts.yml](artifacts.yml) in this directory.
 Key points:
 - `project-type: gradle` → routes to `build-gradle-app.yml` (JVM-only; no Android SDK, no APK/AAB).
 - `build-type: library` → library publishing contract (adds sources/javadoc artifacts if the consumer's Gradle script is configured for them).
-- `publish-to: [maven-central]` → release flow dispatches the Maven Central publisher.
+- `publish-to: [maven-central]` → the publish stage runs `publish-gradle.yml`, which uploads a signed bundle to the Central Portal for you to release there.
 
 ### `.github/workflows/release-workflow.yml`
 
@@ -50,7 +50,7 @@ See [release-workflow.yml](release-workflow.yml) in this directory. Uses the rel
 
 2. **Customize for your project:**
    - Update `name` in `artifacts.yml`.
-   - Adjust `gradle-tasks` if your publish task differs (`build publish` assumes a configured `publishing { ... }` block).
+   - Keep publishing out of `gradle-tasks`. Apply `maven-publish` and `signing` as in [Gradle publishing](../../docs/publishing.md#gradle-publishing); Maven Central needs no repository block.
    - Set `version=` in `gradle.properties` (the workflow reads this for the build summary).
 
 3. **Create first release:**

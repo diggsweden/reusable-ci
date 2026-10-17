@@ -31,8 +31,9 @@ See [Workflow Guide](workflows.md) for orchestrator documentation and [Artifacts
 
 | Component | Purpose | Output | Required Secrets | Use When |
 |-----------|---------|--------|------------------|----------|
-| **publish-github** | Publishes Maven/NPM/Gradle to GitHub Packages | Artifacts in GitHub Packages | GITHUB_TOKEN | Default publishing target |
+| **publish-github** | Publishes Maven/NPM to GitHub Packages | Artifacts in GitHub Packages | GITHUB_TOKEN | Default publishing target |
 | **publish-maven-central** | Publishes Maven libraries to Maven Central | Public Maven artifacts | MAVEN_CENTRAL_USERNAME, MAVEN_CENTRAL_PASSWORD | Public libraries (requires build-type: library) |
+| **publish-gradle** | Publishes Gradle JVM projects from source to GitHub Packages or Maven Central (Central Portal API) | Artifacts in GitHub Packages / Maven Central | MAVEN_CENTRAL_USERNAME, MAVEN_CENTRAL_PASSWORD, RELEASE_GPG_PRIVATE_KEY, RELEASE_GPG_PASSPHRASE (Central only) | `project-type: gradle` with github-packages or maven-central |
 
 #### Container Builders
 
@@ -134,6 +135,17 @@ with:
   artifact-source: maven-build-artifacts  # Name of workflow artifact
   working-directory: "."
   settings-path: ".mvn/settings.xml"
+```
+
+#### `publish-gradle.yml`
+Publishes a Gradle JVM project from source through its own `maven-publish` setup. See [Gradle Publishing](publishing.md#gradle-publishing).
+```yaml
+uses: ./.github/workflows/publish-gradle.yml
+with:
+  target: maven-central                  # or github-packages
+  java-version: "25"
+  working-directory: "."
+  publish-tasks: ""                      # optional, replaces the default publishing
 ```
 
 ### Container Workflows
