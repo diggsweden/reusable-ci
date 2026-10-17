@@ -399,6 +399,7 @@ jobs:
     if: ${{ !failure() && !cancelled() }}
     permissions:
       contents: read
+      packages: read
     secrets:
       ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}

@@ -223,6 +223,7 @@ jobs:
     needs: [setup-dev]
     permissions:
       contents: read
+      packages: read
     uses: ./.github/workflows/release-dev-build-stage.yml
     with:
       dev-context-json: ${{ needs.setup-dev.outputs.dev-context-json }}

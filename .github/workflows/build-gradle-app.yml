@@ -22,6 +22,7 @@
 #
 # Required Permissions:
 #   contents: read  # Checkout code
+#   packages: read  # Resolve private dependencies from GitHub Packages
 #
 name: Build Gradle
 on:
@@ -75,6 +76,12 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      packages: read
+    env:
+      # Gradle has no settings file to generate, so a repository block
+      # declared in the build reads GITHUB_ACTOR and GITHUB_TOKEN from the
+      # environment to resolve private GitHub Packages dependencies.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0

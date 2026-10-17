@@ -17,6 +17,7 @@
 #
 # Required Permissions:
 #   contents: read  # Checkout code
+#   packages: read  # Install private dependencies from GitHub Packages
 #
 name: Build NPM
 on:
@@ -60,6 +61,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+      packages: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -90,7 +92,17 @@ jobs:
           printf "Package: %s@%s\n" "${NAME}" "${VERSION}"
       - name: Install dependencies
         working-directory: ${{ inputs['working-directory'] }}
-        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Read access to GitHub Packages for private dependencies. Only the
+        # credential is provided here; which scopes resolve from
+        # npm.pkg.github.com stays in the project's own .npmrc. The token is
+        # referenced, never written to disk, and only this step sees it.
+        run: |
+          npmrc="$RUNNER_TEMP/github-packages.npmrc"
+          # shellcheck disable=SC2016  # npm expands ${NODE_AUTH_TOKEN} itself
+          printf '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n' > "$npmrc"
+          NPM_CONFIG_USERCONFIG="$npmrc" npm ci
       - name: Run tests
         if: ${{ !inputs['skip-tests'] }}
         working-directory: ${{ inputs['working-directory'] }}

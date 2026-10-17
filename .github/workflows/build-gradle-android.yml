@@ -33,6 +33,7 @@
 #
 # Required Permissions:
 #   contents: read  # Checkout code
+#   packages: read  # Resolve private dependencies from GitHub Packages
 #
 name: Build Gradle Android
 on:
@@ -159,6 +160,12 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
+      packages: read
+    env:
+      # Gradle has no settings file to generate, so a repository block
+      # declared in the build reads GITHUB_ACTOR and GITHUB_TOKEN from the
+      # environment to resolve private GitHub Packages dependencies.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     outputs:
       debug-name: ${{ steps.artifact-names.outputs.debug-name }}
       release-name: ${{ steps.artifact-names.outputs.release-name }}

@@ -13,7 +13,7 @@ The changelog permission fix resolves the missing PR-read permission; it does no
 | Stage | Condition | Effect / action |
 |-------|-----------|-----------------|
 | Version commit and tag move | Repository rules restrict direct pushes or tag updates | `RELEASE_TOKEN` needs repository access and Contents read/write. Its account must be allowed to perform those operations under the rules. `move-tag.sh` updates the signed tag with a lease on its original object; Contents write alone does not bypass rules. |
-| Maven/NPM build | Dependencies live in a private package registry | Current build jobs grant only Contents read and do not wire package-auth tokens into dependency installation. This needs builder-side authentication support as well as access to the package. Adding permissions only to the consumer is insufficient. Public dependencies do not have this requirement. |
+| Maven/NPM/Gradle build | Dependencies live in GitHub Packages | The build jobs read GitHub Packages with the automatic token. The project must point the scope or repository at GitHub Packages, and each package must grant the consuming repository read access. See [Private Dependencies From GitHub Packages](#private-dependencies-from-github-packages). Other registries are not wired. |
 | GitHub Packages / GHCR publish | The package already exists with restricted Actions access | The publishing jobs have Packages write, but the package must also allow the consuming repository's workflow to access it. Check the package's Manage Actions access settings. |
 | Container SARIF upload | `CODE_SCANNING_TOKEN` is mapped but Code Scanning is unavailable for the private repo | GitHub requires Code Security to be enabled for private/internal SARIF uploads. This upload step is blocking in `publish-container.yml`. If uploads are not used, omit this optional secret mapping; scan results still remain in workflow artifacts. |
 | Container SBOM attestation | GitHub artifact attestations are unavailable on the repository's plan | The pinned `actions/attest-sbom` documents Enterprise Cloud as required for private/internal repositories. This step is blocking when analyzed-container SBOMs and SLSA are enabled. |
@@ -49,12 +49,60 @@ Use a workflow revision containing the container-flag fix: older forwarding expr
 
 Retain your own container names, source artifacts, and other settings. SBOM file generation and container scanning remain separately configured.
 
+### Private Dependencies From GitHub Packages
+
+The Maven, NPM, Gradle and Gradle Android build jobs get `packages: read` and pass the consumer's automatic `GITHUB_TOKEN` to dependency resolution. This applies to public repositories with private dependencies as well. The workflows only supply the credential. Where each dependency comes from stays in the project, so the same configuration works on a developer machine.
+
+**NPM.** Route the scope in the project's `.npmrc`:
+
+```ini
+@diggsweden:registry=https://npm.pkg.github.com
+```
+
+The token is available to `npm ci` only, not to tests, the build script or `npm pack`.
+
+**Maven.** `setup-java` writes a `settings.xml` server with id `github`. Declare a repository with that id in `pom.xml`:
+
+```xml
+<repositories>
+  <repository>
+    <id>github</id>
+    <url>https://maven.pkg.github.com/diggsweden/*</url>
+  </repository>
+</repositories>
+```
+
+**Gradle.** Read the credentials from the environment in the repository block:
+
+```kotlin
+repositories {
+    maven {
+        url = uri("https://maven.pkg.github.com/diggsweden/*")
+        credentials {
+            username = System.getenv("GITHUB_ACTOR")
+            password = System.getenv("GITHUB_TOKEN")
+        }
+    }
+}
+```
+
+For Maven and Gradle the token is set for the whole build job, because dependency resolution happens throughout the build.
+
+**Package access.** The automatic token can read a package only when the package lets the consuming repository in. Under the package's **Package settings → Manage Actions access**, add the repository with the Read role.
+
+Limitations:
+
+- Packages owned by another organization and registries other than GitHub Packages are not supported. The automatic token cannot reach them.
+- Container builds do not receive the token. A `Containerfile` that installs dependencies itself has to use public packages, or copy in the artifacts the build job produced.
+- The release and dev workflows need `packages: read` or broader from the caller. The documented `packages: write` covers this.
+
 ### What Is Already Wired
 
 - Source checkout uses the consumer's automatic `GITHUB_TOKEN` with Contents read.
 - Changelog generation now has PR read access through both nested call paths and uses the automatic token.
 - Version pushes and GitHub release creation use `RELEASE_TOKEN`.
 - Publishing jobs use the automatic token with Packages write where required.
+- Build jobs read private GitHub Packages dependencies with the automatic token and Packages read.
 - Workflow artifacts are downloaded from the same run using `actions/download-artifact`; these calls do not require a separate PAT.
 
 Before rollout, run the consumer's selected release paths with its actual secrets, package access, and repository rules. See the short [Migration Guide](migration.md) for the required YAML changes.

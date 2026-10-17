@@ -1,11 +1,5 @@
 # TODO
 
-## Private package dependency authentication
-
-Maven/NPM build jobs currently have only Contents read and do not configure tokens
-for private dependency installation. Add scoped registry authentication and the
-necessary permission forwarding before claiming support for those dependency paths.
-
 ## Gradle Maven Central publishing example
 
 The Gradle example requests `build publish`, but the Gradle builder does not
