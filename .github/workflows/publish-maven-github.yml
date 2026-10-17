@@ -45,6 +45,11 @@ on:
         required: false
         default: "24"
         type: string
+      npm-tag:
+        description: "npm dist-tag to publish under. Empty means: `next` for a prerelease version (npm 11+ refuses to publish a prerelease without an explicit tag), otherwise npm's default `latest`. A prerelease version is never published as `latest`; `latest` on a prerelease fails the publish."
+        required: false
+        default: ""
+        type: string
       working-directory:
         description: "Working directory"
         required: false
@@ -122,6 +127,7 @@ jobs:
         working-directory: ${{ inputs['working-directory'] }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TAG: ${{ inputs['npm-tag'] }}
         run: |
           printf "Publishing to GitHub NPM registry...\n"
           TARBALL=$(find . -maxdepth 1 -name "*.tgz" -type f | head -n 1)
@@ -129,8 +135,30 @@ jobs:
             printf "::error::No tarball found. build-npm must create and upload a tarball.\n"
             exit 1
           fi
-          printf "Publishing tarball: %s\n" "$TARBALL"
-          npm publish "$TARBALL"
+          # Resolve the dist-tag. npm 11+ (bundled with Node 24) refuses to
+          # publish a prerelease version without an explicit --tag, and older
+          # npm silently made the prerelease `latest`. Read the version from
+          # the tarball itself so the decision follows semver, not the git tag.
+          # A prerelease is never allowed to become `latest`: consumers that
+          # install without a version must only ever get a stable release.
+          VERSION=$(tar -xOzf "$TARBALL" package/package.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")
+          DIST_TAG="$NPM_TAG"
+          # Strip semver build metadata (1.0.0+sha.abc) before looking for a
+          # prerelease hyphen, so metadata alone never counts as a prerelease.
+          if [[ "${VERSION%%+*}" == *-* ]]; then
+            if [ -z "$DIST_TAG" ]; then
+              DIST_TAG="next"
+            elif [ "$DIST_TAG" = "latest" ]; then
+              printf "::error::Prerelease version %s cannot be published as 'latest'. Remove npm-tag or set it to next, beta, alpha or rc.\n" "$VERSION"
+              exit 1
+            fi
+          fi
+          PUBLISH_ARGS=()
+          if [ -n "$DIST_TAG" ]; then
+            PUBLISH_ARGS+=(--tag "$DIST_TAG")
+          fi
+          printf "Publishing tarball: %s (version %s, dist-tag %s)\n" "$TARBALL" "$VERSION" "${DIST_TAG:-latest}"
+          npm publish "$TARBALL" "${PUBLISH_ARGS[@]}"
       # Optional: Attach artifacts to GitHub release
       - name: Upload artifacts to release
         if: ${{ inputs['attach-pattern'] != '' }}

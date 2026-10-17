@@ -164,10 +164,10 @@ containers:
 #### `config.npm-tag`
 
 - **Type:** `string`
-- **Description:** NPM distribution tag for publishing
-- **Default:** `latest`
-- **Valid values:** `latest`, `next`, `beta`, `alpha`
-- **Example:** `npm-tag: latest`
+- **Description:** npm dist-tag to publish under. When omitted, a prerelease version (for example `1.2.0-alpha.1`) is published as `next` and a stable version as `latest`. A prerelease is never published as `latest`: setting `npm-tag: latest` on a prerelease version fails the publish, so `npm install <package>` without a version only ever resolves to a stable release. npm 11 and later refuse to publish a prerelease without an explicit tag, so the default also keeps prereleases from failing.
+- **Default:** `next` for prerelease versions, otherwise `latest`
+- **Valid values:** `latest` (stable versions only), `next`, `beta`, `alpha`, or any other dist-tag name
+- **Example:** `npm-tag: beta`
 
 ---
 

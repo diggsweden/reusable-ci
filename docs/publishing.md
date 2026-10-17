@@ -315,7 +315,7 @@ artifacts:
       - npmjs            # Publish to npmjs.org
     config:
       node-version: 24
-      npm-tag: latest    # or 'next', 'beta'
+      npm-tag: latest    # optional; default is 'next' for prereleases, 'latest' otherwise
 ```
 
 ### Package Requirements
