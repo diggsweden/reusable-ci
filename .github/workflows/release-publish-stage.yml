@@ -110,6 +110,8 @@ jobs:
       node-version: ${{ matrix.artifact.config['node-version'] }}
       npm-tag: ${{ matrix.artifact.config['npm-tag'] }}
       attach-pattern: ${{ matrix.artifact.config['attach-pattern'] }}
+      # mvn deploy rebuilds from source, so it must check out the release commit.
+      branch: ${{ inputs.branch }}
   publish-maven-central:
     name: Publish Maven Central - ${{ matrix.artifact.name }}
     if: ${{ inputs.mavencentral-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.maven == 'success' }}
@@ -133,6 +135,9 @@ jobs:
       java-version: ${{ matrix.artifact.config['java-version'] }}
       settings-path: ${{ matrix.artifact.config['settings-path'] }}
       profile: ${{ matrix.artifact.config['profile'] || 'central-release' }}
+      # mvn deploy rebuilds from source, so it must check out the release commit.
+      branch: ${{ inputs.branch }}
+      reusable-ci-ref: ${{ inputs['reusable-ci-ref'] }}
   publish-gradle:
     name: Publish Gradle - ${{ matrix.artifact.name }} (${{ matrix.artifact['publish-target'] }})
     if: ${{ inputs.gradlepublish-artifacts != '[]' && fromJson(inputs['build-result-json']).targets.gradle == 'success' }}

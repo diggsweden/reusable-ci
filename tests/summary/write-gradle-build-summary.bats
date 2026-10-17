@@ -14,7 +14,7 @@ load "${BATS_TEST_DIRNAME}/../test_helper.bash"
 setup() {
   common_setup_with_github_env
   export JAVA_VERSION="21"
-  export GRADLE_TASKS="build publish"
+  export GRADLE_TASKS="build test"
   export SKIP_TESTS="false"
   export VERSION="1.2.3"
 }
@@ -30,7 +30,7 @@ teardown() {
   run get_summary
   assert_output --partial "Gradle Build Summary"
   assert_output --partial "Java:** 21"
-  assert_output --partial "Tasks:** build publish"
+  assert_output --partial "Tasks:** build test"
   assert_output --partial "Version:** 1.2.3"
 }
 

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: CC0-1.0
 # Maven Central Publisher
 # 
-# Purpose: Publishes Maven library artifacts to Maven Central (Sonatype OSSRH) repository.
+# Purpose: Publishes Maven library artifacts to Maven Central through the Sonatype Central Portal.
 # Downloads pre-built artifacts from workflow artifacts (must include sources and javadoc JARs)
 # and deploys them to Maven Central with GPG signing.
 #
@@ -14,8 +14,8 @@
 #   - Maven Central (Sonatype) credentials configured
 #
 # Required Secrets:
-#   MAVEN_CENTRAL_USERNAME: Sonatype OSSRH username
-#   MAVEN_CENTRAL_PASSWORD: Sonatype OSSRH password or token
+#   MAVEN_CENTRAL_USERNAME: Central Portal user token username
+#   MAVEN_CENTRAL_PASSWORD: Central Portal user token password
 #   RELEASE_GPG_PRIVATE_KEY: GPG private key for signing
 #   RELEASE_GPG_PASSPHRASE: GPG key passphrase
 #
@@ -52,6 +52,11 @@ on:
         type: string
       branch:
         description: "Branch to checkout (default: main)"
+        required: false
+        default: "main"
+        type: string
+      reusable-ci-ref:
+        description: "Ref for reusable-ci helper scripts checkout (defaults to main)"
         required: false
         default: "main"
         type: string
@@ -105,7 +110,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           repository: diggsweden/reusable-ci
-          ref: main
+          ref: ${{ inputs['reusable-ci-ref'] }}
           path: .github-shared
           sparse-checkout: scripts
       - name: Download build artifacts

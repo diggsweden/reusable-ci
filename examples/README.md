@@ -165,17 +165,17 @@ In any Maven example:
 artifacts:
   - name: my-lib
     build-type: library  # Required
-    require-authorization: true  # Recommended
     publish-to:
       - github-packages
-      - maven-central  # Add this
+      - maven-central  # Add this; implies the authorization check
 ```
 
 **Requirements:**
 - Sonatype account
 - MAVEN_CENTRAL_USERNAME secret
 - MAVEN_CENTRAL_PASSWORD secret
-- Map `MAVEN_CENTRAL_USERNAME` and `MAVEN_CENTRAL_PASSWORD` in the caller's `secrets:` block, alongside the signing secrets (see the [monorepo release workflow](monorepo/release-workflow.yml)).
+- AUTHORIZED_RELEASE_DEVELOPERS secret listing who may release; production Maven Central releases fail without it
+- Map `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD` and `AUTHORIZED_RELEASE_DEVELOPERS` in the caller's `secrets:` block, alongside the signing secrets (see the [monorepo release workflow](monorepo/release-workflow.yml)).
 
 See [Publishing Guide](../docs/publishing.md#maven-central) for setup.
 

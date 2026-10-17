@@ -611,12 +611,13 @@ containers:
 
 ### `maven-central`
 
-- **Description:** Maven Central (Sonatype OSSRH)
+- **Description:** Maven Central, through the Sonatype Central Portal
 - **Requirements:**
-  - `MAVEN_CENTRAL_USERNAME` secret
-  - `MAVEN_CENTRAL_PASSWORD` secret
+  - `MAVEN_CENTRAL_USERNAME` and `MAVEN_CENTRAL_PASSWORD` secrets (a Central Portal user token)
+  - `RELEASE_GPG_PRIVATE_KEY` and `RELEASE_GPG_PASSPHRASE` secrets for signing
+  - `AUTHORIZED_RELEASE_DEVELOPERS` secret: production releases check the releaser and fail without it; `-SNAPSHOT` tags are exempt
   - `build-type: library` (required)
-- **Applies to:** Maven only
+- **Applies to:** Maven, Gradle (see [Gradle Publishing](publishing.md#gradle-publishing))
 - **Note:** Requires Sonatype account and approved groupId
 
 ### `npmjs`
