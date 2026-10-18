@@ -117,14 +117,14 @@ jobs:
           printf "::error::Gradle publishing does not run in a pull request context\n"
           exit 1
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.branch }}
           # Matches build-gradle-app.yml: builds may derive versions from history.
           fetch-depth: 0
           persist-credentials: false
       - name: Checkout .github repository for scripts
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: diggsweden/reusable-ci
           ref: ${{ inputs['reusable-ci-ref'] }}
